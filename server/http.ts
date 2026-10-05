@@ -17,6 +17,7 @@ export type Api = {
   logout: () => Promise<void>;
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
+  media: (jid: string, id: string) => Promise<{ body: Buffer; mimetype: string; fileName: string | null }>;
   /** Caminho de uma cópia consistente do banco, para download. */
   backup: () => Promise<string>;
   subscribe: (res: ServerResponse) => void;
@@ -166,6 +167,19 @@ export function createHandler(api: Api) {
       }
     }
 
+    const mediaMatch = path.match(/^\/api\/media\/([^/]+)\/([^/]+)$/);
+    if (mediaMatch && method === "GET") {
+      const file = await api.media(decodeURIComponent(mediaMatch[1]), decodeURIComponent(mediaMatch[2])).catch((error: Error) => {
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(502, `Não foi possível baixar a mídia. Ela pode ter expirado no WhatsApp. (${error.message})`);
+      });
+      const headers: Record<string, string> = { "content-type": file.mimetype, "cache-control": "private, max-age=86400" };
+      if (url.searchParams.has("download")) {
+        headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName ?? "arquivo")}`;
+      }
+      res.writeHead(200, headers);
+      return res.end(file.body);
+    }
     const reminderMatch = path.match(/^\/api\/reminders\/(\d+)(\/done)?$/);
     if (reminderMatch && ((reminderMatch[2] && method === "POST") || (!reminderMatch[2] && method === "DELETE"))) {
       if (method === "POST") await readJson(req);

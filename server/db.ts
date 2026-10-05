@@ -38,11 +38,16 @@ export type Message = {
   at: number;
   text: string;
   kind: string;
+  /** Mídia baixável (sem as chaves, que ficam só no banco). */
+  media: { type: string; mimetype: string; fileName: string | null; size: number | null } | null;
 };
+
+/** Correção sua de etiqueta, usada como exemplo nas próximas classificações do Jev. */
+export type LabelExample = { label: string; snippet: string };
 
 export type Label = { name: string; description: string };
 
-export type IncomingMessage = Message & { rawJid: string };
+export type IncomingMessage = Omit<Message, "media"> & { rawJid: string; media?: string | null };
 
 const DEFAULT_LABELS: Label[] = [
   { name: "Cotação", description: "Pedido de preço, orçamento ou proposta de serviço." },
@@ -110,10 +115,20 @@ create table if not exists reminders (
   done_at integer
 );
 create index if not exists reminders_pending on reminders(due_at) where done_at is null;
+create table if not exists label_examples (
+  id integer primary key,
+  chat_jid text not null,
+  label text not null,
+  snippet text not null,
+  created_at integer not null
+);
 `;
 
 /** Colunas acrescentadas depois da primeira versão; SQLite não tem "add column if not exists". */
-const COLUMNS: [table: string, column: string, ddl: string][] = [["chats", "note", "text"]];
+const COLUMNS: [table: string, column: string, ddl: string][] = [
+  ["chats", "note", "text"],
+  ["messages", "media", "text"],
+];
 
 const CHAT_SELECT = `select c.*, (select min(due_at) from reminders r where r.chat_jid = c.jid and r.done_at is null) as reminder_at from chats c`;
 
@@ -164,6 +179,15 @@ function toReminder(r: Row): Reminder {
 }
 
 function toMessage(r: Row): Message {
+  let media: Message["media"] = null;
+  if (typeof r.media === "string") {
+    try {
+      const m = JSON.parse(r.media);
+      media = { type: m.type, mimetype: m.mimetype, fileName: m.fileName ?? null, size: m.size ?? null };
+    } catch {
+      media = null;
+    }
+  }
   return {
     chatJid: String(r.chat_jid),
     id: String(r.id),
@@ -171,6 +195,7 @@ function toMessage(r: Row): Message {
     at: Number(r.at),
     text: String(r.text),
     kind: String(r.kind),
+    media,
   };
 }
 
@@ -247,6 +272,7 @@ export class Store {
 
   updateChat(jid: string, patch: { status?: Status; label?: string | null }): Chat | null {
     if (patch.status) this.db.prepare("update chats set status = ? where jid = ?").run(patch.status, jid);
+    if (patch.label) this.recordLabelExample(jid, patch.label);
     if (patch.label !== undefined) {
       this.db
         .prepare("update chats set label = ?, label_source = ? where jid = ?")
@@ -296,8 +322,8 @@ export class Store {
     return this.tx(() => {
       this.ensureChat(m.chatJid, { status: live ? "aberta" : "resolvida" });
       const inserted = this.db
-        .prepare("insert or ignore into messages (chat_jid, id, raw_jid, from_me, at, text, kind) values (?, ?, ?, ?, ?, ?, ?)")
-        .run(m.chatJid, m.id, m.rawJid, m.fromMe ? 1 : 0, m.at, m.text, m.kind);
+        .prepare("insert or ignore into messages (chat_jid, id, raw_jid, from_me, at, text, kind, media) values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(m.chatJid, m.id, m.rawJid, m.fromMe ? 1 : 0, m.at, m.text, m.kind, m.media ?? null);
       if (inserted.changes === 0) return null;
       this.db
         .prepare(
@@ -311,7 +337,8 @@ export class Store {
           .prepare("update chats set unread = 0, status = case when status = 'aberta' then 'aguardando' else status end where jid = ?")
           .run(m.chatJid);
       }
-      return { message: { chatJid: m.chatJid, id: m.id, fromMe: m.fromMe, at: m.at, text: m.text, kind: m.kind }, chat: this.getChat(m.chatJid)! };
+      const message = toMessage(this.db.prepare("select * from messages where chat_jid = ? and id = ?").get(m.chatJid, m.id) as Row);
+      return { message, chat: this.getChat(m.chatJid)! };
     });
   }
 
@@ -377,6 +404,54 @@ export class Store {
       this.db.prepare("delete from chats where jid = ?").run(lid);
       return this.getChat(pn);
     });
+  }
+
+  // ---- mídia
+
+  /** Referência completa (com a chave) só para o download no servidor. */
+  getMediaRef(jid: string, id: string): string | null {
+    const r = this.db.prepare("select media from messages where chat_jid = ? and id = ?").get(jid, id) as Row | undefined;
+    return typeof r?.media === "string" ? r.media : null;
+  }
+
+  // ---- aprendizado do Jev
+
+  /**
+   * Etiqueta escolhida à mão vira exemplo para o Jev: trecho das últimas mensagens de texto
+   * do contato + a etiqueta certa. Guarda os 60 mais recentes, um por conversa.
+   */
+  recordLabelExample(jid: string, label: string): void {
+    const texts = (this.db
+      .prepare("select text from messages where chat_jid = ? and kind = 'text' order by at desc limit 8")
+      .all(jid) as Row[]).map((r) => String(r.text)).reverse();
+    const snippet = texts.join(" / ").slice(-600);
+    if (!snippet) return;
+    this.tx(() => {
+      this.db.prepare("delete from label_examples where chat_jid = ?").run(jid);
+      this.db.prepare("insert into label_examples (chat_jid, label, snippet, created_at) values (?, ?, ?, ?)").run(jid, label, snippet, Date.now());
+      this.db.exec("delete from label_examples where id not in (select id from label_examples order by created_at desc limit 60)");
+    });
+  }
+
+  /** Exemplos recentes de etiquetas que ainda existem, no máximo 2 por etiqueta. */
+  labelExamples(excludeJid: string, limit = 10): LabelExample[] {
+    const rows = this.db
+      .prepare(
+        `select label, snippet from label_examples
+         where chat_jid <> ? and label in (select name from labels)
+         order by created_at desc`,
+      )
+      .all(excludeJid) as Row[];
+    const perLabel = new Map<string, number>();
+    const out: LabelExample[] = [];
+    for (const r of rows) {
+      const label = String(r.label);
+      if ((perLabel.get(label) ?? 0) >= 2) continue;
+      perLabel.set(label, (perLabel.get(label) ?? 0) + 1);
+      out.push({ label, snippet: String(r.snippet) });
+      if (out.length >= limit) break;
+    }
+    return out;
   }
 
   // ---- nota e lembretes
@@ -446,7 +521,7 @@ export class Store {
   /** Apaga conversas, mensagens e contatos deste computador. Etiquetas e configurações ficam. */
   clearConversations(): void {
     this.tx(() => {
-      this.db.exec("delete from reminders; delete from messages; delete from chats; delete from contacts; delete from lid_map;");
+      this.db.exec("delete from label_examples; delete from reminders; delete from messages; delete from chats; delete from contacts; delete from lid_map;");
       // A agenda precisa ser pedida de novo na próxima conexão.
       this.setSetting("contacts_backfill", null);
     });

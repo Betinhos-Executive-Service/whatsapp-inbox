@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, type Chat, type Message, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
+import { loadMedia } from "./media.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import type { Jev } from "./jev.ts";
 import type { ConnectionState, WhatsApp } from "./whatsapp.ts";
@@ -86,7 +87,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       const chat = store.getChat(jid);
       if (!chat) throw new Error("Conversa não encontrada.");
       try {
-        const result = await (await getJev()).classify(key, chat.name, store.listMessages(jid, null, 30), store.listLabels());
+        const result = await (await getJev()).classify(key, chat.name, store.listMessages(jid, null, 30), store.listLabels(), store.labelExamples(jid));
         return store.saveClassification(jid, result);
       } catch (error) {
         const message = `Jev não classificou: ${error instanceof Error ? error.message : String(error)}`;
@@ -177,6 +178,11 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       broadcast("reload", null);
       // Desconectar e ler o QR de novo traz o histórico do número outra vez.
       if (reconnect) await connected().logout();
+    },
+    media: async (jid, id) => {
+      const ref = store.getMediaRef(jid, id);
+      if (!ref) throw new Error("Esta mensagem não tem mídia salva. Mídias recebidas antes desta versão não podem ser abertas.");
+      return loadMedia(join(options.dataDir, "media"), jid, id, ref);
     },
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
