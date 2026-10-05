@@ -3,6 +3,52 @@ type Content = Record<string, any> | null | undefined;
 
 export type Extracted = { text: string; kind: string };
 
+/** O suficiente para baixar e decifrar a mídia depois (WhatsApp guarda o arquivo cifrado). */
+export type MediaRef = {
+  type: "image" | "video" | "audio" | "document" | "sticker";
+  mediaKey: string; // base64
+  directPath: string | null;
+  url: string | null;
+  mimetype: string;
+  fileName: string | null;
+  size: number | null;
+};
+
+const MEDIA_TYPES: Record<string, MediaRef["type"]> = {
+  imageMessage: "image",
+  videoMessage: "video",
+  ptvMessage: "video",
+  audioMessage: "audio",
+  documentMessage: "document",
+  stickerMessage: "sticker",
+};
+
+const DEFAULT_MIME: Record<MediaRef["type"], string> = {
+  image: "image/jpeg",
+  video: "video/mp4",
+  audio: "audio/ogg",
+  document: "application/octet-stream",
+  sticker: "image/webp",
+};
+
+export function extractMedia(content: Content): MediaRef | null {
+  if (!content) return null;
+  const key = Object.keys(content).find((k) => MEDIA_TYPES[k] && content[k]);
+  if (!key) return null;
+  const m = content[key];
+  if (!m?.mediaKey || (!m.directPath && !m.url)) return null;
+  const type = MEDIA_TYPES[key];
+  return {
+    type,
+    mediaKey: Buffer.from(m.mediaKey).toString("base64"),
+    directPath: m.directPath ?? null,
+    url: m.url ?? null,
+    mimetype: typeof m.mimetype === "string" && m.mimetype ? m.mimetype.split(";")[0] : DEFAULT_MIME[type],
+    fileName: typeof m.fileName === "string" ? m.fileName : null,
+    size: m.fileLength == null ? null : Number(m.fileLength),
+  };
+}
+
 /** Tipos que não são mensagem para o usuário: protocolo, reação, chaves, enquetes votadas. */
 const IGNORED = new Set([
   "protocolMessage",

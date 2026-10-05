@@ -2,6 +2,7 @@ import {
   AlarmClock,
   ArrowLeft,
   CheckCircle2,
+  Download,
   CircleDot,
   Clock,
   Inbox,
@@ -20,7 +21,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
+import { priorityLevel, priorityScore } from "./priority.ts";
+import { mediaUrl, api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { dayLabel, formatBuild, formatTime, initials, listTime, matches, percent, sameDay } from "./format.ts";
@@ -132,6 +134,7 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
 function ChatItem({ chat, selected, onOpen }: { chat: Chat; selected: boolean; onOpen: () => void }) {
   const urgent = (chat.ai?.urgent ?? 0) >= 0.5;
   const reminderDue = chat.reminderAt !== null && chat.reminderAt <= Date.now();
+  const level = priorityLevel(priorityScore(chat));
   return (
     <li>
       <button className="chat-item" aria-current={selected ? "true" : undefined} onClick={onOpen}>
@@ -154,8 +157,13 @@ function ChatItem({ chat, selected, onOpen }: { chat: Chat; selected: boolean; o
               </span>
             )}
           </span>
-          {(chat.label || urgent || chat.reminderAt !== null) && (
+          {(chat.label || urgent || chat.reminderAt !== null || level) && (
             <span className="chat-item__tags">
+              {level && !urgent && (
+                <span className={`badge ${level === "alta" ? "badge--danger" : "badge--warning"}`}>
+                  {level === "alta" ? "Responder já" : "Responder hoje"}
+                </span>
+              )}
               {chat.label && <span className="badge badge--info">{chat.label}</span>}
               {urgent && (
                 <span className="badge badge--danger">
@@ -189,6 +197,21 @@ function ChatList(props: {
   const [label, setLabel] = useState("");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(PAGE);
+  const [order, setOrder] = useState<"recentes" | "prioridade">(() => {
+    try {
+      return localStorage.getItem("inbox:order") === "prioridade" ? "prioridade" : "recentes";
+    } catch {
+      return "recentes";
+    }
+  });
+  const chooseOrder = (o: "recentes" | "prioridade") => {
+    setOrder(o);
+    try {
+      localStorage.setItem("inbox:order", o);
+    } catch {
+      // preferência só deste computador
+    }
+  };
 
   const counts = useMemo(() => {
     const c: Record<Tab, number> = { aberta: 0, aguardando: 0, resolvida: 0, todas: props.chats.length };
@@ -198,13 +221,21 @@ function ChatList(props: {
 
   const filtered = useMemo(() => {
     const q = query.trim();
-    return props.chats.filter(
+    const list = props.chats.filter(
       (c) =>
         (tab === "todas" || c.status === tab) &&
         (!label || (label === "__none" ? !c.label : c.label === label)) &&
-        (!q || matches(`${c.name} ${c.phone ?? ""} ${c.lastText ?? ""}`, q)),
+        (!q || matches(`${c.name} ${c.phone ?? ""} ${c.lastText ?? ""} ${c.note ?? ""}`, q)),
     );
-  }, [props.chats, tab, label, query]);
+    if (order === "prioridade") {
+      const now = Date.now();
+      return list
+        .map((c) => ({ c, s: priorityScore(c, now) }))
+        .sort((a, b) => b.s - a.s || b.c.lastAt - a.c.lastAt)
+        .map((x) => x.c);
+    }
+    return list;
+  }, [props.chats, tab, label, query, order]);
 
   useEffect(() => setLimit(PAGE), [tab, label, query]);
 
@@ -230,6 +261,7 @@ function ChatList(props: {
             </button>
           ))}
         </div>
+        <div className="list-pane__filters">
         <label className="field field--inline">
           <span className="sr-only">Filtrar por etiqueta</span>
           <select value={label} onChange={(e) => setLabel(e.target.value)}>
@@ -242,6 +274,14 @@ function ChatList(props: {
             ))}
           </select>
         </label>
+        <label className="field field--inline">
+          <span className="sr-only">Ordenar conversas</span>
+          <select value={order} onChange={(e) => chooseOrder(e.target.value as "recentes" | "prioridade")}>
+            <option value="recentes">Mais recentes</option>
+            <option value="prioridade">Responder primeiro</option>
+          </select>
+        </label>
+        </div>
       </header>
       <div className="list-pane__scroll">
         {!props.loaded ? (
@@ -338,6 +378,51 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
   );
 }
 
+function MediaView({ m }: { m: Message }) {
+  const [failed, setFailed] = useState(false);
+  const [zoom, setZoom] = useState(false);
+  const media = m.media!;
+  const src = mediaUrl(m);
+  if (failed) {
+    return (
+      <p className="media-error">
+        <TriangleAlert size={14} aria-hidden /> Não foi possível abrir. A mídia pode ter expirado no WhatsApp.
+      </p>
+    );
+  }
+  if (media.type === "image" || media.type === "sticker") {
+    return (
+      <>
+        <button className="media-thumb" onClick={() => setZoom(true)} aria-label="Ampliar imagem">
+          <img src={src} alt={m.text.replace(/^\[[^\]]+\]\s*/, "") || "Imagem recebida"} loading="lazy" onError={() => setFailed(true)} className={media.type === "sticker" ? "media-sticker" : undefined} />
+        </button>
+        {zoom && (
+          <div className="lightbox" role="dialog" aria-modal="true" aria-label="Imagem ampliada" onClick={() => setZoom(false)} onKeyDown={(e) => e.key === "Escape" && setZoom(false)}>
+            <img src={src} alt="" />
+            <div className="lightbox__actions">
+              <a className="button button--secondary" href={mediaUrl(m, true)} download onClick={(e) => e.stopPropagation()}>
+                Baixar
+              </a>
+              <button className="button button--primary" autoFocus onClick={() => setZoom(false)}>
+                Fechar
+              </button>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+  if (media.type === "video") return <video className="media-video" src={src} controls preload="none" onError={() => setFailed(true)} />;
+  if (media.type === "audio") return <audio className="media-audio" src={src} controls preload="none" onError={() => setFailed(true)} />;
+  return (
+    <a className="media-doc" href={mediaUrl(m, true)} download>
+      <Download size={16} aria-hidden />
+      <span>{media.fileName ?? "Documento"}</span>
+      {media.size ? <span className="hint">{Math.max(1, Math.round(media.size / 1024))} KB</span> : null}
+    </a>
+  );
+}
+
 function Messages({ messages, hasMore, onMore, loadingMore }: { messages: Message[]; hasMore: boolean; onMore: () => void; loadingMore: boolean }) {
   return (
     <>
@@ -351,7 +436,10 @@ function Messages({ messages, hasMore, onMore, loadingMore }: { messages: Messag
         <div key={m.id} className="message-row">
           {(i === 0 || !sameDay(messages[i - 1].at, m.at)) && <div className="day">{dayLabel(m.at)}</div>}
           <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}`}>
-            <p className="bubble__text">{m.text}</p>
+            {m.media && <MediaView m={m} />}
+            {(!m.media || m.text.replace(/^\[[^\]]+\]\s*/, "")) && (
+              <p className="bubble__text">{m.media ? m.text.replace(/^\[[^\]]+\]\s*/, "") : m.text}</p>
+            )}
             <time className="bubble__time" dateTime={new Date(m.at).toISOString()}>
               {formatTime(m.at)}
             </time>

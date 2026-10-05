@@ -17,7 +17,7 @@ import makeWASocket, {
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, Store } from "./db.ts";
-import { extractText } from "./text.ts";
+import { extractMedia, extractText } from "./text.ts";
 
 export type ConnectionStatus = "iniciando" | "qr" | "conectado" | "reconectando" | "desconectado";
 export type ConnectionState = { status: ConnectionStatus; qr: string | null; me: string | null; error: string | null };
@@ -82,7 +82,9 @@ export class WhatsApp extends EventEmitter<{
   private ingest(m: WAMessage, live: boolean) {
     const raw = m.key.remoteJid;
     if (!isConversation(raw) || !m.key.id || !m.message) return;
-    const extracted = extractText(normalizeMessageContent(m.message));
+    const content = normalizeMessageContent(m.message);
+    const extracted = extractText(content);
+    const media = extractMedia(content);
     if (!extracted) return;
     const at = Number(m.messageTimestamp ?? 0) * 1000 || Date.now();
     const chatJid = this.canonical(raw, m.key.remoteJidAlt);
@@ -98,6 +100,7 @@ export class WhatsApp extends EventEmitter<{
       at,
       text: author ? `${author}: ${extracted.text}` : extracted.text,
       kind: extracted.kind,
+      media: media ? JSON.stringify(media) : null,
     };
     const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
     const result = this.store.addMessage(incoming, isLive);

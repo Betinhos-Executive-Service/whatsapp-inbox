@@ -1,6 +1,6 @@
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
 import { z } from "zod";
-import type { Label, Message } from "./db.ts";
+import type { Label, LabelExample, Message } from "./db.ts";
 
 export const JEV_MODEL = process.env.JEV_MODEL || "jev-1.13.0";
 
@@ -49,9 +49,11 @@ export function parseResponse(value: unknown, labels: Label[]): Classification {
 }
 
 /** Estado enviado ao Jev: só as últimas mensagens de texto, sem identificadores do WhatsApp. */
-export function buildState(contactName: string, messages: Message[], now = new Date()): string {
+export function buildState(contactName: string, messages: Message[], now = new Date(), examples: LabelExample[] = []): string {
   return JSON.stringify({
     agora: now.toISOString(),
+    // Correções feitas pela pessoa em outras conversas: mostram como ela usa cada etiqueta.
+    ...(examples.length ? { exemplos_de_etiquetas_corrigidas_pelo_usuario: examples.map((e) => ({ etiqueta: e.label, trecho: e.snippet })) } : {}),
     contato: contactName,
     mensagens: messages.slice(-30).map((m) => ({
       de: m.fromMe ? "eu" : "contato",
@@ -73,11 +75,11 @@ export class Jev {
     return this.client;
   }
 
-  async classify(apiKey: string, contactName: string, messages: Message[], labels: Label[]): Promise<Classification> {
+  async classify(apiKey: string, contactName: string, messages: Message[], labels: Label[], examples: LabelExample[] = []): Promise<Classification> {
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto para classificar.");
     const response = await this.clientFor(apiKey).systemOne({
       model: JEV_MODEL,
-      state: buildState(contactName, messages),
+      state: buildState(contactName, messages, new Date(), examples),
       questions: buildQuestions(labels),
     });
     return parseResponse(response, labels);
