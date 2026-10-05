@@ -1,0 +1,42 @@
+{
+  "name": "whatsapp-inbox",
+  "version": "0.0.4",
+  "private": true,
+  "type": "module",
+  "description": "Inbox local e leve para gerir e classificar conversas do WhatsApp, com classificação Jev.",
+  "author": "Betinhos Executive Service",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=24"
+  },
+  "config": {
+    "port": 38291
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/build.mjs && node server/main.ts",
+    "serve": "node server/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
+    "@typesafe-ai/sdk": "0.6.0",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "lucide-react": "1.52.0",
+    "pino": "9.14.0",
+    "qrcode": "1.5.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "@types/qrcode": "1.5.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
+  }
+}
