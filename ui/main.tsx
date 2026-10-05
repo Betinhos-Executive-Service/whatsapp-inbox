@@ -597,6 +597,7 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, q
           <div className="chat-pane__name">
             <h2 className="heading-card">{chat.name}</h2>
             {chat.phone && <span className="hint">+{chat.phone}</span>}
+            {chat.isGroup && <span className="hint">Grupo</span>}
           </div>
         </div>
         <button

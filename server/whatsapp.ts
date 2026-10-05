@@ -4,6 +4,7 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  isJidGroup,
   isLidUser,
   isPnUser,
   jidNormalizedUser,
@@ -25,9 +26,9 @@ export type ConnectionState = { status: ConnectionStatus; qr: string | null; me:
 const LIVE_WINDOW_MS = 2 * 60 * 1000;
 const logger = pino({ level: "silent" });
 
-/** Só conversas individuais: grupos, status, listas e canais ficam de fora. */
-function isPersonal(jid: string | null | undefined): jid is string {
-  return !!jid && (isPnUser(jid) || isLidUser(jid)) === true;
+/** Conversas individuais e grupos; status, listas e canais ficam de fora. */
+function isConversation(jid: string | null | undefined): jid is string {
+  return !!jid && (isPnUser(jid) || isLidUser(jid) || isJidGroup(jid)) === true;
 }
 
 export class WhatsApp extends EventEmitter<{
@@ -56,6 +57,7 @@ export class WhatsApp extends EventEmitter<{
 
   /** Converte o JID bruto no JID da conversa: número quando conhecido, senão o LID. */
   private canonical(raw: string, alt?: string | null): string {
+    if (isJidGroup(raw)) return raw;
     if (isPnUser(raw)) return jidNormalizedUser(raw);
     if (alt && isPnUser(alt)) {
       const pn = jidNormalizedUser(alt);
@@ -79,27 +81,61 @@ export class WhatsApp extends EventEmitter<{
 
   private ingest(m: WAMessage, live: boolean) {
     const raw = m.key.remoteJid;
-    if (!isPersonal(raw) || !m.key.id || !m.message) return;
+    if (!isConversation(raw) || !m.key.id || !m.message) return;
     const content = normalizeMessageContent(m.message);
     const extracted = extractText(content);
     const media = extractMedia(content);
     if (!extracted) return;
     const at = Number(m.messageTimestamp ?? 0) * 1000 || Date.now();
     const chatJid = this.canonical(raw, m.key.remoteJidAlt);
+    const group = isJidGroup(raw) === true;
+    // Em grupo, o autor vai no início do texto: "Nome: mensagem".
+    const author = group && !m.key.fromMe ? this.authorName(m) : null;
     const incoming: IncomingMessage = {
       chatJid,
       id: m.key.id,
       rawJid: raw,
+      participant: group ? (m.key.participant ?? null) : null,
       fromMe: !!m.key.fromMe,
       at,
-      text: extracted.text,
+      text: author ? `${author}: ${extracted.text}` : extracted.text,
       kind: extracted.kind,
       media: media ? JSON.stringify(media) : null,
     };
     const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
     const result = this.store.addMessage(incoming, isLive);
-    if (!m.key.fromMe && m.pushName) this.store.setNames(chatJid, { push: m.pushName });
+    if (!group && !m.key.fromMe && m.pushName) this.store.setNames(chatJid, { push: m.pushName });
     if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive });
+  }
+
+  /** Nome do autor em grupo: agenda, depois nome do perfil, depois número. */
+  private authorName(m: WAMessage): string {
+    const raw = m.key.participantAlt && isPnUser(m.key.participantAlt) ? m.key.participantAlt : m.key.participant;
+    if (!raw) return m.pushName || "Participante";
+    const jid = this.canonical(raw, m.key.participantAlt);
+    if (!isJidGroup(jid)) {
+      const known = this.store.contactName(jid);
+      if (known) return known;
+    }
+    return m.pushName || (isPnUser(jid) ? `+${jid.split("@")[0]}` : "Participante");
+  }
+
+  private setGroupName(jid: string | undefined, subject: string | undefined) {
+    if (!jid || !subject || !isJidGroup(jid)) return;
+    if (!this.store.setNames(jid, { saved: subject })) return;
+    const chat = this.store.getChat(jid);
+    if (chat && chat.lastAt > 0) this.emit("chat", chat);
+  }
+
+  /** Busca os nomes de todos os grupos de que o número participa. Só leitura. */
+  private async loadGroups(sock: WASocket) {
+    try {
+      const groups = await sock.groupFetchAllParticipating();
+      for (const g of Object.values(groups)) this.setGroupName(g.id, g.subject);
+    } catch (error) {
+      process.stderr.write(`[whatsapp] grupos não carregaram: ${error instanceof Error ? error.message : error}
+`);
+    }
   }
 
   async start(): Promise<void> {
@@ -141,6 +177,7 @@ export class WhatsApp extends EventEmitter<{
         this.setState({ status: "conectado", qr: null, error: null, me });
         // Depois do histórico inicial; numa reconexão comum é só uma consulta à configuração.
         setTimeout(() => void this.backfillContacts(sock), 20000);
+        void this.loadGroups(sock);
       }
       if (u.connection === "close") {
         if (this.sock !== sock) return;
@@ -165,7 +202,7 @@ export class WhatsApp extends EventEmitter<{
     sock.ev.on("messaging-history.set", ({ chats, contacts, messages, lidPnMappings }) => {
       for (const map of lidPnMappings ?? []) this.learnLid(map.lid, map.pn);
       for (const c of chats) {
-        if (!isPersonal(c.id)) continue;
+        if (!isConversation(c.id)) continue;
         const jid = this.canonical(c.id, c.pnJid);
         const unread = Number(c.unreadCount ?? 0);
         this.store.ensureChat(jid, { status: unread > 0 ? "aberta" : "resolvida", unread: Math.max(0, unread) });
@@ -176,6 +213,8 @@ export class WhatsApp extends EventEmitter<{
       this.emit("reload");
     });
 
+    sock.ev.on("groups.upsert", (list) => list.forEach((g) => this.setGroupName(g.id, g.subject)));
+    sock.ev.on("groups.update", (list) => list.forEach((g) => this.setGroupName(g.id, g.subject)));
     sock.ev.on("lid-mapping.update", (map) => this.learnLid(map.lid, map.pn));
     sock.ev.on("contacts.upsert", (list) => list.forEach((c) => this.applyContact(c)));
     sock.ev.on("contacts.update", (list) => list.forEach((c) => this.applyContact(c)));
@@ -188,7 +227,7 @@ export class WhatsApp extends EventEmitter<{
     if (!c.id) return;
     if (c.lid && c.phoneNumber) this.learnLid(jidNormalizedUser(c.lid), jidNormalizedUser(c.phoneNumber));
     const raw = c.phoneNumber ?? c.id;
-    if (!isPersonal(raw)) return;
+    if (!isConversation(raw) || isJidGroup(raw)) return;
     const jid = this.canonical(raw);
     const changed = this.store.setNames(jid, { saved: c.name, push: c.notify ?? c.verifiedName });
     const chat = changed ? this.store.getChat(jid) : null;
@@ -217,9 +256,11 @@ export class WhatsApp extends EventEmitter<{
     if (sent) this.ingest(sent, true);
   }
 
-  async markRead(keys: { id: string; rawJid: string }[]): Promise<void> {
+  async markRead(keys: { id: string; rawJid: string; participant: string | null }[]): Promise<void> {
     if (!this.sock || !keys.length) return;
-    await this.sock.readMessages(keys.map((k) => ({ remoteJid: k.rawJid, id: k.id, fromMe: false })));
+    await this.sock.readMessages(
+      keys.map((k) => ({ remoteJid: k.rawJid, id: k.id, fromMe: false, ...(k.participant ? { participant: k.participant } : {}) })),
+    );
   }
 
   /** Desconecta este aparelho do WhatsApp e volta a mostrar o QR. */

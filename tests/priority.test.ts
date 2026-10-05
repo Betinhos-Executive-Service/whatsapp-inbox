@@ -5,7 +5,7 @@ import { priorityLevel, priorityScore } from "../ui/priority.ts";
 
 const now = Date.UTC(2026, 9, 6, 12);
 const base: Chat = {
-  jid: "x", name: "x", phone: null, lastAt: now - 3600_000, lastText: "?", lastFromMe: false, unread: 1,
+  jid: "x", name: "x", phone: null, isGroup: false, lastAt: now - 3600_000, lastText: "?", lastFromMe: false, unread: 1,
   status: "aberta", label: null, labelSource: null, ai: null, aiError: null, note: null, reminderAt: null,
 };
 
