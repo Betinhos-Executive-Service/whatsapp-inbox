@@ -65,6 +65,12 @@ export class WhatsApp extends EventEmitter<{
     return this.store.pnForLid(jidNormalizedUser(raw)) ?? jidNormalizedUser(raw);
   }
 
+  /** Outro número no QR = outra caixa de entrada: as conversas do número anterior saem. */
+  private checkAccount(me: string | null) {
+    if (!me || !isPnUser(me)) return;
+    if (this.store.switchAccount(me.split("@")[0])) this.emit("reload");
+  }
+
   private learnLid(lid: string, pn: string) {
     if (!isLidUser(lid) || !isPnUser(pn) || this.store.pnForLid(lid) === pn) return;
     const merged = this.store.mapLid(lid, pn);
@@ -97,6 +103,8 @@ export class WhatsApp extends EventEmitter<{
     this.stopped = false;
     this.setState({ status: this.retries ? "reconectando" : "iniciando", qr: null, error: null });
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    // Sessão salva de outro número (ex.: data/auth trocado): separa antes de qualquer evento.
+    if (state.creds.me?.id) this.checkAccount(jidNormalizedUser(state.creds.me.id));
     const version = await fetchLatestBaileysVersion()
       .then((r) => r.version)
       .catch(() => undefined);
@@ -113,7 +121,11 @@ export class WhatsApp extends EventEmitter<{
     });
     this.sock = sock;
 
-    sock.ev.on("creds.update", saveCreds);
+    sock.ev.on("creds.update", (update) => {
+      // Logo depois de ler o QR o número já é conhecido, antes do histórico chegar.
+      if (update.me?.id) this.checkAccount(jidNormalizedUser(update.me.id));
+      void saveCreds();
+    });
 
     sock.ev.on("connection.update", async (u) => {
       if (u.qr) {
@@ -121,7 +133,9 @@ export class WhatsApp extends EventEmitter<{
       }
       if (u.connection === "open") {
         this.retries = 0;
-        this.setState({ status: "conectado", qr: null, error: null, me: sock.user?.id ? jidNormalizedUser(sock.user.id) : null });
+        const me = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+        this.checkAccount(me);
+        this.setState({ status: "conectado", qr: null, error: null, me });
         // Depois do histórico inicial; numa reconexão comum é só uma consulta à configuração.
         setTimeout(() => void this.backfillContacts(sock), 20000);
       }

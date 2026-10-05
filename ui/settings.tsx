@@ -1,4 +1,4 @@
-import { KeyRound, LoaderCircle, LogOut, Plus, Tags, Trash2, X } from "lucide-react";
+import { Download, KeyRound, LoaderCircle, Plus, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, type AppState, type Label } from "./api.ts";
 
@@ -22,7 +22,7 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
   const [auto, setAuto] = useState(state.jev.autoClassify);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<"discard" | "logout" | null>(null);
+  const [confirm, setConfirm] = useState<"discard" | "logout" | "reset" | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<Element | null>(null);
@@ -114,10 +114,11 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
     }
   };
 
-  const logout = async () => {
+  const accountAction = async (kind: "logout" | "reset") => {
     setLoggingOut(true);
     try {
-      onSaved(await api.logout(), "WhatsApp desconectado deste computador.");
+      const next = kind === "logout" ? await api.logout() : await api.reset(true);
+      onSaved(next, kind === "logout" ? "WhatsApp desconectado. Leia o QR com o número que quer usar." : "Conversas apagadas. Leia o QR para trazer o histórico de novo.");
       onClose();
     } catch (e) {
       notify("error", (e as Error).message);
@@ -240,30 +241,43 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
 
           <section className="surface stack">
             <h3 className="eyebrow">
-              <LogOut size={14} aria-hidden /> WhatsApp
+              <Smartphone size={14} aria-hidden /> Conta e dados
             </h3>
             <p className="hint">
               {connected && state.connection.me
                 ? `Conectado como +${state.connection.me.split("@")[0]}.`
-                : "Nenhum WhatsApp conectado agora."}
+                : "Nenhum WhatsApp conectado agora."}{" "}
+              Cada número tem a sua caixa de entrada: ao conectar outro número, as conversas do anterior saem deste computador.
             </p>
-            {confirm === "logout" ? (
+            {confirm === "logout" || confirm === "reset" ? (
               <div className="alert alert--danger stack" role="alert">
-                <p>Desconectar este computador? Para voltar a usar, será preciso ler o código QR de novo. As conversas salvas continuam aqui.</p>
+                <p>
+                  {confirm === "logout"
+                    ? "Desconectar este número? Depois leia o QR com o número que quer usar. Se for outro número, as conversas atuais são apagadas deste computador."
+                    : "Apagar todas as conversas deste computador e ler o QR de novo? O histórico do número conectado volta pelo WhatsApp. Etiquetas e configurações ficam."}
+                </p>
                 <div className="cluster">
                   <button className="button button--secondary" onClick={() => setConfirm(null)} disabled={loggingOut}>
-                    Manter conectado
+                    Cancelar
                   </button>
-                  <button className="button button--danger" onClick={logout} disabled={loggingOut} aria-busy={loggingOut || undefined}>
+                  <button className="button button--danger" onClick={() => accountAction(confirm)} disabled={loggingOut} aria-busy={loggingOut || undefined}>
                     {loggingOut && <LoaderCircle className="spin" size={16} aria-hidden />}
-                    Desconectar
+                    {confirm === "logout" ? "Desconectar" : "Apagar e reconectar"}
                   </button>
                 </div>
               </div>
             ) : (
-              <button className="button button--secondary" disabled={!connected} onClick={() => setConfirm("logout")}>
-                Desconectar este computador
-              </button>
+              <div className="cluster">
+                <button className="button button--secondary" disabled={!connected} onClick={() => setConfirm("logout")}>
+                  Trocar de número
+                </button>
+                <button className="button button--secondary" onClick={() => setConfirm("reset")}>
+                  <Trash2 size={16} aria-hidden /> Apagar conversas e reconectar
+                </button>
+                <a className="button button--ghost" href="/api/backup" download>
+                  <Download size={16} aria-hidden /> Baixar backup
+                </a>
+              </div>
             )}
           </section>
         </div>

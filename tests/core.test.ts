@@ -88,6 +88,24 @@ test("nome que chega antes da conversa é herdado; conversa vazia fica fora da l
   assert.equal(s.getChat(other)?.name, "Ana pelo LID");
 });
 
+test("trocar o número no QR apaga as conversas do número anterior; o mesmo número mantém", () => {
+  const s = new Store(":memory:");
+  assert.equal(s.switchAccount("5511000000001"), false);
+  s.addMessage(msg(), true);
+  s.setNames(PN, { saved: "Ana" });
+  s.saveLabels([{ name: "Cotação", description: "" }, { name: "Outros", description: "" }]);
+  s.setSetting("jev_api_key", "chave-de-teste-local");
+  assert.equal(s.switchAccount("5511000000001"), false);
+  assert.equal(s.listChats().length, 1);
+  assert.equal(s.switchAccount("5511000000002"), true);
+  assert.equal(s.listChats().length, 0);
+  assert.equal(s.listMessages(PN, null).length, 0);
+  // Etiquetas e configurações não são do número: ficam.
+  assert.equal(s.listLabels().length, 2);
+  assert.equal(s.getSetting("jev_api_key"), "chave-de-teste-local");
+  assert.equal(s.getSetting("account"), "5511000000002");
+});
+
 test("markRead devolve as chaves das não lidas e zera o contador", () => {
   const s = new Store(":memory:");
   s.addMessage(msg({ id: "a", at: 1 }), true);
@@ -147,6 +165,8 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       classify: async () => null,
       saveSettings: () => undefined,
       logout: async () => undefined,
+      reset: async () => undefined,
+      backup: async () => "",
       subscribe: (res) => res.end(),
       onChatChanged: () => undefined,
     }),

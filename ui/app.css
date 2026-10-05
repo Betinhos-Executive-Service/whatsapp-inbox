@@ -101,7 +101,7 @@ ul, ol { margin: 0; padding: 0; }
   border-radius: var(--bt-radius-md);
   font-size: var(--bt-font-size-13);
   font-weight: var(--bt-font-weight-extrabold);
-  line-height: 1; white-space: nowrap; cursor: pointer; user-select: none;
+  line-height: 1; white-space: nowrap; cursor: pointer; user-select: none; text-decoration: none;
   -webkit-tap-highlight-color: transparent;
   transition: transform var(--bt-duration-fast) var(--bt-ease-out), background-color var(--bt-duration-fast) ease, filter var(--bt-duration-fast) ease;
 }

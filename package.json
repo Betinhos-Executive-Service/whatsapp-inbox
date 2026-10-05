@@ -78,7 +78,8 @@
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false,
-      "shortcutName": "WhatsApp Inbox"
+      "shortcutName": "WhatsApp Inbox",
+      "artifactName": "WhatsApp-Inbox-Setup-${version}.${ext}"
     },
     "publish": [
       {

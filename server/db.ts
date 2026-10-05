@@ -334,6 +334,29 @@ export class Store {
     });
   }
 
+  // ---- conta conectada
+
+  /** Apaga conversas, mensagens e contatos deste computador. Etiquetas e configurações ficam. */
+  clearConversations(): void {
+    this.tx(() => {
+      this.db.exec("delete from messages; delete from chats; delete from contacts; delete from lid_map;");
+      // A agenda precisa ser pedida de novo na próxima conexão.
+      this.setSetting("contacts_backfill", null);
+    });
+  }
+
+  /**
+   * Chamado quando o WhatsApp conecta. Se o número for outro, as conversas do número
+   * anterior saem antes de chegar o histórico do novo. Devolve true se apagou.
+   */
+  switchAccount(number: string): boolean {
+    const previous = this.getSetting("account");
+    if (previous === number) return false;
+    if (previous) this.clearConversations();
+    this.setSetting("account", number);
+    return previous !== null;
+  }
+
   // ---- etiquetas e configurações
 
   listLabels(): Label[] {

@@ -54,4 +54,5 @@ export const api = {
   saveLabels: (labels: Label[]) => request<Label[]>("PUT", "/api/labels", labels),
   saveSettings: (s: { jevApiKey?: string | null; autoClassify?: boolean }) => request<AppState>("PUT", "/api/settings", s),
   logout: () => request<AppState>("POST", "/api/logout", {}),
+  reset: (reconnect: boolean) => request<AppState>("POST", "/api/reset", { reconnect }),
 };

@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, type Chat, type Message } from "./db.ts";
 import { createHandler } from "./http.ts";
@@ -150,6 +151,19 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       broadcast("state", publicState());
     },
     logout: () => connected().logout(),
+    reset: async (reconnect) => {
+      for (const timer of pending.values()) clearTimeout(timer);
+      pending.clear();
+      store.clearConversations();
+      broadcast("reload", null);
+      // Desconectar e ler o QR de novo traz o histórico do número outra vez.
+      if (reconnect) await connected().logout();
+    },
+    backup: async () => {
+      const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
+      store.db.prepare("vacuum into ?").run(file);
+      return file;
+    },
     subscribe: (res) => {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
       res.write(`event: state\ndata: ${JSON.stringify(publicState())}\n\n`);

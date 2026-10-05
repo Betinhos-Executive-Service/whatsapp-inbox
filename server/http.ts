@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
@@ -14,6 +14,10 @@ export type Api = {
   classify: (jid: string) => Promise<unknown>;
   saveSettings: (s: { jevApiKey?: string | null; autoClassify?: boolean }) => void;
   logout: () => Promise<void>;
+  /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
+  reset: (reconnect: boolean) => Promise<void>;
+  /** Caminho de uma cópia consistente do banco, para download. */
+  backup: () => Promise<string>;
   subscribe: (res: ServerResponse) => void;
   onChatChanged: (jid: string) => void;
 };
@@ -149,6 +153,26 @@ export function createHandler(api: Api) {
     if (path === "/api/logout" && method === "POST") {
       await api.logout();
       return json(res, 200, api.state());
+    }
+    if (path === "/api/reset" && method === "POST") {
+      const { reconnect } = parse(z.object({ reconnect: z.boolean() }), await readJson(req));
+      await api.reset(reconnect);
+      return json(res, 200, api.state());
+    }
+    if (path === "/api/backup" && method === "GET") {
+      const file = await api.backup();
+      try {
+        const body = await readFile(file);
+        const stamp = new Date().toISOString().slice(0, 10);
+        res.writeHead(200, {
+          "content-type": "application/vnd.sqlite3",
+          "content-disposition": `attachment; filename="whatsapp-inbox-backup-${stamp}.db"`,
+          "cache-control": "no-store",
+        });
+        return res.end(body);
+      } finally {
+        await rm(file, { force: true });
+      }
     }
     if (path.startsWith("/api/")) throw new HttpError(404, "Rota não encontrada.");
 

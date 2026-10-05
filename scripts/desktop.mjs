@@ -2,8 +2,9 @@
 // pnpm exe      → gera o instalador em release/ (sem publicar)
 // pnpm release  → nova versão no GitHub Releases; os apps instalados avisam e atualizam
 import { execFileSync, spawn } from "node:child_process";
+import { statSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import * as esbuild from "esbuild";
 import { writeIcon } from "./icon.mjs";
 import { bumpVersion, copyHtml, root, uiOptions } from "./ui-build.mjs";
@@ -54,19 +55,52 @@ if (runOnly) {
   const electron = (await import("electron")).default;
   spawn(electron, ["."], { cwd: root, stdio: "inherit" }).on("exit", (code) => process.exit(code ?? 0));
 } else {
-  if (release) {
-    // Token da sessão do gh, só para este processo; nunca é impresso nem gravado.
-    process.env.GH_TOKEN = execFileSync("gh", ["auth", "token"], { encoding: "utf8" }).trim();
-  }
   const { build: pack } = await import("electron-builder");
-  const options = { win: ["nsis"], x64: true, publish: release ? "always" : "never" };
-  // Na primeira publicação de uma versão, o electron-builder às vezes tenta criar a mesma
-  // release duas vezes e o GitHub recusa uma delas. A segunda rodada só completa os arquivos.
-  const files = await pack(options).catch((error) => {
-    if (!release) throw error;
-    console.warn("Publicação incompleta; tentando de novo…");
-    return pack(options);
-  });
+  // O instalador e o latest.yml são gerados aqui; o envio ao GitHub é feito pelo gh (abaixo),
+  // porque o envio do electron-builder não retoma quando a conexão cai no meio.
+  const files = await pack({ win: ["nsis"], x64: true, publish: "never" });
   const installer = files.find((f) => f.endsWith(".exe"));
-  console.log(release ? `Versão v${build.version} publicada no GitHub Releases.` : `Instalador pronto: ${installer}`);
+  if (!release) {
+    console.log(`Instalador pronto: ${installer}`);
+  } else {
+    await publishRelease(build.version, files);
+  }
+}
+
+/**
+ * Publica como rascunho, envia cada arquivo com novas tentativas, confere os tamanhos no
+ * GitHub e só então libera a release. App instalado nunca enxerga uma versão incompleta.
+ */
+async function publishRelease(version, files) {
+  const tag = `v${version}`;
+  const repo = "Betinhos-Executive-Service/whatsapp-inbox";
+  const gh = (...args) => execFileSync("gh", [...args, "-R", repo], { cwd: root, encoding: "utf8" }).trim();
+  const assets = [...files.filter((f) => /\.(exe|blockmap)$/.test(f)), resolve(root, "release", "latest.yml")];
+  git("fetch", "--tags", "--quiet");
+  const previous = git("tag", "--list", "v*", "--sort=-v:refname").split(/\r?\n/).find((t) => t && t !== tag);
+  const changes = git("log", "--pretty=- %s", previous ? `${previous}..HEAD` : "HEAD")
+    .split(/\r?\n/)
+    .filter((l) => l && !l.startsWith("- release:") && !l.startsWith("- chore:"))
+    .join("\n");
+  gh("release", "create", tag, "--draft", "--target", "main", "--title", tag, "--notes", changes || "Melhorias e correções.");
+  for (const file of assets) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        gh("release", "upload", tag, file, "--clobber");
+        break;
+      } catch (error) {
+        if (attempt >= 5) throw new Error(`Falha ao enviar ${basename(file)} depois de 5 tentativas: ${error.message}`);
+        console.warn(`Envio de ${basename(file)} falhou (tentativa ${attempt}); tentando de novo…`);
+        await new Promise((r) => setTimeout(r, 3000 * attempt));
+      }
+    }
+  }
+  const remote = JSON.parse(gh("release", "view", tag, "--json", "assets")).assets;
+  for (const file of assets) {
+    const name = basename(file);
+    const found = remote.find((a) => a.name === name);
+    if (!found || found.size !== statSync(file).size) throw new Error(`Arquivo ${name} não confere no GitHub; a release ficou em rascunho.`);
+  }
+  gh("release", "edit", tag, "--draft=false", "--latest");
+  console.log(`Versão ${tag} publicada: os apps instalados vão avisar da atualização.`);
 }
