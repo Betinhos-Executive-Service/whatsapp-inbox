@@ -59,7 +59,14 @@ if (runOnly) {
     process.env.GH_TOKEN = execFileSync("gh", ["auth", "token"], { encoding: "utf8" }).trim();
   }
   const { build: pack } = await import("electron-builder");
-  const files = await pack({ win: ["nsis"], x64: true, publish: release ? "always" : "never" });
+  const options = { win: ["nsis"], x64: true, publish: release ? "always" : "never" };
+  // Na primeira publicação de uma versão, o electron-builder às vezes tenta criar a mesma
+  // release duas vezes e o GitHub recusa uma delas. A segunda rodada só completa os arquivos.
+  const files = await pack(options).catch((error) => {
+    if (!release) throw error;
+    console.warn("Publicação incompleta; tentando de novo…");
+    return pack(options);
+  });
   const installer = files.find((f) => f.endsWith(".exe"));
   console.log(release ? `Versão v${build.version} publicada no GitHub Releases.` : `Instalador pronto: ${installer}`);
 }
