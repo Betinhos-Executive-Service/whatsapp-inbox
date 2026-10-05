@@ -20,7 +20,18 @@ export type Chat = {
 export type Reminder = { id: number; chatJid: string; dueAt: number; text: string; firedAt: number | null };
 export type QuickReply = { shortcut: string; text: string };
 
-export type Message = { chatJid: string; id: string; fromMe: boolean; at: number; text: string; kind: string };
+export type Message = {
+  chatJid: string;
+  id: string;
+  fromMe: boolean;
+  at: number;
+  text: string;
+  kind: string;
+  media: { type: string; mimetype: string; fileName: string | null; size: number | null } | null;
+};
+
+export const mediaUrl = (m: Message, download = false) =>
+  `/api/media/${encodeURIComponent(m.chatJid)}/${encodeURIComponent(m.id)}${download ? "?download=1" : ""}`;
 export type Label = { name: string; description: string };
 export type Connection = {
   status: "iniciando" | "qr" | "conectado" | "reconectando" | "desconectado";
