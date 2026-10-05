@@ -5,6 +5,8 @@ import updater from "electron-updater";
 
 export type UpdateState =
   | { status: "idle" }
+  | { status: "checking" }
+  | { status: "latest"; checkedAt: number }
   | { status: "available"; version: string }
   | { status: "downloading"; version: string; percent: number }
   | { status: "installing"; version: string }
@@ -37,7 +39,10 @@ export function setupUpdates(options: {
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.on("update-available", (info) => {
     latest = info.version;
-    if (state.status === "idle" || state.status === "error") set({ status: "available", version: info.version });
+    if (!["downloading", "installing"].includes(state.status)) set({ status: "available", version: info.version });
+  });
+  autoUpdater.on("update-not-available", () => {
+    if (state.status === "checking" || state.status === "idle") set({ status: "latest", checkedAt: Date.now() });
   });
   autoUpdater.on("download-progress", (p) => {
     if (latest) set({ status: "downloading", version: latest, percent: Math.round(p.percent) });
@@ -50,7 +55,8 @@ export function setupUpdates(options: {
   });
   autoUpdater.on("error", (error) => {
     // Falha de consulta sem aviso aberto não incomoda ninguém; falha no download aparece.
-    if (state.status === "downloading" || state.status === "available") {
+    if (state.status === "checking") set({ status: "error", version: null, message: error?.message ?? String(error) });
+    else if (state.status === "downloading" || state.status === "available") {
       set({ status: "error", version: latest, message: error?.message ?? String(error) });
     }
   });
@@ -61,6 +67,20 @@ export function setupUpdates(options: {
   };
 
   ipcMain.handle("update:get", (event) => (trusted(event) ? state : { status: "idle" }));
+  ipcMain.handle("app:info", (event) => (trusted(event) ? { version: app.getVersion(), packaged: app.isPackaged } : null));
+  // "Verificar atualização" nas Configurações: responde com o estado depois da consulta.
+  ipcMain.handle("update:check", async (event) => {
+    if (!trusted(event)) return state;
+    if (!app.isPackaged) return { status: "error", version: null, message: "Atualização só funciona no app instalado." };
+    if (state.status === "downloading" || state.status === "installing") return state;
+    set({ status: "checking" });
+    try {
+      await autoUpdater.checkForUpdates();
+    } catch (error) {
+      set({ status: "error", version: null, message: error instanceof Error ? error.message : String(error) });
+    }
+    return state;
+  });
   ipcMain.handle("update:install", async (event) => {
     if (!trusted(event) || !latest) return state;
     if (state.status === "downloading" || state.status === "installing") return state;

@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
 import { STATUSES, type Store } from "./db.ts";
+import { prefsSchema, type Prefs } from "./prefs.ts";
 
 export type Api = {
   store: Store;
@@ -12,7 +13,7 @@ export type Api = {
   send: (jid: string, text: string) => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   classify: (jid: string) => Promise<unknown>;
-  saveSettings: (s: { jevApiKey?: string | null; autoClassify?: boolean }) => void;
+  saveSettings: (s: { jevApiKey?: string | null; autoClassify?: boolean; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
@@ -52,6 +53,7 @@ const chatPatchSchema = z.object({
 });
 
 const settingsSchema = z.object({
+  prefs: prefsSchema.partial().optional(),
   jevApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   autoClassify: z.boolean().optional(),
 });

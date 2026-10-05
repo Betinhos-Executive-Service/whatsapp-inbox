@@ -23,7 +23,17 @@ export type Connection = {
   me: string | null;
   error: string | null;
 };
+export type Prefs = {
+  notifyEnabled: boolean;
+  notifySound: boolean;
+  notifyPreview: boolean;
+  quietStart: string | null;
+  quietEnd: string | null;
+  startWithWindows: boolean;
+  startMinimized: boolean;
+};
 export type AppState = {
+  prefs: Prefs;
   connection: Connection;
   jev: { configured: boolean; fromEnv: boolean; autoClassify: boolean };
   labels: Label[];
@@ -52,7 +62,7 @@ export const api = {
   update: (jid: string, patch: { status?: Status; label?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),
   saveLabels: (labels: Label[]) => request<Label[]>("PUT", "/api/labels", labels),
-  saveSettings: (s: { jevApiKey?: string | null; autoClassify?: boolean }) => request<AppState>("PUT", "/api/settings", s),
+  saveSettings: (s: { jevApiKey?: string | null; autoClassify?: boolean; prefs?: Partial<Prefs> }) => request<AppState>("PUT", "/api/settings", s),
   logout: () => request<AppState>("POST", "/api/logout", {}),
   reset: (reconnect: boolean) => request<AppState>("POST", "/api/reset", { reconnect }),
 };

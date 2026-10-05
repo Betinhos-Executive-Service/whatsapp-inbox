@@ -21,6 +21,7 @@ import { api, type AppState, type Chat, type Connection, type Message, type Stat
 import { dayLabel, formatBuild, formatTime, initials, listTime, matches, percent, sameDay } from "./format.ts";
 import { SettingsDrawer } from "./settings.tsx";
 import { UpdateDialog } from "./update.tsx";
+import { desktop } from "./desktop.ts";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
@@ -603,6 +604,21 @@ function App() {
   useEffect(() => {
     if (connection.status === "conectado") setSkipConnect(false);
   }, [connection.status]);
+
+  // Clique na notificação abre a conversa; "Configurações" na bandeja abre o painel.
+  useEffect(() => {
+    const bridge = desktop();
+    if (!bridge) return;
+    const offChat = bridge.onOpenChat((jid) => {
+      setSkipConnect(true);
+      setSelected(jid);
+    });
+    const offSettings = bridge.onOpenSettings(() => setSettingsOpen(true));
+    return () => {
+      offChat();
+      offSettings();
+    };
+  }, []);
 
   return (
     <div className="app" data-view={current ? "chat" : "list"}>

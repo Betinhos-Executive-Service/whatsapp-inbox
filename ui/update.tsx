@@ -1,25 +1,7 @@
 import { Download, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-type UpdateState =
-  | { status: "idle" }
-  | { status: "available"; version: string }
-  | { status: "downloading"; version: string; percent: number }
-  | { status: "installing"; version: string }
-  | { status: "error"; version: string | null; message: string };
-
-type DesktopBridge = {
-  getUpdate: () => Promise<UpdateState>;
-  installUpdate: () => Promise<UpdateState>;
-  onUpdate: (cb: (s: UpdateState) => void) => () => void;
-  onRemind: (cb: () => void) => () => void;
-};
-
-declare global {
-  interface Window {
-    desktop?: DesktopBridge;
-  }
-}
+import type { UpdateState } from "./desktop.ts";
 
 /**
  * Aviso de versão nova, só no app desktop. Aparece toda vez que a pessoa entra no app
@@ -43,7 +25,9 @@ export function UpdateDialog() {
   }, [desktop]);
 
   const busy = state.status === "downloading" || state.status === "installing";
-  const open = !!desktop && state.status !== "idle" && (!dismissed || busy);
+  // "checking" e "latest" vêm do botão das Configurações; aviso só quando há o que fazer.
+  const actionable = ["available", "downloading", "installing", "error"].includes(state.status) && !(state.status === "error" && !state.version);
+  const open = !!desktop && actionable && (!dismissed || busy);
 
   useEffect(() => {
     if (open) requestAnimationFrame(() => primary.current?.focus());

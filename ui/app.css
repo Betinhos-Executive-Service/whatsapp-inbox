@@ -366,6 +366,29 @@ ul, ol { margin: 0; padding: 0; }
   box-shadow: var(--bt-drawer-shadow);
   animation: drawer-in var(--bt-drawer-duration-enter) var(--bt-ease-drawer);
 }
+.drawer__panel--wide { width: min(100vw, var(--bt-drawer-width-wide)); }
+.settings-tabs {
+  display: flex; gap: var(--bt-space-1); overflow-x: auto; scrollbar-width: none;
+  padding: var(--bt-space-2) var(--bt-space-5) 0;
+  background-color: var(--bt-color-surface);
+  border-bottom: var(--bt-border-width-default) solid var(--bt-color-border);
+}
+.settings-tabs__item {
+  display: inline-flex; align-items: center; gap: var(--bt-space-1-5); flex: 0 0 auto;
+  min-height: 40px; padding: 0 var(--bt-space-3);
+  border: 0; border-bottom: var(--bt-border-width-emphasis) solid transparent;
+  background: transparent; color: var(--bt-color-text-secondary);
+  font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-extrabold);
+  cursor: pointer; transition: color var(--bt-duration-fast) ease, border-color var(--bt-duration-fast) ease;
+}
+.settings-tabs__item[aria-selected='true'] { color: var(--bt-color-action); border-bottom-color: var(--bt-color-action); }
+.settings-tabs__item:focus-visible { box-shadow: inset 0 0 0 2px var(--bt-focus-border); }
+@media (hover: hover) and (pointer: fine) {
+  .settings-tabs__item:not([aria-selected='true']):hover { color: var(--bt-color-brand); }
+}
+.check__text { display: flex; flex-direction: column; gap: 2px; }
+.check--disabled { cursor: not-allowed; opacity: var(--bt-opacity-disabled); }
+.field--time { width: 120px; }
 .drawer__header { display: flex; align-items: center; justify-content: space-between; min-height: 64px; padding: 0 var(--bt-space-5); background-color: var(--bt-color-surface); border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); }
 .drawer__body { flex: 1; overflow-y: auto; padding: var(--bt-space-4) var(--bt-space-5); display: flex; flex-direction: column; gap: var(--bt-space-3); }
 .drawer__footer { padding: var(--bt-space-3) var(--bt-space-5) var(--bt-space-5); background-color: var(--bt-color-surface); border-top: var(--bt-border-width-default) solid var(--bt-color-border); }

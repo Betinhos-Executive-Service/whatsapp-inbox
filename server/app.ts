@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, type Chat, type Message } from "./db.ts";
 import { createHandler } from "./http.ts";
+import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import type { Jev } from "./jev.ts";
 import type { ConnectionState, WhatsApp } from "./whatsapp.ts";
 
@@ -28,9 +29,11 @@ export type AppOptions = {
   waDisabled?: boolean;
   /** Mensagem recebida ao vivo (não histórico), para notificação do app. */
   onIncoming?: (chat: Chat, message: Message) => void;
+  /** Preferências mudaram (e uma vez ao iniciar): o app desktop aplica inicialização etc. */
+  onPrefs?: (prefs: Prefs) => void;
 };
 
-export type RunningApp = { port: number; close: () => Promise<void> };
+export type RunningApp = { port: number; prefs: () => Prefs; close: () => Promise<void> };
 
 export async function startApp(options: AppOptions): Promise<RunningApp> {
   mkdirSync(options.dataDir, { recursive: true });
@@ -104,6 +107,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       ? { status: "desconectado", qr: null, me: null, error: "WhatsApp desligado (WA_DISABLED=1)." }
       : (wa?.state ?? bootingState),
     jev: { configured: !!jevKey(), fromEnv: !!process.env.JEV_API_KEY, autoClassify: autoClassify() },
+    prefs: readPrefs(store),
     labels: store.listLabels(),
   });
 
@@ -146,6 +150,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     classify,
     saveSettings: (s) => {
+      if (s.prefs) options.onPrefs?.(savePrefs(store, s.prefs));
       if (s.jevApiKey !== undefined) store.setSetting("jev_api_key", s.jevApiKey);
       if (s.autoClassify !== undefined) store.setSetting("auto_classify", s.autoClassify ? "1" : "0");
       broadcast("state", publicState());
@@ -189,8 +194,11 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   if (!disabled) startWhatsApp().catch((e) => process.stderr.write(`[whatsapp] ${e instanceof Error ? e.message : e}\n`));
   if (jevKey()) void getJev();
 
+  options.onPrefs?.(readPrefs(store));
+
   return {
     port,
+    prefs: () => readPrefs(store),
     close: async () => {
       clearInterval(heartbeat);
       for (const timer of pending.values()) clearTimeout(timer);

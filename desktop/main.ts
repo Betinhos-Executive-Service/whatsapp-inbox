@@ -1,8 +1,10 @@
 // Processo principal do app desktop: sobe o servidor local dentro do próprio Electron,
 // abre a janela nele e mantém tudo rodando na bandeja quando a janela é fechada.
-import { app, BrowserWindow, dialog, Menu, nativeImage, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeImage, Notification, shell, Tray } from "electron";
 import { join } from "node:path";
 import { startApp, type RunningApp } from "../server/app.ts";
+import type { Chat, Message } from "../server/db.ts";
+import { inQuietHours, type Prefs } from "../server/prefs.ts";
 import { setupUpdates } from "./updates.ts";
 
 const PRODUCT = "WhatsApp Inbox";
@@ -14,6 +16,8 @@ let quitting = false;
 let trayHintShown = false;
 let origin: string | null = null;
 let updates: ReturnType<typeof setupUpdates> | null = null;
+// Notificações vivas: sem referência, o Windows pode descartar o clique.
+const shown = new Set<Notification>();
 
 const iconPath = () => join(app.getAppPath(), "dist", "icon.ico");
 
@@ -24,6 +28,38 @@ function showWindow() {
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
+}
+
+function sendToPage(channel: string, ...args: unknown[]) {
+  window?.webContents.send(channel, ...args);
+}
+
+function applyPrefs(prefs: Prefs) {
+  // Empacotado só: em desenvolvimento registraria o electron.exe genérico.
+  if (!app.isPackaged) return;
+  app.setLoginItemSettings({ openAtLogin: prefs.startWithWindows, args: prefs.startMinimized ? ["--hidden"] : [] });
+}
+
+function notify(chat: Chat, message: Message) {
+  const prefs = server?.prefs();
+  if (!prefs?.notifyEnabled || !Notification.isSupported()) return;
+  // Com o app na frente a mensagem já aparece na tela.
+  if (window?.isVisible() && window.isFocused()) return;
+  if (inQuietHours(prefs)) return;
+  const n = new Notification({
+    title: chat.name,
+    body: prefs.notifyPreview ? message.text.slice(0, 180) : "Nova mensagem",
+    silent: !prefs.notifySound,
+    icon: iconPath(),
+  });
+  shown.add(n);
+  n.on("click", () => {
+    showWindow();
+    sendToPage("app:open-chat", chat.jid);
+  });
+  n.on("close", () => shown.delete(n));
+  n.show();
+  setTimeout(() => shown.delete(n), 60_000);
 }
 
 function createWindow(url: string) {
@@ -78,18 +114,14 @@ function createWindow(url: string) {
 }
 
 function buildTrayMenu() {
-  const login = app.getLoginItemSettings({ args: ["--hidden"] });
   tray?.setContextMenu(
     Menu.buildFromTemplate([
       { label: `Abrir ${PRODUCT}`, click: showWindow },
-      { type: "separator" },
       {
-        label: "Iniciar com o Windows",
-        type: "checkbox",
-        checked: login.openAtLogin,
-        click: (item) => {
-          app.setLoginItemSettings({ openAtLogin: item.checked, args: ["--hidden"] });
-          buildTrayMenu();
+        label: "Configurações",
+        click: () => {
+          showWindow();
+          sendToPage("app:open-settings");
         },
       },
       { type: "separator" },
@@ -124,6 +156,8 @@ if (!app.requestSingleInstanceLock()) {
         port: 0,
         dataDir: join(app.getPath("userData"), "data"),
         distDir: join(app.getAppPath(), "dist"),
+        onIncoming: notify,
+        onPrefs: applyPrefs,
       });
     } catch (error) {
       dialog.showErrorBox(PRODUCT, `Não foi possível iniciar o app.\n\n${error instanceof Error ? error.message : String(error)}`);

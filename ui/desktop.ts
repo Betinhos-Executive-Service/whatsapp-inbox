@@ -1,0 +1,28 @@
+// Ponte com o app desktop (preload). No navegador (pnpm dev) ela não existe.
+export type UpdateState =
+  | { status: "idle" }
+  | { status: "checking" }
+  | { status: "latest"; checkedAt: number }
+  | { status: "available"; version: string }
+  | { status: "downloading"; version: string; percent: number }
+  | { status: "installing"; version: string }
+  | { status: "error"; version: string | null; message: string };
+
+export type DesktopBridge = {
+  getUpdate: () => Promise<UpdateState>;
+  installUpdate: () => Promise<UpdateState>;
+  checkUpdate: () => Promise<UpdateState>;
+  appInfo: () => Promise<{ version: string; packaged: boolean } | null>;
+  onUpdate: (cb: (s: UpdateState) => void) => () => void;
+  onRemind: (cb: () => void) => () => void;
+  onOpenChat: (cb: (jid: string) => void) => () => void;
+  onOpenSettings: (cb: () => void) => () => void;
+};
+
+declare global {
+  interface Window {
+    desktop?: DesktopBridge;
+  }
+}
+
+export const desktop = (): DesktopBridge | undefined => window.desktop;
