@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -78,13 +78,25 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   const localAi = new LocalAI(join(options.dataDir, "models"), () => broadcast("ai", aiState()));
   const aiInstructions = () => store.getSetting("ai_instructions") || DEFAULT_INSTRUCTIONS;
   const savedModel = store.getSetting("ai_model");
-  if (savedModel === "leve" || savedModel === "melhor") void localAi.select(savedModel);
+  // Sem escolha salva: usa o que já estiver baixado (o melhor, se houver os dois).
+  const installedNow = localAi.installed();
+  // A escolha salva vale se o modelo existir; senão usa o que estiver baixado (o melhor, se houver os dois).
+  const saved = savedModel === "leve" || savedModel === "melhor" ? savedModel : null;
+  const initialModel: ModelId =
+    saved && (installedNow.includes(saved) || !installedNow.length) ? saved : installedNow.includes("melhor") || !installedNow.length ? "melhor" : "leve";
+  void localAi.select(initialModel);
   const aiState = () => ({
     ...localAi.status(),
     modelId: localAi.model_,
     model: MODELS[localAi.model_].name,
     size: MODELS[localAi.model_].size,
-    models: (Object.keys(MODELS) as ModelId[]).map((id) => ({ id, name: MODELS[id].name, size: MODELS[id].size, installed: localAi.installed().includes(id) })),
+    models: (Object.keys(MODELS) as ModelId[]).map((id) => ({
+      id,
+      name: MODELS[id].name,
+      size: MODELS[id].size,
+      installed: localAi.installed().includes(id),
+      partial: existsSync(join(options.dataDir, "models", `${MODELS[id].file}.ipull`)),
+    })),
     instructions: aiInstructions(),
     customInstructions: !!store.getSetting("ai_instructions"),
   });
@@ -205,8 +217,9 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     ai: {
       status: aiState,
-      download: () => void localAi.download(),
-      remove: () => localAi.remove(),
+      download: (id) => void localAi.download(id).then(() => store.setSetting("ai_model", localAi.model_)),
+      cancel: () => localAi.cancelDownload(),
+      remove: (id) => localAi.remove(id),
       draft: (jid) => {
         const { chat, messages } = chatOrThrow(jid);
         return localAi.draft(chat.name, messages, aiInstructions());

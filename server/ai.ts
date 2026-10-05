@@ -26,7 +26,7 @@ export const DEFAULT_INSTRUCTIONS =
 
 export type AiStatus =
   | { state: "ausente" }
-  | { state: "baixando"; percent: number }
+  | { state: "baixando"; id: ModelId; percent: number; downloaded: number; total: number; speed: number; eta: number | null }
   | { state: "pronto"; loaded: boolean }
   | { state: "erro"; message: string };
 
@@ -50,7 +50,18 @@ export class LocalAI {
   private readonly dir: string;
   private modelId: ModelId = "melhor";
   private readonly onStatus: (s: AiStatus) => void;
-  private downloading: { percent: number } | null = null;
+  private downloading: {
+    id: ModelId;
+    percent: number;
+    downloaded: number;
+    total: number;
+    speed: number;
+    eta: number | null;
+    cancel: (() => Promise<void>) | null;
+  } | null = null;
+  private cancelled = false;
+  /** Modelo que acabou de baixar (a tela mostra a confirmação uma vez). */
+  justFinished: ModelId | null = null;
   private lastError: string | null = null;
   // Objetos do node-llama-cpp (tipados como unknown para não carregar o módulo no início).
   private model: { dispose: () => Promise<void> } | null = null;
@@ -89,7 +100,10 @@ export class LocalAI {
   }
 
   status(): AiStatus {
-    if (this.downloading) return { state: "baixando", percent: this.downloading.percent };
+    if (this.downloading) {
+      const { id, percent, downloaded, total, speed, eta } = this.downloading;
+      return { state: "baixando", id, percent, downloaded, total, speed: Math.round(speed), eta };
+    }
     if (this.lastError) return { state: "erro", message: this.lastError };
     return existsSync(this.path) ? { state: "pronto", loaded: !!this.model } : { state: "ausente" };
   }
@@ -98,43 +112,80 @@ export class LocalAI {
     this.onStatus(this.status());
   }
 
-  /** Baixa o modelo em segundo plano; o progresso sai por onStatus. */
-  async download(): Promise<void> {
-    if (this.downloading || existsSync(this.path)) return;
+  /**
+   * Baixa um modelo em segundo plano. O progresso (bytes, velocidade, tempo restante) sai por
+   * onStatus no máximo 4×/s. Cancelar guarda o pedaço baixado: baixar de novo continua dali.
+   */
+  async download(id: ModelId = this.modelId): Promise<void> {
+    if (this.downloading || existsSync(join(this.dir, MODELS[id].file))) return;
+    const spec = MODELS[id];
     this.lastError = null;
-    this.downloading = { percent: 0 };
+    this.downloading = { id, percent: 0, downloaded: 0, total: spec.size, speed: 0, eta: null, cancel: null };
     this.emit();
     try {
       await mkdir(this.dir, { recursive: true });
       const { createModelDownloader } = await import("node-llama-cpp");
+      let lastAt = Date.now();
+      let lastBytes = 0;
+      let lastEmit = 0;
       const downloader = await createModelDownloader({
-        modelUri: this.spec.url,
+        modelUri: spec.url,
         dirPath: this.dir,
-        fileName: this.spec.file,
+        fileName: spec.file,
         showCliProgress: false,
+        deleteTempFileOnCancel: false,
         onProgress: ({ downloadedSize, totalSize }) => {
-          const percent = Math.floor((downloadedSize / (totalSize || this.spec.size)) * 100);
-          if (this.downloading && percent !== this.downloading.percent) {
-            this.downloading.percent = percent;
+          const d = this.downloading;
+          if (!d) return;
+          const now = Date.now();
+          if (now - lastAt >= 1000) {
+            // média móvel: a velocidade não pula a cada pacote
+            const instant = ((downloadedSize - lastBytes) * 1000) / (now - lastAt);
+            d.speed = d.speed ? d.speed * 0.7 + instant * 0.3 : instant;
+            lastAt = now;
+            lastBytes = downloadedSize;
+          }
+          d.downloaded = downloadedSize;
+          d.total = totalSize || spec.size;
+          d.percent = Math.min(100, Math.floor((downloadedSize / d.total) * 100));
+          d.eta = d.speed > 0 ? Math.round((d.total - downloadedSize) / d.speed) : null;
+          if (now - lastEmit >= 250) {
+            lastEmit = now;
             this.emit();
           }
         },
       });
-      await downloader.download();
-      const { size } = await stat(this.path);
-      if (size < this.spec.size * 0.95) throw new Error("O arquivo do modelo veio incompleto. Tente de novo.");
+      this.downloading.cancel = () => downloader.cancel({ deleteTempFile: false });
+      // Pausa pedida enquanto a conexão abria: atende agora.
+      if (this.cancelled) await downloader.cancel({ deleteTempFile: false });
+      else await downloader.download();
+      if (this.cancelled) throw new Error("pausado");
+      const { size } = await stat(join(this.dir, spec.file));
+      if (size < spec.size * 0.95) throw new Error("O arquivo do modelo veio incompleto. Tente de novo.");
+      this.justFinished = id;
+      // Primeiro modelo baixado (ou o escolhido ainda não existe): passa a usar este.
+      if (!existsSync(this.path)) this.modelId = id;
     } catch (error) {
-      await rm(this.path, { force: true }).catch(() => undefined);
-      this.lastError = `Não foi possível baixar o modelo. Confira a internet e o espaço em disco. (${error instanceof Error ? error.message : String(error)})`;
+      if (this.cancelled) {
+        this.cancelled = false;
+      } else {
+        this.lastError = `Não foi possível baixar. Confira a internet e o espaço em disco; baixar de novo continua de onde parou. (${error instanceof Error ? error.message : String(error)})`;
+      }
     } finally {
       this.downloading = null;
       this.emit();
     }
   }
 
-  async remove(): Promise<void> {
-    await this.unload();
-    await rm(this.path, { force: true });
+  async cancelDownload(): Promise<void> {
+    if (!this.downloading) return;
+    this.cancelled = true;
+    await this.downloading.cancel?.();
+  }
+
+  async remove(id: ModelId = this.modelId): Promise<void> {
+    if (id === this.modelId) await this.unload();
+    await rm(join(this.dir, MODELS[id].file), { force: true });
     this.lastError = null;
     this.emit();
   }

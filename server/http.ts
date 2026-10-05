@@ -20,8 +20,9 @@ export type Api = {
   media: (jid: string, id: string) => Promise<{ body: Buffer; mimetype: string; fileName: string | null }>;
   ai: {
     status: () => unknown;
-    download: () => void;
-    remove: () => Promise<void>;
+    download: (id: "leve" | "melhor") => void;
+    cancel: () => Promise<void>;
+    remove: (id: "leve" | "melhor") => Promise<void>;
     draft: (jid: string) => Promise<string>;
     summarize: (jid: string) => Promise<unknown>;
     setInstructions: (text: string | null) => void;
@@ -185,13 +186,18 @@ export function createHandler(api: Api) {
     }
 
     if (path === "/api/ai" && method === "GET") return json(res, 200, api.ai.status());
+    const modelId = z.object({ id: z.enum(["leve", "melhor"]) });
     if (path === "/api/ai/download" && method === "POST") {
-      await readJson(req);
-      api.ai.download();
+      api.ai.download(parse(modelId, await readJson(req)).id);
       return json(res, 202, api.ai.status());
     }
-    if (path === "/api/ai/model" && method === "DELETE") {
-      await api.ai.remove();
+    if (path === "/api/ai/download/cancel" && method === "POST") {
+      await readJson(req);
+      await api.ai.cancel();
+      return json(res, 200, api.ai.status());
+    }
+    if (path === "/api/ai/remove" && method === "POST") {
+      await api.ai.remove(parse(modelId, await readJson(req)).id);
       return json(res, 200, api.ai.status());
     }
     if (path === "/api/ai/model" && method === "PUT") {

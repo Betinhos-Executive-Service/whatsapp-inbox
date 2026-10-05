@@ -1,18 +1,21 @@
 import { Bell, Download, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { api, type AppState, type Label, type Prefs, type QuickReply } from "./api.ts";
+import { api, type AiStatus, type AppState, type Label, type Prefs, type QuickReply } from "./api.ts";
 import { desktop, type ReleaseInfo, type UpdateState } from "./desktop.ts";
-import { gb, useAiStatus } from "./ai-state.ts";
+import { useAiStatus } from "./ai-state.ts";
+import { AiModels } from "./ai-models.tsx";
 
 type Props = {
   open: boolean;
+  /** Aba ao abrir (ex.: "ia" pelo botão de IA da conversa). */
+  initialTab?: Tab;
   state: AppState;
   onClose: () => void;
   onSaved: (state: AppState, message: string) => void;
   notify: (kind: "error" | "success", text: string) => void;
 };
 
-type Tab = "geral" | "notificacoes" | "ia" | "etiquetas" | "respostas" | "conta";
+export type Tab = "geral" | "notificacoes" | "ia" | "etiquetas" | "respostas" | "conta";
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: "geral", label: "Geral", icon: <Settings2 size={16} aria-hidden /> },
   { id: "notificacoes", label: "Notificações", icon: <Bell size={16} aria-hidden /> },
@@ -43,68 +46,14 @@ function Toggle({ checked, onChange, label, hint, disabled }: { checked: boolean
 }
 
 function LocalAiPanel({ instructions, setInstructions }: { instructions: string; setInstructions: (v: string) => void }) {
-  const ai = useAiStatus();
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const live = useAiStatus();
+  const [local, setLocal] = useState<AiStatus | null>(null);
+  // O evento ao vivo vence; a resposta da ação cobre o intervalo até ele chegar.
+  const ai = live ?? local;
   if (!ai) return <p className="hint">Carregando…</p>;
-  const act = (p: Promise<unknown>) => p.catch((e: Error) => setError(e.message));
   return (
     <div className="stack">
-      <p className="hint">
-        Escreve rascunhos de resposta e resume conversas usando o modelo {ai.model}, que roda neste computador: o texto das conversas não sai daqui.
-        Funciona sem internet depois de baixado. Em PCs mais simples, cada sugestão leva alguns segundos.
-      </p>
-      <div className="versions" role="radiogroup" aria-label="Modelo da IA local">
-        {ai.models.map((m) => (
-          <label key={m.id} className="version">
-            <input type="radio" name="ai-model" checked={ai.modelId === m.id} disabled={ai.state === "baixando"} onChange={() => void act(api.selectAi(m.id))} />
-            <span className="version__info">
-              <strong>
-                {m.name} · {gb(m.size)} {m.installed ? "· baixado" : ""}
-              </strong>
-              <span className="hint">
-                {m.id === "leve"
-                  ? "Mais rápido e ocupa menos. Bom para resumo; rascunhos mais simples."
-                  : "Escreve rascunhos bem melhores. Cerca de 2× mais lento."}
-              </span>
-            </span>
-          </label>
-        ))}
-      </div>
-      <p className="hint" role="status">
-        {ai.state === "ausente" && `Modelo não baixado (${gb(ai.size)}).`}
-        {ai.state === "baixando" && `Baixando o modelo… ${ai.percent}%`}
-        {ai.state === "pronto" && (ai.loaded ? "Pronta e carregada na memória." : "Pronta. Carrega sozinha na primeira sugestão.")}
-        {ai.state === "erro" && ai.message}
-      </p>
-      {ai.state === "baixando" && (
-        <div className="progress" role="progressbar" aria-label="Download do modelo" aria-valuemin={0} aria-valuemax={100} aria-valuenow={ai.percent}>
-          <div className="progress__bar" style={{ transform: `scaleX(${ai.percent / 100})` }} />
-        </div>
-      )}
-      {error && <p className="hint hint--warning">{error}</p>}
-      <div className="cluster">
-        {(ai.state === "ausente" || ai.state === "erro") && (
-          <button className="button button--primary" onClick={() => void act(api.downloadAi())}>
-            <Download size={16} aria-hidden /> Baixar IA local ({gb(ai.size)})
-          </button>
-        )}
-        {ai.state === "pronto" &&
-          (confirmRemove ? (
-            <>
-              <button className="button button--secondary" onClick={() => setConfirmRemove(false)}>
-                Manter
-              </button>
-              <button className="button button--danger" onClick={() => void act(api.removeAi()).then(() => setConfirmRemove(false))}>
-                Apagar modelo
-              </button>
-            </>
-          ) : (
-            <button className="button button--secondary" onClick={() => setConfirmRemove(true)}>
-              <Trash2 size={16} aria-hidden /> Apagar modelo para liberar {gb(ai.size)}
-            </button>
-          ))}
-      </div>
+      <AiModels ai={ai} onChange={setLocal} />
       <label className="field">
         <span className="field__label">Como a IA deve escrever</span>
         <textarea className="notes__note" rows={4} maxLength={2000} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
@@ -205,7 +154,7 @@ function UpdatePanel() {
   );
 }
 
-export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props) {
+export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, notify }: Props) {
   const [tab, setTab] = useState<Tab>("geral");
   const [labels, setLabels] = useState<Label[]>(state.labels);
   const [aiText, setAiText] = useState("");
@@ -227,6 +176,7 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
   // Abre sempre a partir do estado salvo.
   useEffect(() => {
     if (!open) return;
+    setTab(initialTab ?? "geral");
     setLabels(state.labels);
     setPrefs(state.prefs);
     api.ai().then((a) => {

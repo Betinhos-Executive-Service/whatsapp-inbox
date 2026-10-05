@@ -452,8 +452,9 @@ function Messages({ messages, hasMore, onMore, loadingMore }: { messages: Messag
   );
 }
 
-function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, quickReplies }: {
+function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, quickReplies, onSetupAi }: {
   chat: Chat;
+  onSetupAi: () => void;
   quickReplies: QuickReply[];
   labels: string[];
   connected: boolean;
@@ -679,11 +680,11 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, q
         <button
           type="button"
           className="icon-button"
-          aria-label="Sugerir resposta com a IA local"
-          title={aiReady ? "Sugerir resposta (IA local, revise antes de enviar)" : "Baixe a IA local em Configurações › IA"}
-          disabled={!aiReady || drafting}
+          aria-label={aiReady ? "Sugerir resposta com a IA local" : "Ativar a IA local"}
+          title={aiReady ? "Sugerir resposta (IA local, revise antes de enviar)" : "Ativar a IA local para sugerir respostas"}
+          disabled={drafting || !connected}
           aria-busy={drafting || undefined}
-          onClick={() => void suggest()}
+          onClick={() => (aiReady ? void suggest() : onSetupAi())}
         >
           {drafting ? <LoaderCircle className="spin" size={18} aria-hidden /> : <WandSparkles size={18} aria-hidden />}
         </button>
@@ -742,6 +743,7 @@ function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [online, setOnline] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"geral" | "ia" | undefined>(undefined);
   const [skipConnect, setSkipConnect] = useState(false);
   const { toasts, push, dismiss } = useToasts();
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
@@ -853,6 +855,10 @@ function App() {
               notify={push}
               onChat={upsert}
               quickReplies={quickReplies}
+              onSetupAi={() => {
+                setSettingsTab("ia");
+                setSettingsOpen(true);
+              }}
             />
           ) : (
             <section className="chat-pane chat-pane--empty" aria-label="Nenhuma conversa aberta">
@@ -868,8 +874,12 @@ function App() {
       {state && (
         <SettingsDrawer
           open={settingsOpen}
+          initialTab={settingsTab}
           state={state}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => {
+            setSettingsOpen(false);
+            setSettingsTab(undefined);
+          }}
           onSaved={(s, text) => {
             setState(s);
             loadQuickReplies();

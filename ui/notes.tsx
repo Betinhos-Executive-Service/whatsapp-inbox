@@ -157,7 +157,7 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
               )}
             </dl>
           ) : (
-            <p className="hint">{ai?.state === "pronto" ? "Gera um resumo das últimas mensagens, sem sair do seu computador." : "Baixe a IA local em Configurações › IA para usar."}</p>
+            <p className="hint">{ai?.state === "pronto" ? "Gera um resumo das últimas mensagens, sem sair do seu computador." : ai?.state === "baixando" ? `Baixando a IA local… ${ai.percent}%` : "Ative a IA local em Configurações › IA para usar."}</p>
           )}
           <div className="cluster">
             <button className="button button--secondary button--compact" disabled={ai?.state !== "pronto" || summarizing} aria-busy={summarizing || undefined} onClick={() => void summarize()}>

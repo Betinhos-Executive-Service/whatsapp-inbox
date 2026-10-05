@@ -20,14 +20,14 @@ export type Chat = {
 
 export type AiStatus = (
   | { state: "ausente" }
-  | { state: "baixando"; percent: number }
+  | { state: "baixando"; id: "leve" | "melhor"; percent: number; downloaded: number; total: number; speed: number; eta: number | null }
   | { state: "pronto"; loaded: boolean }
   | { state: "erro"; message: string }
 ) & {
   modelId: "leve" | "melhor";
   model: string;
   size: number;
-  models: { id: "leve" | "melhor"; name: string; size: number; installed: boolean }[];
+  models: { id: "leve" | "melhor"; name: string; size: number; installed: boolean; partial: boolean }[];
   instructions: string;
   customInstructions: boolean;
 };
@@ -97,9 +97,10 @@ export const api = {
   doneReminder: (id: number) => request<Chat>("POST", `/api/reminders/${id}/done`, {}),
   deleteReminder: (id: number) => request<Chat>("DELETE", `/api/reminders/${id}`),
   ai: () => request<AiStatus>("GET", "/api/ai"),
-  downloadAi: () => request<AiStatus>("POST", "/api/ai/download", {}),
+  downloadAi: (id: "leve" | "melhor") => request<AiStatus>("POST", "/api/ai/download", { id }),
+  cancelAiDownload: () => request<AiStatus>("POST", "/api/ai/download/cancel", {}),
   selectAi: (id: "leve" | "melhor") => request<AiStatus>("PUT", "/api/ai/model", { id }),
-  removeAi: () => request<AiStatus>("DELETE", "/api/ai/model"),
+  removeAi: (id: "leve" | "melhor") => request<AiStatus>("POST", "/api/ai/remove", { id }),
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
   draft: (jid: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, {}),
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
