@@ -8,7 +8,11 @@ export type UpdateState =
   | { status: "installing"; version: string }
   | { status: "error"; version: string | null; message: string };
 
+export type ReleaseInfo = { version: string; date: string; notes: string; current: boolean };
+
 export type DesktopBridge = {
+  listVersions: () => Promise<ReleaseInfo[]>;
+  installVersion: (version: string) => Promise<UpdateState>;
   getUpdate: () => Promise<UpdateState>;
   installUpdate: () => Promise<UpdateState>;
   checkUpdate: () => Promise<UpdateState>;

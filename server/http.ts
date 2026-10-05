@@ -50,7 +50,23 @@ const labelsSchema = z
 const chatPatchSchema = z.object({
   status: z.enum(STATUSES).optional(),
   label: z.string().min(1).nullable().optional(),
+  note: z.string().max(5000).nullable().optional(),
 });
+
+const reminderSchema = z.object({
+  dueAt: z.number().int().positive(),
+  text: z.string().trim().max(300).default(""),
+});
+
+const quickRepliesSchema = z
+  .array(
+    z.object({
+      shortcut: z.string().trim().regex(/^[a-z0-9-]{1,30}$/, "Atalho: só letras minúsculas, números e hífen, sem espaço."),
+      text: z.string().trim().min(1, "Toda resposta rápida precisa de texto.").max(4096),
+    }),
+  )
+  .max(100)
+  .refine((l) => new Set(l.map((x) => x.shortcut)).size === l.length, "Há respostas rápidas com o mesmo atalho.");
 
 const settingsSchema = z.object({
   prefs: prefsSchema.partial().optional(),
@@ -120,6 +136,7 @@ export function createHandler(api: Api) {
         const patch = parse(chatPatchSchema, await readJson(req));
         if (patch.label && !store.listLabels().some((l) => l.name === patch.label)) throw new HttpError(400, "Etiqueta não cadastrada.");
         store.updateChat(jid, patch);
+        if (patch.note !== undefined) store.setNote(jid, patch.note);
         api.onChatChanged(jid);
         return json(res, 200, store.getChat(jid));
       }
@@ -136,12 +153,31 @@ export function createHandler(api: Api) {
         await api.send(jid, text);
         return json(res, 200, store.getChat(jid));
       }
+      if (action === "/reminders" && method === "GET") return json(res, 200, store.listReminders(jid));
+      if (action === "/reminders" && method === "POST") {
+        const body = parse(reminderSchema, await readJson(req));
+        const reminder = store.addReminder(jid, body.dueAt, body.text);
+        api.onChatChanged(jid);
+        return json(res, 201, reminder);
+      }
       if (action === "/classify" && method === "POST") {
         await readJson(req);
         return json(res, 200, await api.classify(jid));
       }
     }
 
+    const reminderMatch = path.match(/^\/api\/reminders\/(\d+)(\/done)?$/);
+    if (reminderMatch && ((reminderMatch[2] && method === "POST") || (!reminderMatch[2] && method === "DELETE"))) {
+      if (method === "POST") await readJson(req);
+      const chatJid = store.finishReminder(Number(reminderMatch[1]), reminderMatch[2] ? "done" : "delete");
+      if (!chatJid) throw new HttpError(404, "Lembrete não encontrado.");
+      api.onChatChanged(chatJid);
+      return json(res, 200, store.getChat(chatJid));
+    }
+    if (path === "/api/quick-replies" && method === "GET") return json(res, 200, store.listQuickReplies());
+    if (path === "/api/quick-replies" && method === "PUT") {
+      return json(res, 200, store.saveQuickReplies(parse(quickRepliesSchema, await readJson(req))));
+    }
     if (path === "/api/labels" && method === "GET") return json(res, 200, store.listLabels());
     if (path === "/api/labels" && method === "PUT") {
       const labels = store.saveLabels(parse(labelsSchema, await readJson(req)));

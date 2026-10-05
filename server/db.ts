@@ -22,7 +22,14 @@ export type Chat = {
     at: number;
   } | null;
   aiError: string | null;
+  /** Nota interna, só neste computador. */
+  note: string | null;
+  /** Próximo lembrete pendente (ms) e se ele já venceu. */
+  reminderAt: number | null;
 };
+
+export type Reminder = { id: number; chatJid: string; dueAt: number; text: string; firedAt: number | null };
+export type QuickReply = { shortcut: string; text: string };
 
 export type Message = {
   chatJid: string;
@@ -88,7 +95,27 @@ create table if not exists labels (
 create table if not exists lid_map (lid text primary key, pn text not null);
 create table if not exists contacts (jid text primary key, saved_name text, push_name text);
 create table if not exists settings (key text primary key, value text not null);
+create table if not exists quick_replies (
+  shortcut text primary key,
+  text text not null,
+  position integer not null
+);
+create table if not exists reminders (
+  id integer primary key,
+  chat_jid text not null references chats(jid) on delete cascade on update cascade,
+  due_at integer not null,
+  text text not null default '',
+  created_at integer not null,
+  fired_at integer,
+  done_at integer
+);
+create index if not exists reminders_pending on reminders(due_at) where done_at is null;
 `;
+
+/** Colunas acrescentadas depois da primeira versão; SQLite não tem "add column if not exists". */
+const COLUMNS: [table: string, column: string, ddl: string][] = [["chats", "note", "text"]];
+
+const CHAT_SELECT = `select c.*, (select min(due_at) from reminders r where r.chat_jid = c.jid and r.done_at is null) as reminder_at from chats c`;
 
 type Row = Record<string, unknown>;
 
@@ -121,6 +148,18 @@ function toChat(r: Row): Chat {
             at: Number(r.ai_at),
           },
     aiError: (r.ai_error as string) ?? null,
+    note: (r.note as string) || null,
+    reminderAt: r.reminder_at == null ? null : Number(r.reminder_at),
+  };
+}
+
+function toReminder(r: Row): Reminder {
+  return {
+    id: Number(r.id),
+    chatJid: String(r.chat_jid),
+    dueAt: Number(r.due_at),
+    text: String(r.text),
+    firedAt: r.fired_at == null ? null : Number(r.fired_at),
   };
 }
 
@@ -141,6 +180,10 @@ export class Store {
   constructor(path: string) {
     this.db = new DatabaseSync(path);
     this.db.exec(SCHEMA);
+    for (const [table, column, ddl] of COLUMNS) {
+      const cols = this.db.prepare(`pragma table_info(${table})`).all() as Row[];
+      if (!cols.some((c) => c.name === column)) this.db.exec(`alter table ${table} add column ${column} ${ddl}`);
+    }
     const count = this.db.prepare("select count(*) n from labels").get() as Row;
     if (Number(count.n) === 0) this.saveLabels(DEFAULT_LABELS);
   }
@@ -161,11 +204,11 @@ export class Store {
 
   /** Conversa sem nenhuma mensagem salva não entra na lista: não há o que gerir nela. */
   listChats(limit = 5000): Chat[] {
-    return (this.db.prepare("select * from chats where last_at > 0 order by last_at desc limit ?").all(limit) as Row[]).map(toChat);
+    return (this.db.prepare(`${CHAT_SELECT} where c.last_at > 0 order by c.last_at desc limit ?`).all(limit) as Row[]).map(toChat);
   }
 
   getChat(jid: string): Chat | null {
-    const r = this.db.prepare("select * from chats where jid = ?").get(jid) as Row | undefined;
+    const r = this.db.prepare(`${CHAT_SELECT} where c.jid = ?`).get(jid) as Row | undefined;
     return r ? toChat(r) : null;
   }
 
@@ -313,6 +356,8 @@ export class Store {
         return this.getChat(pn);
       }
       this.db.prepare("update or ignore messages set chat_jid = ? where chat_jid = ?").run(pn, lid);
+      this.db.prepare("update reminders set chat_jid = ? where chat_jid = ?").run(pn, lid);
+      this.db.prepare("update chats set note = coalesce(note, (select note from chats where jid = ?)) where jid = ?").run(lid, pn);
       this.db
         .prepare(
           `update chats set
@@ -334,12 +379,74 @@ export class Store {
     });
   }
 
+  // ---- nota e lembretes
+
+  setNote(jid: string, note: string | null): Chat | null {
+    this.db.prepare("update chats set note = ? where jid = ?").run(note?.trim() ? note : null, jid);
+    return this.getChat(jid);
+  }
+
+  listReminders(jid: string): Reminder[] {
+    return (this.db.prepare("select * from reminders where chat_jid = ? and done_at is null order by due_at").all(jid) as Row[]).map(toReminder);
+  }
+
+  addReminder(jid: string, dueAt: number, text: string): Reminder {
+    const r = this.db
+      .prepare("insert into reminders (chat_jid, due_at, text, created_at) values (?, ?, ?, ?) returning *")
+      .get(jid, dueAt, text.trim(), Date.now()) as Row;
+    return toReminder(r);
+  }
+
+  /** Conclui ou apaga; devolve a conversa do lembrete para atualizar a tela. */
+  finishReminder(id: number, mode: "done" | "delete"): string | null {
+    const r = this.db.prepare("select chat_jid from reminders where id = ?").get(id) as Row | undefined;
+    if (!r) return null;
+    if (mode === "done") this.db.prepare("update reminders set done_at = ? where id = ?").run(Date.now(), id);
+    else this.db.prepare("delete from reminders where id = ?").run(id);
+    return String(r.chat_jid);
+  }
+
+  /**
+   * Lembretes que venceram e ainda não avisaram: marca como avisados e reabre a conversa,
+   * para ela voltar para "Abertas". Devolve cada um com a conversa atualizada.
+   */
+  fireDueReminders(now = Date.now()): { reminder: Reminder; chat: Chat }[] {
+    return this.tx(() => {
+      const due = (this.db
+        .prepare("select * from reminders where done_at is null and fired_at is null and due_at <= ? order by due_at")
+        .all(now) as Row[]).map(toReminder);
+      for (const r of due) {
+        this.db.prepare("update reminders set fired_at = ? where id = ?").run(now, r.id);
+        this.db.prepare("update chats set status = 'aberta' where jid = ?").run(r.chatJid);
+      }
+      return due.map((r) => ({ reminder: { ...r, firedAt: now }, chat: this.getChat(r.chatJid)! }));
+    });
+  }
+
+  // ---- respostas rápidas
+
+  listQuickReplies(): QuickReply[] {
+    return (this.db.prepare("select shortcut, text from quick_replies order by position").all() as Row[]).map((r) => ({
+      shortcut: String(r.shortcut),
+      text: String(r.text),
+    }));
+  }
+
+  saveQuickReplies(list: QuickReply[]): QuickReply[] {
+    this.tx(() => {
+      this.db.exec("delete from quick_replies");
+      const insert = this.db.prepare("insert into quick_replies (shortcut, text, position) values (?, ?, ?)");
+      list.forEach((q, i) => insert.run(q.shortcut, q.text, i));
+    });
+    return this.listQuickReplies();
+  }
+
   // ---- conta conectada
 
   /** Apaga conversas, mensagens e contatos deste computador. Etiquetas e configurações ficam. */
   clearConversations(): void {
     this.tx(() => {
-      this.db.exec("delete from messages; delete from chats; delete from contacts; delete from lid_map;");
+      this.db.exec("delete from reminders; delete from messages; delete from chats; delete from contacts; delete from lid_map;");
       // A agenda precisa ser pedida de novo na próxima conexão.
       this.setSetting("contacts_backfill", null);
     });

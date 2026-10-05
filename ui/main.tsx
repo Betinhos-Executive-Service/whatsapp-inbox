@@ -1,4 +1,5 @@
 import {
+  AlarmClock,
   ArrowLeft,
   CheckCircle2,
   CircleDot,
@@ -11,13 +12,17 @@ import {
   Settings,
   Smartphone,
   Sparkles,
+  StickyNote,
+  Zap,
   TriangleAlert,
   WifiOff,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { api, type AppState, type Chat, type Connection, type Message, type Status } from "./api.ts";
+import { api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
+import { NotesPanel, reminderLabel } from "./notes.tsx";
+import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { dayLabel, formatBuild, formatTime, initials, listTime, matches, percent, sameDay } from "./format.ts";
 import { SettingsDrawer } from "./settings.tsx";
 import { UpdateDialog } from "./update.tsx";
@@ -126,6 +131,7 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
 
 function ChatItem({ chat, selected, onOpen }: { chat: Chat; selected: boolean; onOpen: () => void }) {
   const urgent = (chat.ai?.urgent ?? 0) >= 0.5;
+  const reminderDue = chat.reminderAt !== null && chat.reminderAt <= Date.now();
   return (
     <li>
       <button className="chat-item" aria-current={selected ? "true" : undefined} onClick={onOpen}>
@@ -148,12 +154,17 @@ function ChatItem({ chat, selected, onOpen }: { chat: Chat; selected: boolean; o
               </span>
             )}
           </span>
-          {(chat.label || urgent) && (
+          {(chat.label || urgent || chat.reminderAt !== null) && (
             <span className="chat-item__tags">
               {chat.label && <span className="badge badge--info">{chat.label}</span>}
               {urgent && (
                 <span className="badge badge--danger">
                   <TriangleAlert size={12} aria-hidden /> Urgente
+                </span>
+              )}
+              {chat.reminderAt !== null && (
+                <span className={`badge ${reminderDue ? "badge--warning" : "badge--neutral"}`}>
+                  <AlarmClock size={12} aria-hidden /> {reminderDue ? "Lembrete agora" : reminderLabel(chat.reminderAt)}
                 </span>
               )}
             </span>
@@ -351,8 +362,9 @@ function Messages({ messages, hasMore, onMore, loadingMore }: { messages: Messag
   );
 }
 
-function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat }: {
+function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, quickReplies }: {
   chat: Chat;
+  quickReplies: QuickReply[];
   labels: string[];
   connected: boolean;
   jevReady: boolean;
@@ -366,6 +378,10 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat }:
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [classifying, setClassifying] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [quickActive, setQuickActive] = useState(0);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const composer = useRef<HTMLTextAreaElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const keepOffset = useRef<number | null>(null);
@@ -446,6 +462,19 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat }:
     }
   };
 
+  // "/" no começo do campo (ou o botão de raio) abre as respostas rápidas.
+  const query = quickQuery(draft);
+  const quickItems = quickOpen || query !== null
+    ? quickReplies.filter((q) => q.shortcut.startsWith(query ?? "")).slice(0, 8)
+    : [];
+  const showQuick = quickItems.length > 0;
+  useEffect(() => setQuickActive(0), [query, quickOpen]);
+  const pickQuick = (q: QuickReply) => {
+    setDraft(fillQuickReply(q.text, chat.name));
+    setQuickOpen(false);
+    requestAnimationFrame(() => composer.current?.focus());
+  };
+
   const change = async (patch: { status?: Status; label?: string | null }) => {
     try {
       onChat(await api.update(chat.jid, patch));
@@ -482,6 +511,14 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat }:
             {chat.phone && <span className="hint">+{chat.phone}</span>}
           </div>
         </div>
+        <button
+          className={`button button--secondary button--compact chat-pane__notes-toggle${chat.note || chat.reminderAt !== null ? " has-content" : ""}`}
+          aria-pressed={notesOpen}
+          onClick={() => setNotesOpen((v) => !v)}
+        >
+          <StickyNote size={16} aria-hidden /> Notas e lembretes
+          {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
+        </button>
         <ClassificationBar
           chat={chat}
           labels={labels}
@@ -491,6 +528,7 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat }:
           jevReady={jevReady}
         />
       </header>
+      <div className="chat-pane__body">
       <div className="messages" ref={scroller} aria-live="polite" aria-busy={messages === null}>
         {messages === null ? (
           <div className="messages__loading">
@@ -507,6 +545,8 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat }:
           <Messages messages={messages} hasMore={hasMore} onMore={loadMore} loadingMore={loadingMore} />
         )}
       </div>
+      {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setNotesOpen(false)} />}
+      </div>
       <form
         className="composer"
         onSubmit={(e) => {
@@ -517,14 +557,51 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat }:
         <label className="sr-only" htmlFor="composer-text">
           Mensagem
         </label>
+        {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Respostas rápidas"
+          title={quickReplies.length ? "Respostas rápidas (ou digite / no começo)" : "Cadastre respostas rápidas em Configurações"}
+          disabled={!connected || !quickReplies.length}
+          aria-expanded={showQuick}
+          onClick={() => setQuickOpen((v) => !v)}
+        >
+          <Zap size={18} aria-hidden />
+        </button>
         <textarea
+          ref={composer}
           id="composer-text"
           rows={1}
+          role="combobox"
+          aria-expanded={showQuick}
+          aria-controls={showQuick ? "quick-menu" : undefined}
+          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : undefined}
+          aria-autocomplete="list"
           value={draft}
           disabled={!connected}
           placeholder={connected ? "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha." : "Conecte o WhatsApp para responder."}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
+            if (showQuick) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                setQuickActive((i) => (i + step + quickItems.length) % quickItems.length);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                pickQuick(quickItems[quickActive]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setQuickOpen(false);
+                if (query !== null) setDraft("");
+                return;
+              }
+            }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               void send();
@@ -549,6 +626,11 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [skipConnect, setSkipConnect] = useState(false);
   const { toasts, push, dismiss } = useToasts();
+  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
+  const loadQuickReplies = useCallback(() => {
+    api.quickReplies().then(setQuickReplies).catch(() => undefined);
+  }, []);
+  useEffect(loadQuickReplies, [loadQuickReplies]);
 
   const upsert = useCallback((chat: Chat | null) => {
     if (!chat) return;
@@ -579,6 +661,11 @@ function App() {
     es.addEventListener("reload", () => {
       reload();
       api.state().then(setState).catch(() => undefined);
+    });
+    es.addEventListener("reminder", (e) => {
+      const { chat } = JSON.parse((e as MessageEvent).data) as { chat: Chat };
+      upsert(chat);
+      push("success", `Lembrete: ${chat.name}. A conversa voltou para Abertas.`);
     });
     es.addEventListener("message", (e) => {
       const { message, chat } = JSON.parse((e as MessageEvent).data) as { message: Message; chat: Chat };
@@ -646,6 +733,7 @@ function App() {
               onBack={() => setSelected(null)}
               notify={push}
               onChat={upsert}
+              quickReplies={quickReplies}
             />
           ) : (
             <section className="chat-pane chat-pane--empty" aria-label="Nenhuma conversa aberta">
@@ -665,6 +753,7 @@ function App() {
           onClose={() => setSettingsOpen(false)}
           onSaved={(s, text) => {
             setState(s);
+            loadQuickReplies();
             push("success", text);
           }}
           notify={push}

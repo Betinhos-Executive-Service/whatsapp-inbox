@@ -13,6 +13,9 @@ export type UpdateState =
   | { status: "error"; version: string | null; message: string };
 
 const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
+const OWNER = "Betinhos-Executive-Service";
+const REPO = "whatsapp-inbox";
+const VERSION = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 
 export function setupUpdates(options: {
   window: () => BrowserWindow | null;
@@ -88,6 +91,42 @@ export function setupUpdates(options: {
     autoUpdater.downloadUpdate().catch((error: unknown) =>
       set({ status: "error", version: latest, message: error instanceof Error ? error.message : String(error) }),
     );
+    return state;
+  });
+
+  // ---- escolher a versão: lista as releases publicadas e instala a escolhida (mais nova ou mais antiga)
+
+  ipcMain.handle("update:list", async (event) => {
+    if (!trusted(event)) return [];
+    const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/releases?per_page=30`, {
+      headers: { accept: "application/vnd.github+json", "user-agent": "whatsapp-inbox" },
+    });
+    if (!res.ok) throw new Error(`GitHub respondeu ${res.status}.`);
+    const releases = (await res.json()) as { tag_name: string; draft: boolean; prerelease: boolean; published_at: string; body: string | null }[];
+    return releases
+      .filter((r) => !r.draft && !r.prerelease && VERSION.test(r.tag_name.replace(/^v/, "")))
+      .map((r) => ({ version: r.tag_name.replace(/^v/, ""), date: r.published_at, notes: r.body ?? "", current: r.tag_name.replace(/^v/, "") === app.getVersion() }));
+  });
+
+  ipcMain.handle("update:install-version", async (event, version: unknown) => {
+    if (!trusted(event) || typeof version !== "string" || !VERSION.test(version)) return state;
+    if (!app.isPackaged) return { status: "error", version, message: "Instalar versões só funciona no app instalado." };
+    if (state.status === "downloading" || state.status === "installing" || version === app.getVersion()) return state;
+    // Cada release tem o seu latest.yml: apontar o feed para ela instala exatamente essa versão.
+    autoUpdater.setFeedURL({ provider: "generic", url: `https://github.com/${OWNER}/${REPO}/releases/download/v${version}` });
+    autoUpdater.allowDowngrade = true;
+    latest = version;
+    set({ status: "downloading", version, percent: 0 });
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      if (result?.updateInfo.version !== version) throw new Error(`A release v${version} não tem instalador válido.`);
+      set({ status: "downloading", version, percent: 0 });
+      await autoUpdater.downloadUpdate();
+    } catch (error) {
+      autoUpdater.setFeedURL({ provider: "github", owner: OWNER, repo: REPO });
+      autoUpdater.allowDowngrade = false;
+      set({ status: "error", version, message: error instanceof Error ? error.message : String(error) });
+    }
     return state;
   });
 

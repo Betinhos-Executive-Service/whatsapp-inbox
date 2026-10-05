@@ -13,7 +13,12 @@ export type Chat = {
   labelSource: "manual" | "jev" | null;
   ai: { label: string; confidence: number; needsReply: number; urgent: number; at: number } | null;
   aiError: string | null;
+  note: string | null;
+  reminderAt: number | null;
 };
+
+export type Reminder = { id: number; chatJid: string; dueAt: number; text: string; firedAt: number | null };
+export type QuickReply = { shortcut: string; text: string };
 
 export type Message = { chatJid: string; id: string; fromMe: boolean; at: number; text: string; kind: string };
 export type Label = { name: string; description: string };
@@ -59,7 +64,13 @@ export const api = {
     request<Message[]>("GET", `${chatPath(jid)}/messages${before ? `?before=${before}` : ""}`),
   read: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/read`, {}),
   send: (jid: string, text: string) => request<Chat>("POST", `${chatPath(jid)}/send`, { text }),
-  update: (jid: string, patch: { status?: Status; label?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
+  update: (jid: string, patch: { status?: Status; label?: string | null; note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
+  reminders: (jid: string) => request<Reminder[]>("GET", `${chatPath(jid)}/reminders`),
+  addReminder: (jid: string, dueAt: number, text: string) => request<Reminder>("POST", `${chatPath(jid)}/reminders`, { dueAt, text }),
+  doneReminder: (id: number) => request<Chat>("POST", `/api/reminders/${id}/done`, {}),
+  deleteReminder: (id: number) => request<Chat>("DELETE", `/api/reminders/${id}`),
+  quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),
+  saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),
   saveLabels: (labels: Label[]) => request<Label[]>("PUT", "/api/labels", labels),
   saveSettings: (s: { jevApiKey?: string | null; autoClassify?: boolean; prefs?: Partial<Prefs> }) => request<AppState>("PUT", "/api/settings", s),

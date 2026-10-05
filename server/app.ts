@@ -3,7 +3,7 @@ import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, type Chat, type Message } from "./db.ts";
+import { Store, type Chat, type Message, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import type { Jev } from "./jev.ts";
@@ -31,6 +31,8 @@ export type AppOptions = {
   onIncoming?: (chat: Chat, message: Message) => void;
   /** Preferências mudaram (e uma vez ao iniciar): o app desktop aplica inicialização etc. */
   onPrefs?: (prefs: Prefs) => void;
+  /** Lembrete venceu: o app desktop mostra a notificação. */
+  onReminder?: (chat: Chat, reminder: Reminder) => void;
 };
 
 export type RunningApp = { port: number; prefs: () => Prefs; close: () => Promise<void> };
@@ -56,6 +58,18 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   }
   const heartbeat = setInterval(() => broadcast("ping", Date.now()), 25000);
   heartbeat.unref();
+
+  // ---- lembretes: confere a cada 30 s (e logo ao abrir, para os que venceram com o app fechado)
+
+  function fireReminders() {
+    for (const { chat, reminder } of store.fireDueReminders()) {
+      broadcast("chat", chat);
+      broadcast("reminder", { chat, reminder });
+      options.onReminder?.(chat, reminder);
+    }
+  }
+  const reminderTimer = setInterval(fireReminders, 30000);
+  reminderTimer.unref();
 
   // ---- Jev
 
@@ -195,12 +209,14 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   if (jevKey()) void getJev();
 
   options.onPrefs?.(readPrefs(store));
+  fireReminders();
 
   return {
     port,
     prefs: () => readPrefs(store),
     close: async () => {
       clearInterval(heartbeat);
+      clearInterval(reminderTimer);
       for (const timer of pending.values()) clearTimeout(timer);
       await wa?.stop();
       for (const res of clients) res.end();

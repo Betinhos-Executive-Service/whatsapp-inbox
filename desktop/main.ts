@@ -3,7 +3,7 @@
 import { app, BrowserWindow, dialog, Menu, nativeImage, Notification, shell, Tray } from "electron";
 import { join } from "node:path";
 import { startApp, type RunningApp } from "../server/app.ts";
-import type { Chat, Message } from "../server/db.ts";
+import type { Chat, Message, Reminder } from "../server/db.ts";
 import { inQuietHours, type Prefs } from "../server/prefs.ts";
 import { setupUpdates } from "./updates.ts";
 
@@ -60,6 +60,24 @@ function notify(chat: Chat, message: Message) {
   n.on("close", () => shown.delete(n));
   n.show();
   setTimeout(() => shown.delete(n), 60_000);
+}
+
+/** Lembrete é pedido explícito seu: avisa mesmo com o app na frente e no horário de silêncio. */
+function remind(chat: Chat, reminder: Reminder) {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({
+    title: `Lembrete: ${chat.name}`,
+    body: reminder.text || "Hora de retomar esta conversa.",
+    silent: server ? !server.prefs().notifySound : false,
+    icon: iconPath(),
+  });
+  shown.add(n);
+  n.on("click", () => {
+    showWindow();
+    sendToPage("app:open-chat", chat.jid);
+  });
+  n.on("close", () => shown.delete(n));
+  n.show();
 }
 
 function createWindow(url: string) {
@@ -157,6 +175,7 @@ if (!app.requestSingleInstanceLock()) {
         dataDir: join(app.getPath("userData"), "data"),
         distDir: join(app.getAppPath(), "dist"),
         onIncoming: notify,
+        onReminder: remind,
         onPrefs: applyPrefs,
       });
     } catch (error) {

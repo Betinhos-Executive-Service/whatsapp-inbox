@@ -1,7 +1,7 @@
-import { Bell, Download, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
+import { Bell, Download, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { api, type AppState, type Label, type Prefs } from "./api.ts";
-import { desktop, type UpdateState } from "./desktop.ts";
+import { api, type AppState, type Label, type Prefs, type QuickReply } from "./api.ts";
+import { desktop, type ReleaseInfo, type UpdateState } from "./desktop.ts";
 
 type Props = {
   open: boolean;
@@ -11,17 +11,20 @@ type Props = {
   notify: (kind: "error" | "success", text: string) => void;
 };
 
-type Tab = "geral" | "notificacoes" | "ia" | "etiquetas" | "conta";
+type Tab = "geral" | "notificacoes" | "ia" | "etiquetas" | "respostas" | "conta";
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: "geral", label: "Geral", icon: <Settings2 size={16} aria-hidden /> },
   { id: "notificacoes", label: "Notificações", icon: <Bell size={16} aria-hidden /> },
   { id: "ia", label: "IA", icon: <KeyRound size={16} aria-hidden /> },
   { id: "etiquetas", label: "Etiquetas", icon: <Tags size={16} aria-hidden /> },
+  { id: "respostas", label: "Respostas rápidas", icon: <Zap size={16} aria-hidden /> },
   { id: "conta", label: "Conta e dados", icon: <Smartphone size={16} aria-hidden /> },
 ];
 
 const sameLabels = (a: Label[], b: Label[]) =>
   a.length === b.length && a.every((l, i) => l.name === b[i].name && l.description === b[i].description);
+const sameQuick = (a: QuickReply[], b: QuickReply[]) =>
+  a.length === b.length && a.every((q, i) => q.shortcut === b[i].shortcut && q.text === b[i].text);
 const samePrefs = (a: Prefs, b: Prefs) => (Object.keys(a) as (keyof Prefs)[]).every((k) => a[k] === b[k]);
 
 const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href]';
@@ -48,7 +51,24 @@ function UpdatePanel() {
     void bridge.getUpdate().then(setState);
     return bridge.onUpdate(setState);
   }, [bridge]);
+  const [versions, setVersions] = useState<ReleaseInfo[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const loadVersions = () => {
+    if (!bridge) return;
+    setListError(null);
+    bridge
+      .listVersions()
+      .then((list) => {
+        setVersions(list);
+        setChosen((c) => c ?? list.find((v) => !v.current)?.version ?? null);
+      })
+      .catch((e: Error) => setListError(`Não foi possível listar as versões. Confira a internet. (${e.message})`));
+  };
   if (!bridge) return <p className="hint">Atualização automática disponível no app instalado.</p>;
+  const busy = state.status === "downloading" || state.status === "installing";
+  const current = info?.version;
+  const newer = (v: string) => !!current && v.localeCompare(current, undefined, { numeric: true }) > 0;
   const checking = state.status === "checking";
   const message =
     state.status === "latest"
@@ -76,7 +96,38 @@ function UpdatePanel() {
             Atualizar agora
           </button>
         )}
+        <button className="button button--ghost" onClick={loadVersions} disabled={busy}>
+          Ver todas as versões
+        </button>
       </div>
+      {listError && <p className="hint hint--warning">{listError}</p>}
+      {versions && (
+        <div className="stack">
+          <ul className="versions" role="radiogroup" aria-label="Versões publicadas">
+            {versions.map((v) => (
+              <li key={v.version}>
+                <label className="version">
+                  <input type="radio" name="version" value={v.version} checked={chosen === v.version} disabled={v.current} onChange={() => setChosen(v.version)} />
+                  <span className="version__info">
+                    <strong>
+                      v{v.version} {v.current ? "· instalada" : newer(v.version) ? "· mais nova" : "· anterior"}
+                    </strong>
+                    <span className="hint">Publicada em {new Date(v.date).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}</span>
+                    {v.notes && <span className="hint version__notes">{v.notes}</span>}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <div className="cluster">
+            <button className="button button--primary" disabled={!chosen || busy} aria-busy={busy || undefined} onClick={() => chosen && void bridge.installVersion(chosen).then(setState)}>
+              {busy && <LoaderCircle className="spin" size={16} aria-hidden />}
+              {chosen && !newer(chosen) ? `Voltar para v${chosen}` : chosen ? `Instalar v${chosen}` : "Escolha uma versão"}
+            </button>
+          </div>
+          {chosen && !newer(chosen) && <p className="hint">Voltar para uma versão anterior mantém conversas e configurações.</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -84,6 +135,8 @@ function UpdatePanel() {
 export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props) {
   const [tab, setTab] = useState<Tab>("geral");
   const [labels, setLabels] = useState<Label[]>(state.labels);
+  const [quick, setQuick] = useState<QuickReply[]>([]);
+  const [savedQuick, setSavedQuick] = useState<QuickReply[]>([]);
   const [prefs, setPrefs] = useState<Prefs>(state.prefs);
   const [key, setKey] = useState("");
   const [removeKey, setRemoveKey] = useState(false);
@@ -101,6 +154,10 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
     if (!open) return;
     setLabels(state.labels);
     setPrefs(state.prefs);
+    api.quickReplies().then((q) => {
+      setQuick(q);
+      setSavedQuick(q);
+    }).catch(() => undefined);
     setKey("");
     setRemoveKey(false);
     setAuto(state.jev.autoClassify);
@@ -114,7 +171,7 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
   const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => setPrefs((p) => ({ ...p, [k]: v }));
   const quietOn = !!(prefs.quietStart && prefs.quietEnd);
   const dirty =
-    !sameLabels(labels, state.labels) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || auto !== state.jev.autoClassify;
+    !sameLabels(labels, state.labels) || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || auto !== state.jev.autoClassify;
 
   const requestClose = () => {
     if (saving) return;
@@ -177,6 +234,9 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
       if (!sameLabels(labels, state.labels)) {
         const cleaned = labels.map((l) => ({ name: l.name.trim(), description: l.description.trim() }));
         next = { ...next, labels: await api.saveLabels(cleaned) };
+      }
+      if (!sameQuick(quick, savedQuick)) {
+        await api.saveQuickReplies(quick.map((q) => ({ shortcut: q.shortcut.trim().replace(/^\//, "").toLowerCase(), text: q.text.trim() })));
       }
       const settings: Parameters<typeof api.saveSettings>[0] = {};
       if (key.trim()) settings.jevApiKey = key.trim();
@@ -395,6 +455,33 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
                 onClick={() => setLabels((ls) => [...ls, { name: "", description: "" }])}
               >
                 <Plus size={16} aria-hidden /> Adicionar etiqueta
+              </button>
+            </section>
+          )}
+
+          {tab === "respostas" && (
+            <section className="surface stack">
+              <h3 className="eyebrow">Respostas rápidas</h3>
+              <p className="hint">Na conversa, digite / e o atalho (ex.: /pix) ou use o botão de raio. {"{nome}"} vira o primeiro nome do contato.</p>
+              <ul className="labels-editor">
+                {quick.map((q, i) => (
+                  <li key={i} className="labels-editor__row">
+                    <label className="field">
+                      <span className="sr-only">Atalho {i + 1}</span>
+                      <input value={q.shortcut} maxLength={30} placeholder="atalho" onChange={(e) => setQuick((l) => l.map((x, j) => (j === i ? { ...x, shortcut: e.target.value } : x)))} />
+                    </label>
+                    <label className="field">
+                      <span className="sr-only">Texto {i + 1}</span>
+                      <textarea className="quick-editor__text" rows={2} value={q.text} placeholder="Texto da mensagem" onChange={(e) => setQuick((l) => l.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} />
+                    </label>
+                    <button className="icon-button" aria-label={`Remover resposta /${q.shortcut || i + 1}`} onClick={() => setQuick((l) => l.filter((_, j) => j !== i))}>
+                      <Trash2 size={16} aria-hidden />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button className="button button--ghost button--compact" disabled={quick.length >= 100} onClick={() => setQuick((l) => [...l, { shortcut: "", text: "" }])}>
+                <Plus size={16} aria-hidden /> Adicionar resposta rápida
               </button>
             </section>
           )}

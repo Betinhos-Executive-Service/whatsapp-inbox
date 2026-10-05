@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("desktop", {
   getUpdate: () => ipcRenderer.invoke("update:get"),
   installUpdate: () => ipcRenderer.invoke("update:install"),
   checkUpdate: () => ipcRenderer.invoke("update:check"),
+  listVersions: () => ipcRenderer.invoke("update:list"),
+  installVersion: (version: string) => ipcRenderer.invoke("update:install-version", version),
   appInfo: () => ipcRenderer.invoke("app:info"),
   onOpenChat: (callback: (jid: string) => void) => {
     const listener = (_event: unknown, jid: string) => callback(jid);
