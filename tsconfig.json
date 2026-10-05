@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["server", "ui", "tests"]
+  "include": ["server", "ui", "tests", "desktop"]
 }

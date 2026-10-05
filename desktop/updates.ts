@@ -1,0 +1,84 @@
+// Atualização pelo GitHub Releases (Betinhos-Executive-Service/whatsapp-inbox).
+// Só consulta e baixa quando a pessoa pede: a janela mostra o aviso e o botão "Atualizar agora".
+import { app, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
+import updater from "electron-updater";
+
+export type UpdateState =
+  | { status: "idle" }
+  | { status: "available"; version: string }
+  | { status: "downloading"; version: string; percent: number }
+  | { status: "installing"; version: string }
+  | { status: "error"; version: string | null; message: string };
+
+const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
+
+export function setupUpdates(options: {
+  window: () => BrowserWindow | null;
+  trustedOrigin: () => string | null;
+  beforeInstall: () => Promise<void>;
+}) {
+  const { autoUpdater } = updater;
+  let state: UpdateState = { status: "idle" };
+  let latest: string | null = null;
+
+  const publish = () => options.window()?.webContents.send("update:state", state);
+  const set = (next: UpdateState) => {
+    state = next;
+    publish();
+  };
+
+  /** Só a página do próprio app (servidor local) pode pedir atualização. */
+  const trusted = (event: IpcMainInvokeEvent) => {
+    const origin = options.trustedOrigin();
+    return !!origin && new URL(event.senderFrame?.url ?? "about:blank").origin === origin;
+  };
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.on("update-available", (info) => {
+    latest = info.version;
+    if (state.status === "idle" || state.status === "error") set({ status: "available", version: info.version });
+  });
+  autoUpdater.on("download-progress", (p) => {
+    if (latest) set({ status: "downloading", version: latest, percent: Math.round(p.percent) });
+  });
+  autoUpdater.on("update-downloaded", async (info) => {
+    set({ status: "installing", version: info.version });
+    await options.beforeInstall();
+    // Silencioso e reabre o app sozinho depois de instalar.
+    autoUpdater.quitAndInstall(true, true);
+  });
+  autoUpdater.on("error", (error) => {
+    // Falha de consulta sem aviso aberto não incomoda ninguém; falha no download aparece.
+    if (state.status === "downloading" || state.status === "available") {
+      set({ status: "error", version: latest, message: error?.message ?? String(error) });
+    }
+  });
+
+  const check = () => {
+    if (!app.isPackaged) return;
+    autoUpdater.checkForUpdates().catch(() => undefined);
+  };
+
+  ipcMain.handle("update:get", (event) => (trusted(event) ? state : { status: "idle" }));
+  ipcMain.handle("update:install", async (event) => {
+    if (!trusted(event) || !latest) return state;
+    if (state.status === "downloading" || state.status === "installing") return state;
+    set({ status: "downloading", version: latest, percent: 0 });
+    autoUpdater.downloadUpdate().catch((error: unknown) =>
+      set({ status: "error", version: latest, message: error instanceof Error ? error.message : String(error) }),
+    );
+    return state;
+  });
+
+  check();
+  setInterval(check, CHECK_EVERY_MS).unref();
+
+  return {
+    /** Ao reabrir a janela: consulta de novo e lembra a página de mostrar o aviso. */
+    remind: () => {
+      check();
+      options.window()?.webContents.send("update:remind");
+    },
+  };
+}

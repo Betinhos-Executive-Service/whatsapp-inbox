@@ -1,9 +1,11 @@
 {
   "name": "whatsapp-inbox",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "private": true,
   "type": "module",
   "description": "Inbox local e leve para gerir e classificar conversas do WhatsApp, com classificação Jev.",
+  "productName": "WhatsApp Inbox",
+  "main": "dist-electron/main.mjs",
   "author": "Betinhos Executive Service",
   "packageManager": "pnpm@9.15.9",
   "engines": {
@@ -18,25 +20,77 @@
     "start": "node scripts/build.mjs && node server/main.ts",
     "serve": "node server/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/*.test.ts"
+    "test": "node --test tests/*.test.ts",
+    "app": "node scripts/desktop.mjs --run",
+    "exe": "node scripts/desktop.mjs",
+    "release": "node scripts/desktop.mjs --publish"
   },
   "dependencies": {
-    "@fontsource-variable/manrope": "5.3.0",
     "@typesafe-ai/sdk": "0.6.0",
     "@whiskeysockets/baileys": "7.0.0-rc14",
-    "lucide-react": "1.52.0",
+    "electron-updater": "6.8.9",
     "pino": "9.14.0",
     "qrcode": "1.5.4",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
     "@types/node": "24.19.1",
     "@types/qrcode": "1.5.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
+    "lucide-react": "1.52.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "typescript": "6.0.3"
+  },
+  "build": {
+    "appId": "br.com.betinhos.whatsapp-inbox",
+    "productName": "WhatsApp Inbox",
+    "electronDist": "node_modules/electron/dist",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "dist/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "WhatsApp Inbox"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Betinhos-Executive-Service",
+        "repo": "whatsapp-inbox",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Betinhos-Executive-Service/whatsapp-inbox.git"
   }
 }

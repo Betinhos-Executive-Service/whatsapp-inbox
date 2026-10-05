@@ -20,6 +20,7 @@ import { createRoot } from "react-dom/client";
 import { api, type AppState, type Chat, type Connection, type Message, type Status } from "./api.ts";
 import { dayLabel, formatBuild, formatTime, initials, listTime, matches, percent, sameDay } from "./format.ts";
 import { SettingsDrawer } from "./settings.tsx";
+import { UpdateDialog } from "./update.tsx";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
@@ -653,6 +654,7 @@ function App() {
           notify={push}
         />
       )}
+      <UpdateDialog />
       <Toasts toasts={toasts} dismiss={dismiss} />
       <div className="build-badge" aria-hidden="true">
         {formatBuild(__APP_VERSION__, __BUILD_DATE__)}

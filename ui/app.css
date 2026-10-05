@@ -375,6 +375,18 @@ ul, ol { margin: 0; padding: 0; }
 @keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } }
 @keyframes fade { from { opacity: 0; } }
 
+/* ---- modal (aviso de versão nova) */
+.modal { position: fixed; inset: 0; z-index: var(--bt-z-index-drawer); display: grid; place-items: center; padding: var(--bt-space-4); }
+.modal__overlay { position: absolute; inset: 0; background-color: rgba(0, 26, 61, var(--bt-opacity-backdrop)); animation: fade var(--bt-duration-normal) var(--bt-ease-out); }
+.modal__panel { position: relative; width: min(100%, 420px); box-shadow: var(--bt-shadow-popover); animation: modal-in var(--bt-duration-normal) var(--bt-ease-out); }
+@keyframes modal-in { from { transform: scale(.96); opacity: 0; } }
+.update-dialog { display: flex; flex-direction: column; gap: var(--bt-space-2-5); padding: var(--bt-space-5); }
+.update-dialog__icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 11px; background-color: var(--bt-color-action-soft); color: var(--bt-color-action); }
+.update-dialog__text { font-size: var(--bt-font-size-13); }
+.update-dialog__actions { justify-content: flex-end; margin-top: var(--bt-space-1); }
+.progress { height: 6px; border-radius: var(--bt-radius-full); background-color: var(--bt-color-surface-soft); overflow: hidden; }
+.progress__bar { height: 100%; background-color: var(--bt-color-action); transform-origin: left; transition: transform var(--bt-duration-normal) var(--bt-ease-out); }
+
 .labels-editor { list-style: none; display: flex; flex-direction: column; gap: var(--bt-space-2); }
 .labels-editor__row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 5fr) auto; gap: var(--bt-space-2); align-items: center; }
 
