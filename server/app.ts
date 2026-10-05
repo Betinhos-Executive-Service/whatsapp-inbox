@@ -220,7 +220,11 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       for (const timer of pending.values()) clearTimeout(timer);
       await wa?.stop();
       for (const res of clients) res.end();
-      await new Promise<void>((r) => server.close(() => r()));
+      // A janela mantém o SSE aberto: sem derrubar as conexões, close() nunca termina
+      // (era o que travava a instalação de atualizações).
+      const closed = new Promise<void>((r) => server.close(() => r()));
+      server.closeAllConnections();
+      await closed;
       store.db.close();
     },
   };
