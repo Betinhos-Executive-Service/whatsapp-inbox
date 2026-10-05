@@ -54,6 +54,23 @@ function LocalAiPanel({ instructions, setInstructions }: { instructions: string;
         Escreve rascunhos de resposta e resume conversas usando o modelo {ai.model}, que roda neste computador: o texto das conversas não sai daqui.
         Funciona sem internet depois de baixado. Em PCs mais simples, cada sugestão leva alguns segundos.
       </p>
+      <div className="versions" role="radiogroup" aria-label="Modelo da IA local">
+        {ai.models.map((m) => (
+          <label key={m.id} className="version">
+            <input type="radio" name="ai-model" checked={ai.modelId === m.id} disabled={ai.state === "baixando"} onChange={() => void act(api.selectAi(m.id))} />
+            <span className="version__info">
+              <strong>
+                {m.name} · {gb(m.size)} {m.installed ? "· baixado" : ""}
+              </strong>
+              <span className="hint">
+                {m.id === "leve"
+                  ? "Mais rápido e ocupa menos. Bom para resumo; rascunhos mais simples."
+                  : "Escreve rascunhos bem melhores. Cerca de 2× mais lento."}
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
       <p className="hint" role="status">
         {ai.state === "ausente" && `Modelo não baixado (${gb(ai.size)}).`}
         {ai.state === "baixando" && `Baixando o modelo… ${ai.percent}%`}

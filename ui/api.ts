@@ -23,7 +23,14 @@ export type AiStatus = (
   | { state: "baixando"; percent: number }
   | { state: "pronto"; loaded: boolean }
   | { state: "erro"; message: string }
-) & { model: string; size: number; instructions: string; customInstructions: boolean };
+) & {
+  modelId: "leve" | "melhor";
+  model: string;
+  size: number;
+  models: { id: "leve" | "melhor"; name: string; size: number; installed: boolean }[];
+  instructions: string;
+  customInstructions: boolean;
+};
 export type Summary = { resumo: string; pedido: string; proximoPasso: string };
 
 export type Reminder = { id: number; chatJid: string; dueAt: number; text: string; firedAt: number | null };
@@ -91,6 +98,7 @@ export const api = {
   deleteReminder: (id: number) => request<Chat>("DELETE", `/api/reminders/${id}`),
   ai: () => request<AiStatus>("GET", "/api/ai"),
   downloadAi: () => request<AiStatus>("POST", "/api/ai/download", {}),
+  selectAi: (id: "leve" | "melhor") => request<AiStatus>("PUT", "/api/ai/model", { id }),
   removeAi: () => request<AiStatus>("DELETE", "/api/ai/model"),
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
   draft: (jid: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, {}),

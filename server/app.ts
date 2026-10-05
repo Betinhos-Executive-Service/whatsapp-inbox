@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Store, type Chat, type Message, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { loadMedia } from "./media.ts";
-import { DEFAULT_INSTRUCTIONS, LocalAI, MODEL } from "./ai.ts";
+import { DEFAULT_INSTRUCTIONS, LocalAI, MODELS, type ModelId } from "./ai.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import type { Jev } from "./jev.ts";
 import type { ConnectionState, WhatsApp } from "./whatsapp.ts";
@@ -77,7 +77,17 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
 
   const localAi = new LocalAI(join(options.dataDir, "models"), () => broadcast("ai", aiState()));
   const aiInstructions = () => store.getSetting("ai_instructions") || DEFAULT_INSTRUCTIONS;
-  const aiState = () => ({ ...localAi.status(), model: MODEL.name, size: MODEL.size, instructions: aiInstructions(), customInstructions: !!store.getSetting("ai_instructions") });
+  const savedModel = store.getSetting("ai_model");
+  if (savedModel === "leve" || savedModel === "melhor") void localAi.select(savedModel);
+  const aiState = () => ({
+    ...localAi.status(),
+    modelId: localAi.model_,
+    model: MODELS[localAi.model_].name,
+    size: MODELS[localAi.model_].size,
+    models: (Object.keys(MODELS) as ModelId[]).map((id) => ({ id, name: MODELS[id].name, size: MODELS[id].size, installed: localAi.installed().includes(id) })),
+    instructions: aiInstructions(),
+    customInstructions: !!store.getSetting("ai_instructions"),
+  });
   const chatOrThrow = (jid: string) => {
     const chat = store.getChat(jid);
     if (!chat) throw new Error("Conversa não encontrada.");
@@ -204,6 +214,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       summarize: (jid) => {
         const { chat, messages } = chatOrThrow(jid);
         return localAi.summarize(chat.name, messages);
+      },
+      select: async (id) => {
+        await localAi.select(id);
+        store.setSetting("ai_model", id);
       },
       setInstructions: (text) => {
         store.setSetting("ai_instructions", text?.trim() ? text.trim() : null);

@@ -25,6 +25,7 @@ export type Api = {
     draft: (jid: string) => Promise<string>;
     summarize: (jid: string) => Promise<unknown>;
     setInstructions: (text: string | null) => void;
+    select: (id: "leve" | "melhor") => Promise<void>;
   };
   /** Caminho de uma cópia consistente do banco, para download. */
   backup: () => Promise<string>;
@@ -191,6 +192,11 @@ export function createHandler(api: Api) {
     }
     if (path === "/api/ai/model" && method === "DELETE") {
       await api.ai.remove();
+      return json(res, 200, api.ai.status());
+    }
+    if (path === "/api/ai/model" && method === "PUT") {
+      const { id } = parse(z.object({ id: z.enum(["leve", "melhor"]) }), await readJson(req));
+      await api.ai.select(id);
       return json(res, 200, api.ai.status());
     }
     if (path === "/api/ai/instructions" && method === "PUT") {
