@@ -4,6 +4,7 @@ export type Chat = {
   jid: string;
   name: string;
   phone: string | null;
+  isGroup: boolean;
   lastAt: number;
   lastText: string | null;
   lastFromMe: boolean;

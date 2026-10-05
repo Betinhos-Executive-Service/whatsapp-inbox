@@ -7,6 +7,7 @@ export type Chat = {
   jid: string;
   name: string;
   phone: string | null;
+  isGroup: boolean;
   lastAt: number;
   lastText: string | null;
   lastFromMe: boolean;
@@ -42,7 +43,7 @@ export type Message = {
 
 export type Label = { name: string; description: string };
 
-export type IncomingMessage = Message & { rawJid: string };
+export type IncomingMessage = Message & { rawJid: string; participant?: string | null };
 
 const DEFAULT_LABELS: Label[] = [
   { name: "Cotação", description: "Pedido de preço, orçamento ou proposta de serviço." },
@@ -113,7 +114,10 @@ create index if not exists reminders_pending on reminders(due_at) where done_at 
 `;
 
 /** Colunas acrescentadas depois da primeira versão; SQLite não tem "add column if not exists". */
-const COLUMNS: [table: string, column: string, ddl: string][] = [["chats", "note", "text"]];
+const COLUMNS: [table: string, column: string, ddl: string][] = [
+  ["chats", "note", "text"],
+  ["messages", "participant", "text"],
+];
 
 const CHAT_SELECT = `select c.*, (select min(due_at) from reminders r where r.chat_jid = c.jid and r.done_at is null) as reminder_at from chats c`;
 
@@ -126,10 +130,12 @@ function phoneOf(jid: string): string | null {
 function toChat(r: Row): Chat {
   const jid = String(r.jid);
   const phone = phoneOf(jid);
+  const isGroup = jid.endsWith("@g.us");
   return {
     jid,
-    name: (r.saved_name as string) || (r.push_name as string) || (phone ? `+${phone}` : "Contato sem número"),
+    name: (r.saved_name as string) || (r.push_name as string) || (phone ? `+${phone}` : isGroup ? "Grupo sem nome" : "Contato sem número"),
     phone,
+    isGroup,
     lastAt: Number(r.last_at),
     lastText: (r.last_text as string) ?? null,
     lastFromMe: r.last_from_me === 1,
@@ -255,15 +261,15 @@ export class Store {
     return this.getChat(jid);
   }
 
-  markRead(jid: string): { id: string; rawJid: string }[] {
+  markRead(jid: string): { id: string; rawJid: string; participant: string | null }[] {
     const chat = this.db.prepare("select unread from chats where jid = ?").get(jid) as Row | undefined;
     const unread = Number(chat?.unread ?? 0);
     if (!unread) return [];
     const keys = this.db
-      .prepare("select id, raw_jid from messages where chat_jid = ? and from_me = 0 order by at desc limit ?")
+      .prepare("select id, raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc limit ?")
       .all(jid, unread) as Row[];
     this.db.prepare("update chats set unread = 0 where jid = ?").run(jid);
-    return keys.map((k) => ({ id: String(k.id), rawJid: String(k.raw_jid) }));
+    return keys.map((k) => ({ id: String(k.id), rawJid: String(k.raw_jid), participant: (k.participant as string) ?? null }));
   }
 
   saveClassification(
@@ -296,8 +302,8 @@ export class Store {
     return this.tx(() => {
       this.ensureChat(m.chatJid, { status: live ? "aberta" : "resolvida" });
       const inserted = this.db
-        .prepare("insert or ignore into messages (chat_jid, id, raw_jid, from_me, at, text, kind) values (?, ?, ?, ?, ?, ?, ?)")
-        .run(m.chatJid, m.id, m.rawJid, m.fromMe ? 1 : 0, m.at, m.text, m.kind);
+        .prepare("insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind) values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(m.chatJid, m.id, m.rawJid, m.participant ?? null, m.fromMe ? 1 : 0, m.at, m.text, m.kind);
       if (inserted.changes === 0) return null;
       this.db
         .prepare(
@@ -323,6 +329,12 @@ export class Store {
   }
 
   // ---- LID ↔ número
+
+  /** Nome conhecido de um contato (agenda ou perfil), mesmo sem conversa aberta. */
+  contactName(jid: string): string | null {
+    const r = this.db.prepare("select saved_name, push_name from contacts where jid = ?").get(jid) as Row | undefined;
+    return (r?.saved_name as string) || (r?.push_name as string) || null;
+  }
 
   pnForLid(lid: string): string | null {
     const r = this.db.prepare("select pn from lid_map where lid = ?").get(lid) as Row | undefined;
