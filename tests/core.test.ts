@@ -74,6 +74,20 @@ test("etiqueta manual não é sobrescrita pelo Jev; etiqueta removida sai das co
   assert.equal(s.getChat(PN)?.label, null);
 });
 
+test("nome que chega antes da conversa é herdado; conversa vazia fica fora da lista", () => {
+  const s = new Store(":memory:");
+  s.setNames(PN, { saved: "Ana Agenda" });
+  s.setNames(LID, { push: "Ana pelo LID" });
+  s.ensureChat("5511888880000@s.whatsapp.net");
+  s.addMessage(msg(), false);
+  assert.equal(s.getChat(PN)?.name, "Ana Agenda");
+  assert.deepEqual(s.listChats().map((c) => c.jid), [PN]);
+  const other = "5511777770000@s.whatsapp.net";
+  s.addMessage(msg({ chatJid: other, rawJid: other }), false);
+  s.mapLid(LID, other);
+  assert.equal(s.getChat(other)?.name, "Ana pelo LID");
+});
+
 test("markRead devolve as chaves das não lidas e zera o contador", () => {
   const s = new Store(":memory:");
   s.addMessage(msg({ id: "a", at: 1 }), true);

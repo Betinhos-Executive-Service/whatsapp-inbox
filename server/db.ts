@@ -86,6 +86,7 @@ create table if not exists labels (
   position integer not null
 );
 create table if not exists lid_map (lid text primary key, pn text not null);
+create table if not exists contacts (jid text primary key, saved_name text, push_name text);
 create table if not exists settings (key text primary key, value text not null);
 `;
 
@@ -158,8 +159,9 @@ export class Store {
 
   // ---- chats
 
+  /** Conversa sem nenhuma mensagem salva não entra na lista: não há o que gerir nela. */
   listChats(limit = 5000): Chat[] {
-    return (this.db.prepare("select * from chats order by last_at desc limit ?").all(limit) as Row[]).map(toChat);
+    return (this.db.prepare("select * from chats where last_at > 0 order by last_at desc limit ?").all(limit) as Row[]).map(toChat);
   }
 
   getChat(jid: string): Chat | null {
@@ -170,11 +172,26 @@ export class Store {
   /** Garante a conversa. Conversa criada pelo histórico nasce resolvida, salvo se tiver não lidas. */
   ensureChat(jid: string, initial: { status?: Status; unread?: number } = {}): void {
     this.db
-      .prepare("insert or ignore into chats (jid, status, unread) values (?, ?, ?)")
-      .run(jid, initial.status ?? "aberta", initial.unread ?? 0);
+      .prepare(
+        `insert or ignore into chats (jid, status, unread, saved_name, push_name) values (?, ?, ?,
+           (select saved_name from contacts where jid = ?), (select push_name from contacts where jid = ?))`,
+      )
+      .run(jid, initial.status ?? "aberta", initial.unread ?? 0, jid, jid);
   }
 
+  /**
+   * Guarda o nome do contato mesmo sem conversa: o WhatsApp manda a agenda antes das
+   * conversas, e a conversa criada depois herda o nome. Devolve true se a conversa mudou.
+   */
   setNames(jid: string, names: { saved?: string | null; push?: string | null }): boolean {
+    if (!names.saved && !names.push) return false;
+    this.db
+      .prepare(
+        `insert into contacts (jid, saved_name, push_name) values (?, ?, ?)
+         on conflict(jid) do update set saved_name = coalesce(excluded.saved_name, saved_name),
+                                        push_name = coalesce(excluded.push_name, push_name)`,
+      )
+      .run(jid, names.saved || null, names.push || null);
     let changed = false;
     if (names.saved) {
       changed = this.db.prepare("update chats set saved_name = ? where jid = ? and saved_name is not ?").run(names.saved, jid, names.saved).changes > 0 || changed;
@@ -273,6 +290,21 @@ export class Store {
   mapLid(lid: string, pn: string): Chat | null {
     return this.tx(() => {
       this.db.prepare("insert into lid_map (lid, pn) values (?, ?) on conflict(lid) do update set pn = excluded.pn").run(lid, pn);
+      // Nome que chegou pelo LID passa a valer para o número.
+      this.db
+        .prepare(
+          `insert into contacts (jid, saved_name, push_name) select ?, saved_name, push_name from contacts where jid = ? and true
+           on conflict(jid) do update set saved_name = coalesce(contacts.saved_name, excluded.saved_name),
+                                          push_name = coalesce(contacts.push_name, excluded.push_name)`,
+        )
+        .run(pn, lid);
+      this.db
+        .prepare(
+          `update chats set saved_name = coalesce(saved_name, (select saved_name from contacts where jid = ?)),
+                            push_name = coalesce(push_name, (select push_name from contacts where jid = ?))
+           where jid = ?`,
+        )
+        .run(pn, pn, pn);
       const lidChat = this.db.prepare("select * from chats where jid = ?").get(lid) as Row | undefined;
       if (!lidChat) return null;
       const pnChat = this.db.prepare("select * from chats where jid = ?").get(pn) as Row | undefined;

@@ -14,6 +14,14 @@ const IGNORED = new Set([
   "pinInChatMessage",
   "encReactionMessage",
   "callLogMesssage",
+  // Cabeçalho de álbum: as fotos chegam como mensagens próprias.
+  "albumMessage",
+  // Edição chega como mensagem nova; o texto original já está salvo.
+  "editedMessage",
+  "associatedChildMessage",
+  "placeholderMessage",
+  "messageHistoryBundle",
+  "secretEncryptedMessage",
 ]);
 
 function withCaption(label: string, caption: unknown): string {
@@ -59,7 +67,22 @@ export function extractText(content: Content): Extracted | null {
       return { text: m.title ?? "[Resposta]", kind: "text" };
     case "templateButtonReplyMessage":
       return { text: m.selectedDisplayText ?? "[Resposta]", kind: "text" };
+    case "ptvMessage":
+      return { text: "[Vídeo]", kind: "video" };
+    case "lottieStickerMessage":
+      return { text: "[Figurinha]", kind: "sticker" };
+    case "eventMessage":
+      return { text: withCaption("[Evento]", m.name), kind: "other" };
+    case "groupInviteMessage":
+      return { text: withCaption("[Convite de grupo]", m.groupName), kind: "other" };
+    case "interactiveMessage":
+      return { text: m.body?.text?.trim() || "[Mensagem interativa]", kind: m.body?.text?.trim() ? "text" : "other" };
+    case "templateMessage":
+      return { text: m.hydratedTemplate?.hydratedContentText?.trim() || "[Mensagem de modelo]", kind: "other" };
+    case "requestPhoneNumberMessage":
+      return { text: "[Pedido de número de telefone]", kind: "other" };
     default:
-      return { text: "[Mensagem não suportada]", kind: "other" };
+      // O tipo fica no `kind` para diagnóstico (ex.: other:fooMessage).
+      return { text: "[Mensagem não suportada]", kind: `other:${type}` };
   }
 }

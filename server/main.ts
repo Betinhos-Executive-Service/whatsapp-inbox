@@ -6,6 +6,17 @@ import { createHandler } from "./http.ts";
 import type { Jev } from "./jev.ts";
 import type { ConnectionState, WhatsApp } from "./whatsapp.ts";
 
+// A libsignal (dependência do Baileys) escreve no console o conteúdo das sessões
+// criptográficas ("Closing session: SessionEntry {...}"). Isso não pode ir para log.
+const LIBSIGNAL_NOISE = /^(Closing session|Opening session|Removing old closed session|Session already|Closing open session|Decrypted message with closed session|Migrating session)/;
+for (const level of ["info", "warn", "log"] as const) {
+  const original = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    if (typeof args[0] === "string" && LIBSIGNAL_NOISE.test(args[0])) return;
+    original(...args);
+  };
+}
+
 const root = resolve(import.meta.dirname, "..");
 if (existsSync(join(root, ".env.local"))) process.loadEnvFile(join(root, ".env.local"));
 

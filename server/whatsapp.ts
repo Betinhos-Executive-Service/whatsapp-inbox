@@ -122,6 +122,8 @@ export class WhatsApp extends EventEmitter<{
       if (u.connection === "open") {
         this.retries = 0;
         this.setState({ status: "conectado", qr: null, error: null, me: sock.user?.id ? jidNormalizedUser(sock.user.id) : null });
+        // Depois do histórico inicial; numa reconexão comum é só uma consulta à configuração.
+        setTimeout(() => void this.backfillContacts(sock), 20000);
       }
       if (u.connection === "close") {
         if (this.sock !== sock) return;
@@ -171,9 +173,25 @@ export class WhatsApp extends EventEmitter<{
     const raw = c.phoneNumber ?? c.id;
     if (!isPersonal(raw)) return;
     const jid = this.canonical(raw);
-    if (!this.store.getChat(jid)) return; // contato sem conversa não entra na lista
     const changed = this.store.setNames(jid, { saved: c.name, push: c.notify ?? c.verifiedName });
-    if (changed) this.emit("chat", this.store.getChat(jid)!);
+    const chat = changed ? this.store.getChat(jid) : null;
+    if (chat && chat.lastAt > 0) this.emit("chat", chat);
+  }
+
+  /**
+   * Uma vez por instalação: pede de novo ao WhatsApp a agenda completa (coleção de contatos
+   * do app state). Recupera nomes que chegaram antes de a conversa existir. Só leitura.
+   */
+  private async backfillContacts(sock: WASocket) {
+    if (this.store.getSetting("contacts_backfill") === "1") return;
+    try {
+      await sock.authState.keys.set({ "app-state-sync-version": { critical_unblock_low: null } });
+      await sock.resyncAppState(["critical_unblock_low"], true);
+      this.store.setSetting("contacts_backfill", "1");
+      this.emit("reload");
+    } catch (error) {
+      process.stderr.write(`[whatsapp] agenda não sincronizou: ${error instanceof Error ? error.message : error}\n`);
+    }
   }
 
   async send(jid: string, text: string): Promise<void> {
