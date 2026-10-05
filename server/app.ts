@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Store, type Chat, type Message, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { loadMedia } from "./media.ts";
+import { DEFAULT_INSTRUCTIONS, LocalAI, MODEL } from "./ai.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import type { Jev } from "./jev.ts";
 import type { ConnectionState, WhatsApp } from "./whatsapp.ts";
@@ -71,6 +72,19 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   }
   const reminderTimer = setInterval(fireReminders, 30000);
   reminderTimer.unref();
+
+  // ---- IA local (modelo em data/models; texto da conversa não sai do PC)
+
+  const localAi = new LocalAI(join(options.dataDir, "models"), () => broadcast("ai", aiState()));
+  const aiInstructions = () => store.getSetting("ai_instructions") || DEFAULT_INSTRUCTIONS;
+  const aiState = () => ({ ...localAi.status(), model: MODEL.name, size: MODEL.size, instructions: aiInstructions(), customInstructions: !!store.getSetting("ai_instructions") });
+  const chatOrThrow = (jid: string) => {
+    const chat = store.getChat(jid);
+    if (!chat) throw new Error("Conversa não encontrada.");
+    const messages = store.listMessages(jid, null, 25);
+    if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto suficiente.");
+    return { chat, messages };
+  };
 
   // ---- Jev
 
@@ -179,6 +193,23 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       // Desconectar e ler o QR de novo traz o histórico do número outra vez.
       if (reconnect) await connected().logout();
     },
+    ai: {
+      status: aiState,
+      download: () => void localAi.download(),
+      remove: () => localAi.remove(),
+      draft: (jid) => {
+        const { chat, messages } = chatOrThrow(jid);
+        return localAi.draft(chat.name, messages, aiInstructions());
+      },
+      summarize: (jid) => {
+        const { chat, messages } = chatOrThrow(jid);
+        return localAi.summarize(chat.name, messages);
+      },
+      setInstructions: (text) => {
+        store.setSetting("ai_instructions", text?.trim() ? text.trim() : null);
+        broadcast("ai", aiState());
+      },
+    },
     media: async (jid, id) => {
       const ref = store.getMediaRef(jid, id);
       if (!ref) throw new Error("Esta mensagem não tem mídia salva. Mídias recebidas antes desta versão não podem ser abertas.");
@@ -222,6 +253,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     prefs: () => readPrefs(store),
     close: async () => {
       clearInterval(heartbeat);
+      await localAi.close();
       clearInterval(reminderTimer);
       for (const timer of pending.values()) clearTimeout(timer);
       await wa?.stop();

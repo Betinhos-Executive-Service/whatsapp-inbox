@@ -1,6 +1,7 @@
-import { AlarmClock, Check, LoaderCircle, Trash2, X } from "lucide-react";
+import { AlarmClock, Check, LoaderCircle, Trash2, WandSparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api, type Chat, type Reminder } from "./api.ts";
+import { api, type Chat, type Reminder, type Summary } from "./api.ts";
+import { useAiStatus } from "./ai-state.ts";
 import { dayLabel, formatTime } from "./format.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -39,6 +40,20 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
   const [text, setText] = useState("");
   const [adding, setAdding] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const ai = useAiStatus();
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [summarizing, setSummarizing] = useState(false);
+  useEffect(() => setSummary(null), [chat.jid]);
+  const summarize = async () => {
+    setSummarizing(true);
+    try {
+      setSummary(await api.summary(chat.jid));
+    } catch (e) {
+      notify("error", `A IA local não resumiu. ${(e as Error).message}`);
+    } finally {
+      setSummarizing(false);
+    }
+  };
   const lastSaved = useRef(chat.note ?? "");
 
   // Troca de conversa: recarrega tudo.
@@ -122,6 +137,35 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
         </button>
       </header>
       <div className="notes__body">
+        <div className="stack">
+          <span className="field__label">Resumo (IA local)</span>
+          {summary ? (
+            <dl className="summary">
+              <dt>Resumo</dt>
+              <dd>{summary.resumo}</dd>
+              {summary.pedido && (
+                <>
+                  <dt>O que quer</dt>
+                  <dd>{summary.pedido}</dd>
+                </>
+              )}
+              {summary.proximoPasso && (
+                <>
+                  <dt>Próximo passo</dt>
+                  <dd>{summary.proximoPasso}</dd>
+                </>
+              )}
+            </dl>
+          ) : (
+            <p className="hint">{ai?.state === "pronto" ? "Gera um resumo das últimas mensagens, sem sair do seu computador." : "Baixe a IA local em Configurações › IA para usar."}</p>
+          )}
+          <div className="cluster">
+            <button className="button button--secondary button--compact" disabled={ai?.state !== "pronto" || summarizing} aria-busy={summarizing || undefined} onClick={() => void summarize()}>
+              {summarizing ? <LoaderCircle className="spin" size={16} aria-hidden /> : <WandSparkles size={16} aria-hidden />}
+              {summary ? "Resumir de novo" : "Resumir conversa"}
+            </button>
+          </div>
+        </div>
         <label className="field">
           <span className="field__label">Nota interna</span>
           <textarea

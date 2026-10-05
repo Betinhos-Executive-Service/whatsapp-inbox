@@ -13,6 +13,7 @@ import {
   Settings,
   Smartphone,
   Sparkles,
+  WandSparkles,
   StickyNote,
   Zap,
   TriangleAlert,
@@ -24,6 +25,7 @@ import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
+import { useAiStatus } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { dayLabel, formatBuild, formatTime, initials, listTime, matches, percent, sameDay } from "./format.ts";
 import { SettingsDrawer } from "./settings.tsx";
@@ -470,6 +472,22 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, q
   const [quickActive, setQuickActive] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const ai = useAiStatus();
+  const aiReady = ai?.state === "pronto";
+  const [drafting, setDrafting] = useState(false);
+  const suggest = async () => {
+    if (draft.trim() && !window.confirm("Trocar o texto que você já escreveu pela sugestão da IA?")) return;
+    setDrafting(true);
+    try {
+      const { text } = await api.draft(chat.jid);
+      setDraft(text);
+      requestAnimationFrame(() => composer.current?.focus());
+    } catch (e) {
+      notify("error", `A IA local não sugeriu resposta. ${(e as Error).message}`);
+    } finally {
+      setDrafting(false);
+    }
+  };
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const keepOffset = useRef<number | null>(null);
@@ -658,6 +676,17 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, q
         >
           <Zap size={18} aria-hidden />
         </button>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Sugerir resposta com a IA local"
+          title={aiReady ? "Sugerir resposta (IA local, revise antes de enviar)" : "Baixe a IA local em Configurações › IA"}
+          disabled={!aiReady || drafting}
+          aria-busy={drafting || undefined}
+          onClick={() => void suggest()}
+        >
+          {drafting ? <LoaderCircle className="spin" size={18} aria-hidden /> : <WandSparkles size={18} aria-hidden />}
+        </button>
         <textarea
           ref={composer}
           id="composer-text"
@@ -751,6 +780,7 @@ function App() {
       reload();
       api.state().then(setState).catch(() => undefined);
     });
+    es.addEventListener("ai", (e) => window.dispatchEvent(new CustomEvent("inbox:ai", { detail: JSON.parse((e as MessageEvent).data) })));
     es.addEventListener("reminder", (e) => {
       const { chat } = JSON.parse((e as MessageEvent).data) as { chat: Chat };
       upsert(chat);

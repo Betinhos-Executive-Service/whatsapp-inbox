@@ -18,6 +18,14 @@ export type Chat = {
   reminderAt: number | null;
 };
 
+export type AiStatus = (
+  | { state: "ausente" }
+  | { state: "baixando"; percent: number }
+  | { state: "pronto"; loaded: boolean }
+  | { state: "erro"; message: string }
+) & { model: string; size: number; instructions: string; customInstructions: boolean };
+export type Summary = { resumo: string; pedido: string; proximoPasso: string };
+
 export type Reminder = { id: number; chatJid: string; dueAt: number; text: string; firedAt: number | null };
 export type QuickReply = { shortcut: string; text: string };
 
@@ -81,6 +89,12 @@ export const api = {
   addReminder: (jid: string, dueAt: number, text: string) => request<Reminder>("POST", `${chatPath(jid)}/reminders`, { dueAt, text }),
   doneReminder: (id: number) => request<Chat>("POST", `/api/reminders/${id}/done`, {}),
   deleteReminder: (id: number) => request<Chat>("DELETE", `/api/reminders/${id}`),
+  ai: () => request<AiStatus>("GET", "/api/ai"),
+  downloadAi: () => request<AiStatus>("POST", "/api/ai/download", {}),
+  removeAi: () => request<AiStatus>("DELETE", "/api/ai/model"),
+  setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
+  draft: (jid: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, {}),
+  summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
   quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),

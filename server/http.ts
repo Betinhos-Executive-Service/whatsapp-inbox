@@ -18,6 +18,14 @@ export type Api = {
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
   media: (jid: string, id: string) => Promise<{ body: Buffer; mimetype: string; fileName: string | null }>;
+  ai: {
+    status: () => unknown;
+    download: () => void;
+    remove: () => Promise<void>;
+    draft: (jid: string) => Promise<string>;
+    summarize: (jid: string) => Promise<unknown>;
+    setInstructions: (text: string | null) => void;
+  };
   /** Caminho de uma cópia consistente do banco, para download. */
   backup: () => Promise<string>;
   subscribe: (res: ServerResponse) => void;
@@ -161,12 +169,35 @@ export function createHandler(api: Api) {
         api.onChatChanged(jid);
         return json(res, 201, reminder);
       }
+      if (action === "/draft" && method === "POST") {
+        await readJson(req);
+        return json(res, 200, { text: await api.ai.draft(jid) });
+      }
+      if (action === "/summary" && method === "POST") {
+        await readJson(req);
+        return json(res, 200, await api.ai.summarize(jid));
+      }
       if (action === "/classify" && method === "POST") {
         await readJson(req);
         return json(res, 200, await api.classify(jid));
       }
     }
 
+    if (path === "/api/ai" && method === "GET") return json(res, 200, api.ai.status());
+    if (path === "/api/ai/download" && method === "POST") {
+      await readJson(req);
+      api.ai.download();
+      return json(res, 202, api.ai.status());
+    }
+    if (path === "/api/ai/model" && method === "DELETE") {
+      await api.ai.remove();
+      return json(res, 200, api.ai.status());
+    }
+    if (path === "/api/ai/instructions" && method === "PUT") {
+      const { text } = parse(z.object({ text: z.string().max(2000).nullable() }), await readJson(req));
+      api.ai.setInstructions(text);
+      return json(res, 200, api.ai.status());
+    }
     const mediaMatch = path.match(/^\/api\/media\/([^/]+)\/([^/]+)$/);
     if (mediaMatch && method === "GET") {
       const file = await api.media(decodeURIComponent(mediaMatch[1]), decodeURIComponent(mediaMatch[2])).catch((error: Error) => {

@@ -2,6 +2,7 @@ import { Bell, Download, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type AppState, type Label, type Prefs, type QuickReply } from "./api.ts";
 import { desktop, type ReleaseInfo, type UpdateState } from "./desktop.ts";
+import { gb, useAiStatus } from "./ai-state.ts";
 
 type Props = {
   open: boolean;
@@ -38,6 +39,61 @@ function Toggle({ checked, onChange, label, hint, disabled }: { checked: boolean
         {hint && <span className="hint">{hint}</span>}
       </span>
     </label>
+  );
+}
+
+function LocalAiPanel({ instructions, setInstructions }: { instructions: string; setInstructions: (v: string) => void }) {
+  const ai = useAiStatus();
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!ai) return <p className="hint">Carregando…</p>;
+  const act = (p: Promise<unknown>) => p.catch((e: Error) => setError(e.message));
+  return (
+    <div className="stack">
+      <p className="hint">
+        Escreve rascunhos de resposta e resume conversas usando o modelo {ai.model}, que roda neste computador: o texto das conversas não sai daqui.
+        Funciona sem internet depois de baixado. Em PCs mais simples, cada sugestão leva alguns segundos.
+      </p>
+      <p className="hint" role="status">
+        {ai.state === "ausente" && `Modelo não baixado (${gb(ai.size)}).`}
+        {ai.state === "baixando" && `Baixando o modelo… ${ai.percent}%`}
+        {ai.state === "pronto" && (ai.loaded ? "Pronta e carregada na memória." : "Pronta. Carrega sozinha na primeira sugestão.")}
+        {ai.state === "erro" && ai.message}
+      </p>
+      {ai.state === "baixando" && (
+        <div className="progress" role="progressbar" aria-label="Download do modelo" aria-valuemin={0} aria-valuemax={100} aria-valuenow={ai.percent}>
+          <div className="progress__bar" style={{ transform: `scaleX(${ai.percent / 100})` }} />
+        </div>
+      )}
+      {error && <p className="hint hint--warning">{error}</p>}
+      <div className="cluster">
+        {(ai.state === "ausente" || ai.state === "erro") && (
+          <button className="button button--primary" onClick={() => void act(api.downloadAi())}>
+            <Download size={16} aria-hidden /> Baixar IA local ({gb(ai.size)})
+          </button>
+        )}
+        {ai.state === "pronto" &&
+          (confirmRemove ? (
+            <>
+              <button className="button button--secondary" onClick={() => setConfirmRemove(false)}>
+                Manter
+              </button>
+              <button className="button button--danger" onClick={() => void act(api.removeAi()).then(() => setConfirmRemove(false))}>
+                Apagar modelo
+              </button>
+            </>
+          ) : (
+            <button className="button button--secondary" onClick={() => setConfirmRemove(true)}>
+              <Trash2 size={16} aria-hidden /> Apagar modelo para liberar {gb(ai.size)}
+            </button>
+          ))}
+      </div>
+      <label className="field">
+        <span className="field__label">Como a IA deve escrever</span>
+        <textarea className="notes__note" rows={4} maxLength={2000} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
+        <span className="hint">Tom, regras e o que nunca prometer. Vale para os rascunhos de resposta.</span>
+      </label>
+    </div>
   );
 }
 
@@ -135,6 +191,8 @@ function UpdatePanel() {
 export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props) {
   const [tab, setTab] = useState<Tab>("geral");
   const [labels, setLabels] = useState<Label[]>(state.labels);
+  const [aiText, setAiText] = useState("");
+  const [savedAiText, setSavedAiText] = useState("");
   const [quick, setQuick] = useState<QuickReply[]>([]);
   const [savedQuick, setSavedQuick] = useState<QuickReply[]>([]);
   const [prefs, setPrefs] = useState<Prefs>(state.prefs);
@@ -154,6 +212,10 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
     if (!open) return;
     setLabels(state.labels);
     setPrefs(state.prefs);
+    api.ai().then((a) => {
+      setAiText(a.instructions);
+      setSavedAiText(a.instructions);
+    }).catch(() => undefined);
     api.quickReplies().then((q) => {
       setQuick(q);
       setSavedQuick(q);
@@ -171,7 +233,7 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
   const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => setPrefs((p) => ({ ...p, [k]: v }));
   const quietOn = !!(prefs.quietStart && prefs.quietEnd);
   const dirty =
-    !sameLabels(labels, state.labels) || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || auto !== state.jev.autoClassify;
+    !sameLabels(labels, state.labels) || aiText !== savedAiText || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || auto !== state.jev.autoClassify;
 
   const requestClose = () => {
     if (saving) return;
@@ -235,6 +297,7 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
         const cleaned = labels.map((l) => ({ name: l.name.trim(), description: l.description.trim() }));
         next = { ...next, labels: await api.saveLabels(cleaned) };
       }
+      if (aiText !== savedAiText) await api.setAiInstructions(aiText.trim() || null);
       if (!sameQuick(quick, savedQuick)) {
         await api.saveQuickReplies(quick.map((q) => ({ shortcut: q.shortcut.trim().replace(/^\//, "").toLowerCase(), text: q.text.trim() })));
       }
@@ -410,6 +473,12 @@ export function SettingsDrawer({ open, state, onClose, onSaved, notify }: Props)
                 hint="Espera 15 s sem mensagens novas na conversa e chama o Jev uma vez."
               />
               <p className="hint">O Jev recebe o nome do contato e o texto das últimas 30 mensagens da conversa para sugerir a etiqueta.</p>
+            </section>
+          )}
+          {tab === "ia" && (
+            <section className="surface stack">
+              <h3 className="eyebrow">IA local</h3>
+              <LocalAiPanel instructions={aiText} setInstructions={setAiText} />
             </section>
           )}
 
