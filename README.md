@@ -19,9 +19,13 @@ Na primeira vez, leia o código QR pelo celular (WhatsApp › Aparelhos conectad
 
 O Windows pode mostrar "O Windows protegeu o computador" na primeira instalação, porque o instalador não tem assinatura digital paga. Clique em **Mais informações › Executar assim mesmo**.
 
-## Jev
+## Classificação (Jev ou DeepSeek)
 
-Em **Configurações**, cole a chave de API do Jev (ou defina `JEV_API_KEY` em `.env.local`). Com a classificação automática ligada, cada conversa que recebe mensagem é classificada 15 s depois da última mensagem da rajada. O Jev recebe o nome do contato e o texto das últimas 30 mensagens. Etiqueta escolhida à mão nunca é sobrescrita.
+Em **Configurações › IA**, escolha quem classifica: **Jev** (chave do Jev, ou `JEV_API_KEY` em `.env.local`) ou **DeepSeek** (mesma chave usada em rascunho e resumo, ou `DEEPSEEK_API_KEY`). Sem chave do escolhido, o app usa o outro que tiver chave.
+
+Cada classificação devolve etiqueta, se a conversa espera resposta, urgência e **prioridade** (alta, média ou baixa) pensada para o número de gestão: serviço em andamento com problema, cobrança vencida ou decisão só da gestão é alta; cotação, reserva ou aprovação com prazo nos próximos dias é média; aviso, agradecimento ou assunto resolvido é baixa. A DeepSeek ainda explica o motivo em uma frase. A prioridade aparece na lista e manda na ordem **Responder primeiro**.
+
+Com a classificação automática ligada, cada conversa que recebe mensagem é classificada 15 s depois da última mensagem da rajada. A IA recebe o nome do contato e o texto das últimas 30 mensagens, sem identificadores do WhatsApp. Etiqueta escolhida à mão nunca é sobrescrita.
 
 ## Dados
 

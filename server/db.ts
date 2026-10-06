@@ -20,6 +20,9 @@ export type Chat = {
     confidence: number;
     needsReply: number;
     urgent: number;
+    /** Prioridade dada pela IA; motivo só quando a DeepSeek classificou. */
+    priority: "alta" | "media" | "baixa" | null;
+    reason: string | null;
     at: number;
   } | null;
   aiError: string | null;
@@ -131,6 +134,8 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
   ["chats", "note", "text"],
   ["messages", "participant", "text"],
   ["messages", "media", "text"],
+  ["chats", "ai_priority", "text"],
+  ["chats", "ai_reason", "text"],
 ];
 
 const CHAT_SELECT = `select c.*, (select min(due_at) from reminders r where r.chat_jid = c.jid and r.done_at is null) as reminder_at from chats c`;
@@ -165,6 +170,8 @@ function toChat(r: Row): Chat {
             confidence: Number(r.ai_confidence),
             needsReply: Number(r.ai_needs_reply),
             urgent: Number(r.ai_urgent),
+            priority: r.ai_priority === "alta" || r.ai_priority === "media" || r.ai_priority === "baixa" ? r.ai_priority : null,
+            reason: (r.ai_reason as string) || null,
             at: Number(r.ai_at),
           },
     aiError: (r.ai_error as string) ?? null,
@@ -321,16 +328,16 @@ export class Store {
 
   saveClassification(
     jid: string,
-    result: { label: string; confidence: number; needsReply: number; urgent: number },
+    result: { label: string; confidence: number; needsReply: number; urgent: number; priority?: "alta" | "media" | "baixa" | null; reason?: string | null },
   ): Chat | null {
     this
       .q(
-        `update chats set ai_label = ?, ai_confidence = ?, ai_needs_reply = ?, ai_urgent = ?, ai_at = ?, ai_error = null,
+        `update chats set ai_label = ?, ai_confidence = ?, ai_needs_reply = ?, ai_urgent = ?, ai_priority = ?, ai_reason = ?, ai_at = ?, ai_error = null,
            label = case when label_source = 'manual' then label else ? end,
            label_source = case when label_source = 'manual' then 'manual' else 'jev' end
          where jid = ?`,
       )
-      .run(result.label, result.confidence, result.needsReply, result.urgent, Date.now(), result.label, jid);
+      .run(result.label, result.confidence, result.needsReply, result.urgent, result.priority ?? null, result.reason ?? null, Date.now(), result.label, jid);
     return this.getChat(jid);
   }
 

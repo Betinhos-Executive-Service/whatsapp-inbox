@@ -139,6 +139,9 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
   const urgent = (chat.ai?.urgent ?? 0) >= 0.5;
   const reminderDue = chat.reminderAt !== null && chat.reminderAt <= Date.now();
   const level = priorityLevel(priorityScore(chat));
+  // Prioridade dita pela IA aparece sempre; "baixa" só quando não há nada mais relevante.
+  const aiPriority = chat.ai?.priority ?? null;
+  const showPriority = !!aiPriority && chat.status !== "resolvida" && (aiPriority !== "baixa" || (!level && !urgent && chat.reminderAt === null));
   return (
     <li>
       <button className="chat-item" aria-current={selected ? "true" : undefined} onClick={() => onOpen(chat.jid)}>
@@ -161,9 +164,10 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
               </span>
             )}
           </span>
-          {(chat.label || urgent || chat.reminderAt !== null || level) && (
+          {(chat.label || urgent || chat.reminderAt !== null || level || showPriority) && (
             <span className="chat-item__tags">
-              {level && !urgent && (
+              {showPriority && aiPriority && <span className={`badge ${PRIORITY_META[aiPriority].cls}`}>{PRIORITY_META[aiPriority].text}</span>}
+              {level && !urgent && !showPriority && (
                 <span className={`badge ${level === "alta" ? "badge--danger" : "badge--warning"}`}>
                   {level === "alta" ? "Responder já" : "Responder hoje"}
                 </span>
@@ -331,13 +335,20 @@ function ChatList(props: {
   );
 }
 
-function ClassificationBar({ chat, labels, onChange, onClassify, classifying, jevReady }: {
+const PRIORITY_META = {
+  alta: { text: "Prioridade alta", cls: "badge--danger" },
+  media: { text: "Prioridade média", cls: "badge--warning" },
+  baixa: { text: "Prioridade baixa", cls: "badge--neutral" },
+} as const;
+
+function ClassificationBar({ chat, labels, onChange, onClassify, classifying, jevReady, classifierName }: {
   chat: Chat;
   labels: string[];
   onChange: (patch: { status?: Status; label?: string | null }) => void;
   onClassify: () => void;
   classifying: boolean;
   jevReady: boolean;
+  classifierName: string;
 }) {
   return (
     <div className="classify">
@@ -371,19 +382,21 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
         onClick={onClassify}
         disabled={classifying || !jevReady}
         aria-busy={classifying || undefined}
-        title={jevReady ? "Pedir ao Jev para classificar esta conversa" : "Configure a chave do Jev em Configurações"}
+        title={jevReady ? `Pedir ao ${classifierName} para classificar esta conversa` : "Configure a chave do Jev ou da DeepSeek em Configurações › IA"}
       >
         {classifying ? <LoaderCircle className="spin" size={16} aria-hidden /> : <Sparkles size={16} aria-hidden />}
-        Classificar com Jev
+        Classificar com {classifierName}
       </button>
       {chat.ai && (
         <p className="classify__ai">
           <Sparkles size={14} aria-hidden />
           <span>
-            Jev: <strong>{chat.ai.label}</strong> ({percent(chat.ai.confidence)})
+            IA: <strong>{chat.ai.label}</strong> ({percent(chat.ai.confidence)})
+            {chat.ai.priority && ` · ${PRIORITY_META[chat.ai.priority].text.toLowerCase()}`}
             {chat.ai.needsReply >= 0.5 && " · espera resposta"}
             {chat.ai.urgent >= 0.5 && " · urgente"}
             {chat.labelSource === "manual" && chat.label !== chat.ai.label && " · etiqueta escolhida por você"}
+            {chat.ai.reason && <> · {chat.ai.reason}</>}
           </span>
         </p>
       )}
@@ -465,13 +478,14 @@ const Messages = memo(function Messages({ messages, hasMore, onMore, loadingMore
   );
 });
 
-function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, quickReplies, onSetupAi }: {
+function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, quickReplies, onSetupAi }: {
   chat: Chat;
   onSetupAi: () => void;
   quickReplies: QuickReply[];
   labels: string[];
   connected: boolean;
   jevReady: boolean;
+  classifierName: string;
   onBack: () => void;
   notify: (kind: Toast["kind"], text: string) => void;
   onChat: (chat: Chat) => void;
@@ -655,6 +669,7 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, q
           onClassify={classify}
           classifying={classifying}
           jevReady={jevReady}
+          classifierName={classifierName}
         />
       </header>
       <div className="chat-pane__body">
@@ -890,7 +905,8 @@ function App() {
               chat={current}
               labels={labels}
               connected={online && connection.status === "conectado"}
-              jevReady={!!state?.jev.configured}
+              jevReady={!!state?.classifier.configured}
+              classifierName={state?.classifier.provider === "deepseek" ? "DeepSeek" : "Jev"}
               onBack={() => setSelected(null)}
               notify={push}
               onChat={upsert}
