@@ -13,7 +13,7 @@ export type Api = {
   send: (jid: string, text: string) => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   classify: (jid: string) => Promise<unknown>;
-  saveSettings: (s: { jevApiKey?: string | null; autoClassify?: boolean; prefs?: Partial<Prefs> }) => void;
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
@@ -27,6 +27,7 @@ export type Api = {
     summarize: (jid: string) => Promise<unknown>;
     setInstructions: (text: string | null) => void;
     select: (id: "leve" | "melhor") => Promise<void>;
+    setProvider: (provider: "deepseek" | "local") => void;
   };
   /** Caminho de uma cópia consistente do banco, para download. */
   backup: () => Promise<string>;
@@ -82,6 +83,7 @@ const quickRepliesSchema = z
 const settingsSchema = z.object({
   prefs: prefsSchema.partial().optional(),
   jevApiKey: z.string().trim().min(10).max(500).nullable().optional(),
+  deepseekApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   autoClassify: z.boolean().optional(),
 });
 
@@ -203,6 +205,11 @@ export function createHandler(api: Api) {
     if (path === "/api/ai/model" && method === "PUT") {
       const { id } = parse(z.object({ id: z.enum(["leve", "melhor"]) }), await readJson(req));
       await api.ai.select(id);
+      return json(res, 200, api.ai.status());
+    }
+    if (path === "/api/ai/provider" && method === "PUT") {
+      const { provider } = parse(z.object({ provider: z.enum(["deepseek", "local"]) }), await readJson(req));
+      api.ai.setProvider(provider);
       return json(res, 200, api.ai.status());
     }
     if (path === "/api/ai/instructions" && method === "PUT") {

@@ -38,13 +38,43 @@ function lastFromContact(messages: Message[]): string {
   return [...messages].reverse().find((m) => !m.fromMe && m.text.trim())?.text.slice(0, 400) ?? "";
 }
 
-function transcript(contactName: string, messages: Message[]): string {
+function transcript(contactName: string, messages: Message[], withTime = false): string {
+  const when = (at: number) =>
+    new Date(at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   return messages
     .filter((m) => m.text.trim())
-    .slice(-25)
-    .map((m) => `${m.fromMe ? "Eu" : contactName}: ${m.text.slice(0, 600)}`)
+    .slice(-40)
+    .map((m) => `${withTime ? `[${when(m.at)}] ` : ""}${m.fromMe ? "Eu" : contactName}: ${m.text.slice(0, 600)}`)
     .join("\n");
 }
+
+export type Prompt = { system: string; user: string };
+
+const DRAFT_RULES = `Escreva em português do Brasil. Responda só com o texto da mensagem, sem aspas, sem explicações e sem assinatura.
+Use apenas informações que estão na conversa. Se pedirem preço, valor, horário, placa ou motorista e isso não estiver na conversa, diga que vai confirmar e retornar. Não escreva números que não estejam na conversa.
+Acompanhe o tom da conversa: com amigos e família, informal e curto; com clientes, cordial e profissional.`;
+
+/** Pedido de rascunho. withTime: data/hora em cada mensagem (o modelo da nuvem usa bem; o local se confunde). */
+export function draftPrompt(contactName: string, messages: Message[], instructions: string, withTime = false): Prompt {
+  return {
+    system: `${instructions || DEFAULT_INSTRUCTIONS}\n${DRAFT_RULES}`,
+    user: `Conversa de WhatsApp com ${contactName}${withTime ? " (mais antigas primeiro; as últimas são as que importam)" : ""}:\n${transcript(contactName, messages, withTime)}\n\nÚltima mensagem de ${contactName}: "${lastFromContact(messages)}"\n\nEscreva a minha próxima resposta, respondendo diretamente a essa última mensagem. Não repita o que eu já escrevi antes.`,
+  };
+}
+
+export function summaryPrompt(contactName: string, messages: Message[], withTime = false): Prompt {
+  return {
+    system:
+      "Você resume conversas de atendimento em português do Brasil, de forma objetiva. Use exatamente o formato pedido, com frases curtas e sem inventar fatos. O assunto atual é o das mensagens mais recentes; assuntos antigos já encerrados não entram no pedido nem no próximo passo.",
+    user: `Conversa de WhatsApp com ${contactName}${withTime ? " (mais antigas primeiro)" : ""}:\n${transcript(contactName, messages, withTime)}\n\nÚltima mensagem de ${contactName}: "${lastFromContact(messages)}"\n\nResponda exatamente neste formato:\nRESUMO: <até 2 frases sobre o assunto atual da conversa>\nPEDIDO: <o que ${contactName} está pedindo ou perguntando e ainda não foi respondido; se nada estiver pendente, escreva "nada pendente">\nPRÓXIMO PASSO: <a ação que eu devo fazer agora, ou "nenhuma ação necessária">`,
+  };
+}
+
+/** Tira as aspas que o modelo às vezes põe em volta do rascunho. */
+export const unquote = (text: string) => text.replace(/^["“]|["”]$/g, "").trim();
+
+/** Conversa sem horários, para a trava do rascunho (horário de envio não conta como dado citado). */
+export const plainTranscript = (contactName: string, messages: Message[]) => transcript(contactName, messages);
 
 export class LocalAI {
   private readonly dir: string;
@@ -245,40 +275,25 @@ export class LocalAI {
   /** Rascunho de resposta para a última mensagem do contato. Nunca envia sozinho. */
   draft(contactName: string, messages: Message[], instructions: string): Promise<string> {
     return this.run(async (model) => {
-      const conversation = transcript(contactName, messages);
-      const mine = messages.filter((m) => m.fromMe).map((m) => m.text);
-      const system = `${instructions || DEFAULT_INSTRUCTIONS}
-Escreva em português do Brasil. Responda só com o texto da mensagem, sem aspas, sem explicações e sem assinatura.
-Use apenas informações que estão na conversa. Se pedirem preço, valor, horário, placa ou motorista e isso não estiver na conversa, diga que vai confirmar e retornar. Não escreva números que não estejam na conversa.`;
-      const ask = (extra: string, temperature: number) =>
-        this.ask(
-          model,
-          system,
-          `Conversa de WhatsApp com ${contactName}:\n${conversation}\n\nÚltima mensagem de ${contactName}: "${lastFromContact(messages)}"\n\nEscreva a minha próxima resposta, respondendo diretamente a essa última mensagem. Não repita o que eu já escrevi antes.${extra}`,
-          200,
-          temperature,
-        );
-      let text = (await ask("", 0.3)).replace(/^["“]|["”]$/g, "").trim();
+      // O modelo local se perde com conversa longa: só as 25 últimas.
+      const recent = messages.slice(-25);
+      const { system, user } = draftPrompt(contactName, recent, instructions);
+      const mine = recent.filter((m) => m.fromMe).map((m) => m.text);
+      let text = unquote(await this.ask(model, system, user, 200, 0.3));
       // Modelo pequeno às vezes só copia uma resposta minha anterior: tenta de novo proibindo-a.
       if (repeatsMine(text, mine)) {
-        text = (await ask(`\nNão use estas frases, que já foram enviadas: ${mine.slice(-3).map((t) => `"${t.slice(0, 160)}"`).join("; ")}.`, 0.7))
-          .replace(/^["“]|["”]$/g, "")
-          .trim();
+        const extra = `\nNão use estas frases, que já foram enviadas: ${mine.slice(-3).map((t) => `"${t.slice(0, 160)}"`).join("; ")}.`;
+        text = unquote(await this.ask(model, system, user + extra, 200, 0.7));
       }
-      return guardDraft(text, conversation);
+      return guardDraft(text, transcript(contactName, recent));
     });
   }
 
   /** Resumo em três partes: o que aconteceu, o que o contato quer e o próximo passo. */
   summarize(contactName: string, messages: Message[]): Promise<Summary> {
     return this.run(async (model) => {
-      const raw = await this.ask(
-        model,
-        "Você resume conversas de atendimento em português do Brasil, de forma objetiva. Use exatamente o formato pedido, com frases curtas e sem inventar fatos.",
-        `Conversa de WhatsApp com ${contactName}:\n${transcript(contactName, messages)}\n\nÚltima mensagem de ${contactName}: "${lastFromContact(messages)}"\n\nResponda exatamente neste formato:\nRESUMO: <até 2 frases sobre o assunto da conversa>\nPEDIDO: <o que ${contactName} está pedindo ou perguntando e ainda não foi respondido; se a última mensagem tem pergunta, é ela>\nPRÓXIMO PASSO: <a ação que eu devo fazer agora para responder>`,
-        260,
-      );
-      return parseSummary(raw);
+      const { system, user } = summaryPrompt(contactName, messages.slice(-25));
+      return parseSummary(await this.ask(model, system, user, 260));
     });
   }
 

@@ -7,6 +7,7 @@ import { Store, type Chat, type Message, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS, LocalAI, MODELS, type ModelId } from "./ai.ts";
+import { DeepSeekAI, DEEPSEEK_MODEL } from "./deepseek.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import type { Jev } from "./jev.ts";
 import type { ConnectionState, WhatsApp } from "./whatsapp.ts";
@@ -73,7 +74,16 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   const reminderTimer = setInterval(fireReminders, 30000);
   reminderTimer.unref();
 
-  // ---- IA local (modelo em data/models; texto da conversa não sai do PC)
+  // ---- IA: DeepSeek (nuvem, padrão quando há chave) ou local (modelo em data/models, offline)
+
+  const deepseek = new DeepSeekAI();
+  const deepseekKey = () => process.env.DEEPSEEK_API_KEY || store.getSetting("deepseek_api_key");
+  type Provider = "deepseek" | "local";
+  const provider = (): Provider => {
+    const saved = store.getSetting("ai_provider");
+    if (saved === "deepseek" || saved === "local") return saved;
+    return deepseekKey() ? "deepseek" : "local";
+  };
 
   const localAi = new LocalAI(join(options.dataDir, "models"), () => broadcast("ai", aiState()));
   const aiInstructions = () => store.getSetting("ai_instructions") || DEFAULT_INSTRUCTIONS;
@@ -87,6 +97,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   void localAi.select(initialModel);
   const aiState = () => ({
     ...localAi.status(),
+    provider: provider(),
+    deepseek: { configured: !!deepseekKey(), fromEnv: !!process.env.DEEPSEEK_API_KEY, model: DEEPSEEK_MODEL },
     modelId: localAi.model_,
     model: MODELS[localAi.model_].name,
     size: MODELS[localAi.model_].size,
@@ -100,10 +112,15 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     instructions: aiInstructions(),
     customInstructions: !!store.getSetting("ai_instructions"),
   });
+  const requireDeepseekKey = () => {
+    const key = deepseekKey();
+    if (!key) throw new Error("Cole a chave da DeepSeek em Configurações › IA.");
+    return key;
+  };
   const chatOrThrow = (jid: string) => {
     const chat = store.getChat(jid);
     if (!chat) throw new Error("Conversa não encontrada.");
-    const messages = store.listMessages(jid, null, 25);
+    const messages = store.listMessages(jid, null, 40);
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto suficiente.");
     return { chat, messages };
   };
@@ -203,6 +220,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     saveSettings: (s) => {
       if (s.prefs) options.onPrefs?.(savePrefs(store, s.prefs));
       if (s.jevApiKey !== undefined) store.setSetting("jev_api_key", s.jevApiKey);
+      if (s.deepseekApiKey !== undefined) {
+        store.setSetting("deepseek_api_key", s.deepseekApiKey);
+        broadcast("ai", aiState());
+      }
       if (s.autoClassify !== undefined) store.setSetting("auto_classify", s.autoClassify ? "1" : "0");
       broadcast("state", publicState());
     },
@@ -222,11 +243,17 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       remove: (id) => localAi.remove(id),
       draft: (jid) => {
         const { chat, messages } = chatOrThrow(jid);
-        return localAi.draft(chat.name, messages, aiInstructions());
+        if (provider() === "local") return localAi.draft(chat.name, messages, aiInstructions());
+        return deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions());
       },
       summarize: (jid) => {
         const { chat, messages } = chatOrThrow(jid);
-        return localAi.summarize(chat.name, messages);
+        if (provider() === "local") return localAi.summarize(chat.name, messages);
+        return deepseek.summarize(requireDeepseekKey(), chat.name, messages);
+      },
+      setProvider: (p) => {
+        store.setSetting("ai_provider", p);
+        broadcast("ai", aiState());
       },
       select: async (id) => {
         await localAi.select(id);

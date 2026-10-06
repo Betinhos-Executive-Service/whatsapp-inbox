@@ -45,15 +45,77 @@ function Toggle({ checked, onChange, label, hint, disabled }: { checked: boolean
   );
 }
 
-function LocalAiPanel({ instructions, setInstructions }: { instructions: string; setInstructions: (v: string) => void }) {
+type AiPanelProps = {
+  instructions: string;
+  setInstructions: (v: string) => void;
+  dsKey: string;
+  setDsKey: (v: string) => void;
+  removeDsKey: boolean;
+  setRemoveDsKey: (v: boolean) => void;
+};
+
+function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, setRemoveDsKey }: AiPanelProps) {
   const live = useAiStatus();
   const [local, setLocal] = useState<AiStatus | null>(null);
-  // O evento ao vivo vence; a resposta da ação cobre o intervalo até ele chegar.
-  const ai = live ?? local;
+  const [switching, setSwitching] = useState(false);
+  // A resposta da ação vale até o próximo evento ao vivo; depois o evento vence.
+  const ai = local ?? live;
+  useEffect(() => setLocal(null), [live]);
   if (!ai) return <p className="hint">Carregando…</p>;
+  const choose = async (provider: AiStatus["provider"]) => {
+    if (provider === ai.provider || switching) return;
+    setSwitching(true);
+    try {
+      setLocal(await api.setAiProvider(provider));
+    } finally {
+      setSwitching(false);
+    }
+  };
   return (
     <div className="stack">
-      <AiModels ai={ai} onChange={setLocal} />
+      <div className="segmented" role="radiogroup" aria-label="Onde a IA roda">
+        {(
+          [
+            ["deepseek", "DeepSeek (nuvem)"],
+            ["local", "Local (offline)"],
+          ] as const
+        ).map(([id, label]) => (
+          <button key={id} type="button" role="radio" aria-checked={ai.provider === id} className="segmented__item" disabled={switching} onClick={() => void choose(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {ai.provider === "deepseek" ? (
+        <>
+          {ai.deepseek.fromEnv ? (
+            <p className="hint">A chave da DeepSeek está definida no arquivo .env.local deste computador.</p>
+          ) : (
+            <label className="field">
+              <span className="field__label">Chave de API da DeepSeek</span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={ai.deepseek.configured ? "Chave salva. Cole outra para trocar." : "Cole a chave (sk-…)"}
+                value={dsKey}
+                onChange={(e) => {
+                  setDsKey(e.target.value);
+                  setRemoveDsKey(false);
+                }}
+                aria-describedby="ds-key-help"
+              />
+              <span id="ds-key-help" className="hint">
+                {ai.deepseek.configured
+                  ? "A chave fica salva só neste computador e nunca volta para a tela."
+                  : "Crie a chave em platform.deepseek.com › API keys e salve aqui."}
+              </span>
+            </label>
+          )}
+          {ai.deepseek.configured && !ai.deepseek.fromEnv && <Toggle checked={removeDsKey} onChange={setRemoveDsKey} label="Remover a chave salva" />}
+          <p className="hint">Rascunho e resumo em segundos. A DeepSeek recebe o nome do contato e o texto das últimas 40 mensagens da conversa.</p>
+        </>
+      ) : (
+        <AiModels ai={ai} onChange={setLocal} />
+      )}
       <label className="field">
         <span className="field__label">Como a IA deve escrever</span>
         <textarea className="notes__note" rows={4} maxLength={2000} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
@@ -165,6 +227,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const [key, setKey] = useState("");
   const [removeKey, setRemoveKey] = useState(false);
   const [auto, setAuto] = useState(state.jev.autoClassify);
+  const [dsKey, setDsKey] = useState("");
+  const [removeDsKey, setRemoveDsKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"discard" | "logout" | "reset" | null>(null);
@@ -189,6 +253,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
     }).catch(() => undefined);
     setKey("");
     setRemoveKey(false);
+    setDsKey("");
+    setRemoveDsKey(false);
     setAuto(state.jev.autoClassify);
     setError(null);
     setConfirm(null);
@@ -200,7 +266,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => setPrefs((p) => ({ ...p, [k]: v }));
   const quietOn = !!(prefs.quietStart && prefs.quietEnd);
   const dirty =
-    !sameLabels(labels, state.labels) || aiText !== savedAiText || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || auto !== state.jev.autoClassify;
+    !sameLabels(labels, state.labels) || aiText !== savedAiText || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || dsKey.trim() !== "" || removeDsKey || auto !== state.jev.autoClassify;
 
   const requestClose = () => {
     if (saving) return;
@@ -271,6 +337,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
       const settings: Parameters<typeof api.saveSettings>[0] = {};
       if (key.trim()) settings.jevApiKey = key.trim();
       else if (removeKey) settings.jevApiKey = null;
+      if (dsKey.trim()) settings.deepseekApiKey = dsKey.trim();
+      else if (removeDsKey) settings.deepseekApiKey = null;
       if (auto !== state.jev.autoClassify) settings.autoClassify = auto;
       if (!samePrefs(prefs, state.prefs)) settings.prefs = prefs;
       if (Object.keys(settings).length) next = await api.saveSettings(settings);
@@ -444,8 +512,15 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
           )}
           {tab === "ia" && (
             <section className="surface stack">
-              <h3 className="eyebrow">IA local</h3>
-              <LocalAiPanel instructions={aiText} setInstructions={setAiText} />
+              <h3 className="eyebrow">Rascunho e resumo</h3>
+              <AiPanel
+                instructions={aiText}
+                setInstructions={setAiText}
+                dsKey={dsKey}
+                setDsKey={setDsKey}
+                removeDsKey={removeDsKey}
+                setRemoveDsKey={setRemoveDsKey}
+              />
             </section>
           )}
 

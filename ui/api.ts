@@ -30,6 +30,8 @@ export type AiStatus = (
   models: { id: "leve" | "melhor"; name: string; size: number; installed: boolean; partial: boolean }[];
   instructions: string;
   customInstructions: boolean;
+  provider: "deepseek" | "local";
+  deepseek: { configured: boolean; fromEnv: boolean; model: string };
 };
 export type Summary = { resumo: string; pedido: string; proximoPasso: string };
 
@@ -101,6 +103,7 @@ export const api = {
   cancelAiDownload: () => request<AiStatus>("POST", "/api/ai/download/cancel", {}),
   selectAi: (id: "leve" | "melhor") => request<AiStatus>("PUT", "/api/ai/model", { id }),
   removeAi: (id: "leve" | "melhor") => request<AiStatus>("POST", "/api/ai/remove", { id }),
+  setAiProvider: (provider: "deepseek" | "local") => request<AiStatus>("PUT", "/api/ai/provider", { provider }),
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
   draft: (jid: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, {}),
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
@@ -108,7 +111,7 @@ export const api = {
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),
   saveLabels: (labels: Label[]) => request<Label[]>("PUT", "/api/labels", labels),
-  saveSettings: (s: { jevApiKey?: string | null; autoClassify?: boolean; prefs?: Partial<Prefs> }) => request<AppState>("PUT", "/api/settings", s),
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; prefs?: Partial<Prefs> }) => request<AppState>("PUT", "/api/settings", s),
   logout: () => request<AppState>("POST", "/api/logout", {}),
   reset: (reconnect: boolean) => request<AppState>("POST", "/api/reset", { reconnect }),
 };

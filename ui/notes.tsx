@@ -1,7 +1,7 @@
 import { AlarmClock, Check, LoaderCircle, Trash2, WandSparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, type Chat, type Reminder, type Summary } from "./api.ts";
-import { useAiStatus } from "./ai-state.ts";
+import { aiName, isAiReady, useAiStatus } from "./ai-state.ts";
 import { dayLabel, formatTime } from "./format.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -49,7 +49,7 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
     try {
       setSummary(await api.summary(chat.jid));
     } catch (e) {
-      notify("error", `A IA local não resumiu. ${(e as Error).message}`);
+      notify("error", `A ${aiName(ai)} não resumiu. ${(e as Error).message}`);
     } finally {
       setSummarizing(false);
     }
@@ -138,7 +138,7 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
       </header>
       <div className="notes__body">
         <div className="stack">
-          <span className="field__label">Resumo (IA local)</span>
+          <span className="field__label">Resumo ({aiName(ai)})</span>
           {summary ? (
             <dl className="summary">
               <dt>Resumo</dt>
@@ -157,10 +157,10 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
               )}
             </dl>
           ) : (
-            <p className="hint">{ai?.state === "pronto" ? "Gera um resumo das últimas mensagens, sem sair do seu computador." : ai?.state === "baixando" ? `Baixando a IA local… ${ai.percent}%` : "Ative a IA local em Configurações › IA para usar."}</p>
+            <p className="hint">{isAiReady(ai) ? (ai?.provider === "deepseek" ? "Gera um resumo das últimas mensagens com a DeepSeek." : "Gera um resumo das últimas mensagens, sem sair do seu computador.") : ai?.provider === "local" && ai.state === "baixando" ? `Baixando a IA local… ${ai.percent}%` : "Ative a IA em Configurações › IA para usar."}</p>
           )}
           <div className="cluster">
-            <button className="button button--secondary button--compact" disabled={ai?.state !== "pronto" || summarizing} aria-busy={summarizing || undefined} onClick={() => void summarize()}>
+            <button className="button button--secondary button--compact" disabled={!isAiReady(ai) || summarizing} aria-busy={summarizing || undefined} onClick={() => void summarize()}>
               {summarizing ? <LoaderCircle className="spin" size={16} aria-hidden /> : <WandSparkles size={16} aria-hidden />}
               {summary ? "Resumir de novo" : "Resumir conversa"}
             </button>
