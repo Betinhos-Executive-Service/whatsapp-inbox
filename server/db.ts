@@ -1,4 +1,5 @@
 import { DatabaseSync, type StatementSync } from "node:sqlite";
+import type { Provider, TokenUsage, UsageKind } from "./pricing.ts";
 
 export const STATUSES = ["aberta", "aguardando", "resolvida"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -30,6 +31,44 @@ export type Chat = {
   note: string | null;
   /** Próximo lembrete pendente (ms) e se ele já venceu. */
   reminderAt: number | null;
+  /** Tokens e custo estimado (US$) de toda a IA usada nesta conversa. */
+  aiUsage: { calls: number; tokens: number; costUsd: number };
+};
+
+/** Uma chamada de IA (Jev, DeepSeek ou local) registrada para o painel de gastos. */
+export type AiUsageRow = {
+  at: number;
+  provider: Provider;
+  kind: UsageKind;
+  chatJid: string | null;
+  model: string;
+  usage: TokenUsage;
+  costUsd: number;
+  /** Etiqueta devolvida (só em classificação bem-sucedida). */
+  label: string | null;
+  confidence: number | null;
+  needsReply: number | null;
+  urgent: number | null;
+  ok: boolean;
+};
+
+export type AiUsageSummary = {
+  sinceAt: number | null;
+  usdBrl: number;
+  totals: { calls: number; failures: number; inputTokens: number; outputTokens: number; cachedTokens: number; costUsd: number };
+  byKind: { kind: UsageKind; calls: number; tokens: number; costUsd: number }[];
+  byProvider: { provider: Provider; calls: number; tokens: number; costUsd: number }[];
+  /** Um ponto por dia (chave aaaa-mm-dd em America/Sao_Paulo), do mais antigo ao mais novo. */
+  byDay: { day: string; calls: number; costUsd: number }[];
+  classification: {
+    total: number;
+    failures: number;
+    avgConfidence: number | null;
+    needsReplyShare: number | null;
+    urgentShare: number | null;
+    byLabel: { label: string; count: number; avgConfidence: number }[];
+  };
+  topChats: { jid: string; name: string; calls: number; costUsd: number }[];
 };
 
 export type Reminder = { id: number; chatJid: string; dueAt: number; text: string; firedAt: number | null };
@@ -127,6 +166,25 @@ create table if not exists label_examples (
   snippet text not null,
   created_at integer not null
 );
+create table if not exists ai_usage (
+  id integer primary key,
+  at integer not null,
+  provider text not null check (provider in ('jev','deepseek','local')),
+  kind text not null check (kind in ('classificar','rascunho','resumo')),
+  chat_jid text,
+  model text not null,
+  input_tokens integer not null default 0,
+  output_tokens integer not null default 0,
+  cached_tokens integer not null default 0,
+  cost_usd real not null default 0,
+  label text,
+  confidence real,
+  needs_reply real,
+  urgent real,
+  ok integer not null default 1
+);
+create index if not exists ai_usage_at on ai_usage(at desc);
+create index if not exists ai_usage_chat on ai_usage(chat_jid);
 `;
 
 /** Colunas acrescentadas depois da primeira versão; SQLite não tem "add column if not exists". */
@@ -138,7 +196,12 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
   ["chats", "ai_reason", "text"],
 ];
 
-const CHAT_SELECT = `select c.*, (select min(due_at) from reminders r where r.chat_jid = c.jid and r.done_at is null) as reminder_at from chats c`;
+const CHAT_SELECT = `select c.*,
+  (select min(due_at) from reminders r where r.chat_jid = c.jid and r.done_at is null) as reminder_at,
+  (select count(*) from ai_usage u where u.chat_jid = c.jid) as ai_calls,
+  (select coalesce(sum(input_tokens + output_tokens), 0) from ai_usage u where u.chat_jid = c.jid) as ai_tokens,
+  (select coalesce(sum(cost_usd), 0) from ai_usage u where u.chat_jid = c.jid) as ai_cost
+  from chats c`;
 
 type Row = Record<string, unknown>;
 
@@ -177,6 +240,7 @@ function toChat(r: Row): Chat {
     aiError: (r.ai_error as string) ?? null,
     note: (r.note as string) || null,
     reminderAt: r.reminder_at == null ? null : Number(r.reminder_at),
+    aiUsage: { calls: Number(r.ai_calls ?? 0), tokens: Number(r.ai_tokens ?? 0), costUsd: Number(r.ai_cost ?? 0) },
   };
 }
 
@@ -425,10 +489,12 @@ export class Store {
       const pnChat = this.q("select * from chats where jid = ?").get(pn) as Row | undefined;
       if (!pnChat) {
         this.q("update chats set jid = ? where jid = ?").run(pn, lid);
+        this.q("update ai_usage set chat_jid = ? where chat_jid = ?").run(pn, lid);
         return this.getChat(pn);
       }
       this.q("update or ignore messages set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update reminders set chat_jid = ? where chat_jid = ?").run(pn, lid);
+      this.q("update ai_usage set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update chats set note = coalesce(note, (select note from chats where jid = ?)) where jid = ?").run(lid, pn);
       this
         .q(
@@ -604,6 +670,88 @@ export class Store {
         .run();
     });
     return this.listLabels();
+  }
+
+  // ---- gastos com IA
+
+  recordAiUsage(row: AiUsageRow): void {
+    this.q(
+      `insert into ai_usage (at, provider, kind, chat_jid, model, input_tokens, output_tokens, cached_tokens, cost_usd, label, confidence, needs_reply, urgent, ok)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      row.at, row.provider, row.kind, row.chatJid, row.model,
+      row.usage.inputTokens, row.usage.outputTokens, row.usage.cachedTokens, row.costUsd,
+      row.label, row.confidence, row.needsReply, row.urgent, row.ok ? 1 : 0,
+    );
+  }
+
+  /** Resumo para o painel de gastos. sinceAt = null: tudo. */
+  aiUsageSummary(sinceAt: number | null, usdBrl: number): AiUsageSummary {
+    const since = sinceAt ?? 0;
+    const totals = this.q(
+      `select count(*) calls, coalesce(sum(ok = 0), 0) failures, coalesce(sum(input_tokens), 0) input_tokens,
+              coalesce(sum(output_tokens), 0) output_tokens, coalesce(sum(cached_tokens), 0) cached_tokens, coalesce(sum(cost_usd), 0) cost_usd
+       from ai_usage where at >= ?`,
+    ).get(since) as Row;
+    const group = (col: "kind" | "provider") =>
+      this.q(
+        `select ${col} k, count(*) calls, coalesce(sum(input_tokens + output_tokens), 0) tokens, coalesce(sum(cost_usd), 0) cost_usd
+         from ai_usage where at >= ? group by ${col} order by cost_usd desc, calls desc`,
+      ).all(since) as Row[];
+    // Dia em America/Sao_Paulo: o SQLite só conhece UTC, então o agrupamento por dia é feito aqui.
+    const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
+    const days = new Map<string, { calls: number; costUsd: number }>();
+    for (const r of this.q("select at, cost_usd from ai_usage where at >= ? order by at").all(since) as Row[]) {
+      const key = dayKey.format(Number(r.at));
+      const d = days.get(key) ?? { calls: 0, costUsd: 0 };
+      d.calls++;
+      d.costUsd += Number(r.cost_usd);
+      days.set(key, d);
+    }
+    const cls = this.q(
+      `select count(*) total, coalesce(sum(ok = 0), 0) failures, avg(case when ok = 1 then confidence end) avg_confidence,
+              avg(case when ok = 1 then needs_reply end) needs_reply, avg(case when ok = 1 then urgent end) urgent
+       from ai_usage where kind = 'classificar' and at >= ?`,
+    ).get(since) as Row;
+    const byLabel = this.q(
+      `select label, count(*) count, avg(confidence) avg_confidence from ai_usage
+       where kind = 'classificar' and ok = 1 and label is not null and at >= ? group by label order by count desc, label`,
+    ).all(since) as Row[];
+    const topChats = this.q(
+      `select u.chat_jid jid, c.saved_name, c.push_name, count(*) calls, coalesce(sum(u.cost_usd), 0) cost_usd
+       from ai_usage u left join chats c on c.jid = u.chat_jid
+       where u.chat_jid is not null and u.at >= ? group by u.chat_jid order by cost_usd desc, calls desc limit 5`,
+    ).all(since) as Row[];
+    const n = (v: unknown) => (v == null ? null : Number(v));
+    return {
+      sinceAt,
+      usdBrl,
+      totals: {
+        calls: Number(totals.calls), failures: Number(totals.failures), inputTokens: Number(totals.input_tokens),
+        outputTokens: Number(totals.output_tokens), cachedTokens: Number(totals.cached_tokens), costUsd: Number(totals.cost_usd),
+      },
+      byKind: group("kind").map((r) => ({ kind: r.k as UsageKind, calls: Number(r.calls), tokens: Number(r.tokens), costUsd: Number(r.cost_usd) })),
+      byProvider: group("provider").map((r) => ({ provider: r.k as Provider, calls: Number(r.calls), tokens: Number(r.tokens), costUsd: Number(r.cost_usd) })),
+      byDay: [...days].map(([day, d]) => ({ day, ...d })),
+      classification: {
+        total: Number(cls.total),
+        failures: Number(cls.failures),
+        avgConfidence: n(cls.avg_confidence),
+        needsReplyShare: n(cls.needs_reply),
+        urgentShare: n(cls.urgent),
+        byLabel: byLabel.map((r) => ({ label: String(r.label), count: Number(r.count), avgConfidence: Number(r.avg_confidence) })),
+      },
+      topChats: topChats.map((r) => {
+        const jid = String(r.jid);
+        const phone = phoneOf(jid);
+        return {
+          jid,
+          name: (r.saved_name as string) || (r.push_name as string) || (phone ? `+${phone}` : "Conversa apagada"),
+          calls: Number(r.calls),
+          costUsd: Number(r.cost_usd),
+        };
+      }),
+    };
   }
 
   getSetting(key: string): string | null {

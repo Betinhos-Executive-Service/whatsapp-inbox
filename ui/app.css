@@ -551,3 +551,32 @@ ul, ol { margin: 0; padding: 0; }
     transition-duration: .01ms !important;
   }
 }
+
+/* ---- gastos com IA */
+.ai-usage-line {
+  /* Ocupa o respiro inferior do composer; relative para pintar acima dele (o form é position: relative). */
+  position: relative;
+  margin: calc(-1 * var(--bt-space-4)) var(--bt-space-5) var(--bt-space-2);
+  font-size: var(--bt-font-size-11); line-height: 1.3; text-align: right;
+  color: var(--bt-color-slate-400); font-variant-numeric: tabular-nums;
+  pointer-events: none; user-select: none;
+}
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--bt-space-2); }
+.kpi {
+  container-type: inline-size;
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  padding: var(--bt-space-3);
+  border-radius: var(--bt-radius-md);
+  background-color: var(--bt-color-surface-neutral);
+  border: var(--bt-border-width-default) solid var(--bt-color-border);
+}
+.kpi__label { font-size: var(--bt-font-size-11); font-weight: var(--bt-font-weight-extrabold); text-transform: uppercase; letter-spacing: .08em; color: var(--bt-color-text-secondary); }
+.kpi__value { font-size: clamp(var(--bt-font-size-20), 17cqi, var(--bt-font-size-26)); line-height: 1; font-weight: var(--bt-font-weight-extrabold); color: var(--bt-color-text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpis--compact .kpi__value { font-size: var(--bt-font-size-20); }
+.usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--bt-space-4); }
+.bars { list-style: none; display: flex; flex-direction: column; gap: var(--bt-space-1-5); }
+.bars__row { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(60px, 2fr) auto; align-items: center; gap: var(--bt-space-2); font-size: var(--bt-font-size-12); }
+.bars__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--bt-color-text-primary); }
+.bars__track { height: 8px; border-radius: 4px; background-color: var(--bt-color-border); overflow: hidden; }
+.bars__fill { display: block; height: 100%; border-radius: 4px; background-color: var(--bt-color-action); transition: width var(--bt-duration-fast) ease; }
+.bars__value { white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; color: var(--bt-color-text-primary); }

@@ -1,9 +1,10 @@
-import { Bell, Download, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
+import { Bell, ChartColumn, Download, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type AiStatus, type AppState, type Classifier, type Label, type Prefs, type QuickReply } from "./api.ts";
 import { desktop, type ReleaseInfo, type UpdateState } from "./desktop.ts";
 import { publishAi, useAiStatus } from "./ai-state.ts";
 import { AiModels } from "./ai-models.tsx";
+import { AiUsagePanel } from "./ai-usage.tsx";
 
 type Props = {
   open: boolean;
@@ -15,11 +16,12 @@ type Props = {
   notify: (kind: "error" | "success", text: string) => void;
 };
 
-export type Tab = "geral" | "notificacoes" | "ia" | "etiquetas" | "respostas" | "conta";
+export type Tab = "geral" | "notificacoes" | "ia" | "gastos" | "etiquetas" | "respostas" | "conta";
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: "geral", label: "Geral", icon: <Settings2 size={16} aria-hidden /> },
   { id: "notificacoes", label: "Notificações", icon: <Bell size={16} aria-hidden /> },
   { id: "ia", label: "IA", icon: <KeyRound size={16} aria-hidden /> },
+  { id: "gastos", label: "Gastos com IA", icon: <ChartColumn size={16} aria-hidden /> },
   { id: "etiquetas", label: "Etiquetas", icon: <Tags size={16} aria-hidden /> },
   { id: "respostas", label: "Respostas rápidas", icon: <Zap size={16} aria-hidden /> },
   { id: "conta", label: "Conta e dados", icon: <Smartphone size={16} aria-hidden /> },
@@ -545,6 +547,13 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 removeDsKey={removeDsKey}
                 setRemoveDsKey={setRemoveDsKey}
               />
+            </section>
+          )}
+
+          {tab === "gastos" && (
+            <section className="surface stack">
+              <h3 className="eyebrow">Gastos com IA</h3>
+              <AiUsagePanel notify={notify} />
             </section>
           )}
 

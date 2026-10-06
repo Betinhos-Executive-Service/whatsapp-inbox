@@ -38,6 +38,20 @@ export function formatBuild(version: string, iso: string): string {
 
 export const percent = (p: number) => `${Math.round(p * 100)}%`;
 
+const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const brlFine = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const usd = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const compact = new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 });
+const plain = new Intl.NumberFormat("pt-BR");
+
+/** Reais; abaixo de R$ 0,01 mostra até quatro casas para não virar "R$ 0,00". */
+export const formatBrl = (value: number) => (value > 0 && value < 0.01 ? brlFine : brl).format(value);
+export const formatUsd = (value: number) => usd.format(value);
+/** "1,2 mil", "850". */
+export const formatCount = (n: number) => (n >= 1000 ? compact.format(n) : plain.format(n));
+/** "1,2 mil tokens", "850 tokens". */
+export const formatTokens = (n: number) => `${formatCount(n)} ${n === 1 ? "token" : "tokens"}`;
+
 export function initials(name: string): string {
   const parts = name.replace(/[^\p{L}\p{N} ]/gu, "").trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return "#";

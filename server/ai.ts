@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Message } from "./db.ts";
+import type { TokenUsage } from "./pricing.ts";
 
 export const MODELS = {
   leve: {
@@ -264,17 +265,29 @@ export class LocalAI {
     const { LlamaChatSession } = await import("node-llama-cpp");
     const context = await model.createContext({ contextSize: 4096 });
     try {
-      const session = new LlamaChatSession({ contextSequence: context.getSequence(), systemPrompt: system });
+      const sequence = context.getSequence();
+      const session = new LlamaChatSession({ contextSequence: sequence, systemPrompt: system });
       const answer: string = await session.prompt(prompt, { maxTokens, temperature, topP: 0.9 });
+      this.lastUsage.inputTokens += Number(sequence.tokenMeter?.usedInputTokens ?? 0);
+      this.lastUsage.outputTokens += Number(sequence.tokenMeter?.usedOutputTokens ?? 0);
       return answer.trim();
     } finally {
       await context.dispose();
     }
   }
 
+  /** Tokens somados pelas chamadas a ask() dentro de uma geração; zerado no começo de cada uma. */
+  private lastUsage: TokenUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+  private takeUsage(): TokenUsage {
+    const u = this.lastUsage;
+    this.lastUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+    return u;
+  }
+
   /** Rascunho de resposta para a última mensagem do contato. Nunca envia sozinho. */
-  draft(contactName: string, messages: Message[], instructions: string): Promise<string> {
+  draft(contactName: string, messages: Message[], instructions: string): Promise<{ text: string; usage: TokenUsage }> {
     return this.run(async (model) => {
+      this.takeUsage();
       // O modelo local se perde com conversa longa: só as 25 últimas.
       const recent = messages.slice(-25);
       const { system, user } = draftPrompt(contactName, recent, instructions);
@@ -285,15 +298,17 @@ export class LocalAI {
         const extra = `\nNão use estas frases, que já foram enviadas: ${mine.slice(-3).map((t) => `"${t.slice(0, 160)}"`).join("; ")}.`;
         text = unquote(await this.ask(model, system, user + extra, 200, 0.7));
       }
-      return guardDraft(text, transcript(contactName, recent));
+      return { text: guardDraft(text, transcript(contactName, recent)), usage: this.takeUsage() };
     });
   }
 
   /** Resumo em três partes: o que aconteceu, o que o contato quer e o próximo passo. */
-  summarize(contactName: string, messages: Message[]): Promise<Summary> {
+  summarize(contactName: string, messages: Message[]): Promise<{ summary: Summary; usage: TokenUsage }> {
     return this.run(async (model) => {
+      this.takeUsage();
       const { system, user } = summaryPrompt(contactName, messages.slice(-25));
-      return parseSummary(await this.ask(model, system, user, 260));
+      const summary = parseSummary(await this.ask(model, system, user, 260));
+      return { summary, usage: this.takeUsage() };
     });
   }
 
