@@ -22,6 +22,9 @@ export function uiOptions({ version, date }, { dev = false } = {}) {
     outdir: dist,
     bundle: true,
     format: "esm",
+    // Configurações viram um pedaço à parte, carregado só quando abertas.
+    splitting: true,
+    chunkNames: "chunks/[name]-[hash]",
     target: "es2022",
     jsx: "automatic",
     minify: !dev,

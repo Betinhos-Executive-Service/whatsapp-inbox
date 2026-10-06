@@ -44,5 +44,5 @@ export function initials(name: string): string {
   return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 }
 
-const strip = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
-export const matches = (haystack: string, needle: string) => strip(haystack).includes(strip(needle));
+/** Minúsculas e sem acentos, para comparar na busca. */
+export const normalize = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();

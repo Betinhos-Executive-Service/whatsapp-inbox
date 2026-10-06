@@ -20,6 +20,20 @@ const msg = (over: Partial<IncomingMessage> = {}): IncomingMessage => ({
   ...over,
 });
 
+test("lote do histórico numa transação: falha de uma gravação aninhada não desfaz as outras", () => {
+  const s = new Store(":memory:");
+  s.tx(() => {
+    s.addMessage(msg({ text: "primeira" }), false);
+    assert.throws(() => s.tx(() => {
+      s.addMessage(msg({ text: "desfeita" }), false);
+      throw new Error("falha");
+    }));
+    s.addMessage(msg({ text: "terceira" }), false);
+  });
+  assert.equal(s.listMessages(PN, null).length, 2);
+  assert.ok(!s.listMessages(PN, null).some((m) => m.text === "desfeita"));
+});
+
 test("mensagem nova reabre a conversa e conta não lida; resposta minha passa a aguardando", () => {
   const s = new Store(":memory:");
   s.addMessage(msg(), true);

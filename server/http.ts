@@ -284,7 +284,12 @@ export function createHandler(api: Api) {
     if (!file.startsWith(normalize(api.distDir))) throw new HttpError(403, "Caminho inválido.");
     try {
       const body = await readFile(file);
-      res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream", "cache-control": "no-cache" });
+      // Fontes e pedaços do bundle têm hash no nome: podem ficar em cache para sempre.
+      const hashed = /^\/(assets|chunks)\//.test(path);
+      res.writeHead(200, {
+        "content-type": TYPES[extname(file)] ?? "application/octet-stream",
+        "cache-control": hashed ? "public, max-age=31536000, immutable" : "no-cache",
+      });
       res.end(body);
     } catch {
       if (path === "/") throw new HttpError(503, "Interface não compilada. Rode pnpm build.");

@@ -20,15 +20,16 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
-import { aiName, isAiReady, useAiStatus } from "./ai-state.ts";
+import { aiName, isAiReady, publishAi, useAiStatus } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
-import { dayLabel, formatBuild, formatTime, initials, listTime, matches, percent, sameDay } from "./format.ts";
-import { SettingsDrawer } from "./settings.tsx";
+import { dayLabel, formatBuild, formatTime, initials, listTime, normalize, percent, sameDay } from "./format.ts";
+// Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
+const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
 import { UpdateDialog } from "./update.tsx";
 import { desktop } from "./desktop.ts";
 import "./app.css";
@@ -133,13 +134,14 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
   );
 }
 
-function ChatItem({ chat, selected, onOpen }: { chat: Chat; selected: boolean; onOpen: () => void }) {
+/** Memo: chegada de mensagem numa conversa não redesenha as outras 200 da lista. */
+const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat; selected: boolean; onOpen: (jid: string) => void }) {
   const urgent = (chat.ai?.urgent ?? 0) >= 0.5;
   const reminderDue = chat.reminderAt !== null && chat.reminderAt <= Date.now();
   const level = priorityLevel(priorityScore(chat));
   return (
     <li>
-      <button className="chat-item" aria-current={selected ? "true" : undefined} onClick={onOpen}>
+      <button className="chat-item" aria-current={selected ? "true" : undefined} onClick={() => onOpen(chat.jid)}>
         <span className="avatar" aria-hidden>
           {initials(chat.name)}
         </span>
@@ -183,6 +185,14 @@ function ChatItem({ chat, selected, onOpen }: { chat: Chat; selected: boolean; o
       </button>
     </li>
   );
+});
+
+/** Texto de busca já normalizado, uma vez por versão da conversa (objeto novo a cada mudança). */
+const searchCache = new WeakMap<Chat, string>();
+function searchText(c: Chat): string {
+  let s = searchCache.get(c);
+  if (s === undefined) searchCache.set(c, (s = normalize(`${c.name} ${c.phone ?? ""} ${c.lastText ?? ""} ${c.note ?? ""}`)));
+  return s;
 }
 
 function ChatList(props: {
@@ -198,6 +208,8 @@ function ChatList(props: {
   const [tab, setTab] = useState<Tab>("aberta");
   const [label, setLabel] = useState("");
   const [query, setQuery] = useState("");
+  // A digitação responde na hora; o filtro de milhares de conversas vem logo depois.
+  const deferredQuery = useDeferredValue(query);
   const [limit, setLimit] = useState(PAGE);
   const [order, setOrder] = useState<"recentes" | "prioridade">(() => {
     try {
@@ -222,12 +234,12 @@ function ChatList(props: {
   }, [props.chats]);
 
   const filtered = useMemo(() => {
-    const q = query.trim();
+    const q = normalize(deferredQuery.trim());
     const list = props.chats.filter(
       (c) =>
         (tab === "todas" || c.status === tab) &&
         (!label || (label === "__none" ? !c.label : c.label === label)) &&
-        (!q || matches(`${c.name} ${c.phone ?? ""} ${c.lastText ?? ""} ${c.note ?? ""}`, q)),
+        (!q || searchText(c).includes(q)),
     );
     if (order === "prioridade") {
       const now = Date.now();
@@ -237,7 +249,7 @@ function ChatList(props: {
         .map((x) => x.c);
     }
     return list;
-  }, [props.chats, tab, label, query, order]);
+  }, [props.chats, tab, label, deferredQuery, order]);
 
   useEffect(() => setLimit(PAGE), [tab, label, query]);
 
@@ -305,7 +317,7 @@ function ChatList(props: {
         ) : (
           <ul className="chat-list">
             {filtered.slice(0, limit).map((c) => (
-              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={() => props.onOpen(c.jid)} />
+              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} />
             ))}
           </ul>
         )}
@@ -425,7 +437,8 @@ function MediaView({ m }: { m: Message }) {
   );
 }
 
-function Messages({ messages, hasMore, onMore, loadingMore }: { messages: Message[]; hasMore: boolean; onMore: () => void; loadingMore: boolean }) {
+/** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
+const Messages = memo(function Messages({ messages, hasMore, onMore, loadingMore }: { messages: Message[]; hasMore: boolean; onMore: () => void; loadingMore: boolean }) {
   return (
     <>
       {hasMore && (
@@ -450,7 +463,7 @@ function Messages({ messages, hasMore, onMore, loadingMore }: { messages: Messag
       ))}
     </>
   );
-}
+});
 
 function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, quickReplies, onSetupAi }: {
   chat: Chat;
@@ -539,11 +552,15 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, q
     if (chat.unread > 0) api.read(chat.jid).then(onChat).catch(() => undefined);
   }, [chat.jid, chat.unread, onChat]);
 
-  const loadMore = async () => {
-    if (!messages?.length) return;
+  // Estável entre renders para o memo de <Messages>; lê a lista atual pela ref.
+  const oldestAt = useRef<number | null>(null);
+  oldestAt.current = messages?.[0]?.at ?? null;
+  const loadMore = useCallback(async () => {
+    const before = oldestAt.current;
+    if (before === null) return;
     setLoadingMore(true);
     try {
-      const older = await api.messages(chat.jid, messages[0].at);
+      const older = await api.messages(chat.jid, before);
       keepOffset.current = scroller.current ? scroller.current.scrollHeight - scroller.current.scrollTop : null;
       setHasMore(older.length >= 80);
       setMessages((list) => [...older, ...(list ?? [])]);
@@ -552,7 +569,7 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, q
     } finally {
       setLoadingMore(false);
     }
-  };
+  }, [chat.jid, notify]);
 
   const send = async () => {
     const text = draft.trim();
@@ -743,6 +760,8 @@ function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [online, setOnline] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsUsed = useRef(false);
+  if (settingsOpen) settingsUsed.current = true;
   const [settingsTab, setSettingsTab] = useState<"geral" | "ia" | undefined>(undefined);
   const [skipConnect, setSkipConnect] = useState(false);
   const { toasts, push, dismiss } = useToasts();
@@ -752,15 +771,29 @@ function App() {
   }, []);
   useEffect(loadQuickReplies, [loadQuickReplies]);
 
+  // Rajadas de eventos (várias mensagens chegando juntas) viram uma única atualização da lista.
+  const queued = useRef(new Map<string, Chat>());
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const upsert = useCallback((chat: Chat | null) => {
     if (!chat) return;
-    setChats((prev) => new Map(prev).set(chat.jid, chat));
+    queued.current.set(chat.jid, chat);
+    flushTimer.current ??= setTimeout(() => {
+      flushTimer.current = null;
+      const batch = queued.current;
+      queued.current = new Map();
+      setChats((prev) => {
+        const next = new Map(prev);
+        for (const [jid, c] of batch) next.set(jid, c);
+        return next;
+      });
+    }, 30);
   }, []);
 
   const reload = useCallback(() => {
     api
       .chats()
       .then((list) => {
+        queued.current.clear(); // a lista nova já traz o estado atual
         setChats(new Map(list.map((c) => [c.jid, c])));
         setLoaded(true);
       })
@@ -799,7 +832,10 @@ function App() {
   // Volta a carregar a lista quando o servidor volta (ex.: depois de reiniciar o app).
   const wasOnline = useRef(true);
   useEffect(() => {
-    if (online && !wasOnline.current) reload();
+    if (online && !wasOnline.current) {
+      reload();
+      api.ai().then(publishAi).catch(() => undefined);
+    }
     wasOnline.current = online;
   }, [online, reload]);
 
@@ -871,7 +907,8 @@ function App() {
           )}
         </>
       )}
-      {state && (
+      {state && settingsUsed.current && (
+        <Suspense fallback={null}>
         <SettingsDrawer
           open={settingsOpen}
           initialTab={settingsTab}
@@ -887,6 +924,7 @@ function App() {
           }}
           notify={push}
         />
+        </Suspense>
       )}
       <UpdateDialog />
       <Toasts toasts={toasts} dismiss={dismiss} />

@@ -2,7 +2,7 @@ import { Bell, Download, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type AiStatus, type AppState, type Label, type Prefs, type QuickReply } from "./api.ts";
 import { desktop, type ReleaseInfo, type UpdateState } from "./desktop.ts";
-import { useAiStatus } from "./ai-state.ts";
+import { publishAi, useAiStatus } from "./ai-state.ts";
 import { AiModels } from "./ai-models.tsx";
 
 type Props = {
@@ -61,6 +61,9 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
   // A resposta da ação vale até o próximo evento ao vivo; depois o evento vence.
   const ai = local ?? live;
   useEffect(() => setLocal(null), [live]);
+  useEffect(() => {
+    if (local) publishAi(local);
+  }, [local]);
   if (!ai) return <p className="hint">Carregando…</p>;
   const choose = async (provider: AiStatus["provider"]) => {
     if (provider === ai.provider || switching) return;
