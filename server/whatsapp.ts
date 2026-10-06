@@ -79,7 +79,8 @@ export class WhatsApp extends EventEmitter<{
     if (merged) this.emit("chat", merged);
   }
 
-  private ingest(m: WAMessage, live: boolean) {
+  /** `quiet`: lote do histórico; a tela recarrega uma vez no fim, sem um evento por mensagem. */
+  private ingest(m: WAMessage, live: boolean, quiet = false) {
     const raw = m.key.remoteJid;
     if (!isConversation(raw) || !m.key.id || !m.message) return;
     const content = normalizeMessageContent(m.message);
@@ -105,7 +106,7 @@ export class WhatsApp extends EventEmitter<{
     const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
     const result = this.store.addMessage(incoming, isLive);
     if (!group && !m.key.fromMe && m.pushName) this.store.setNames(chatJid, { push: m.pushName });
-    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive });
+    if (result && !quiet) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive });
   }
 
   /** Nome do autor em grupo: agenda, depois nome do perfil, depois número. */
@@ -200,16 +201,19 @@ export class WhatsApp extends EventEmitter<{
     });
 
     sock.ev.on("messaging-history.set", ({ chats, contacts, messages, lidPnMappings }) => {
-      for (const map of lidPnMappings ?? []) this.learnLid(map.lid, map.pn);
-      for (const c of chats) {
-        if (!isConversation(c.id)) continue;
-        const jid = this.canonical(c.id, c.pnJid);
-        const unread = Number(c.unreadCount ?? 0);
-        this.store.ensureChat(jid, { status: unread > 0 ? "aberta" : "resolvida", unread: Math.max(0, unread) });
-        if (c.name) this.store.setNames(jid, { saved: c.name });
-      }
-      for (const contact of contacts) this.applyContact(contact);
-      for (const m of messages) this.ingest(m, false);
+      // Uma transação para o lote inteiro: milhares de gravações sem um commit (fsync) cada.
+      this.store.tx(() => {
+        for (const map of lidPnMappings ?? []) this.learnLid(map.lid, map.pn);
+        for (const c of chats) {
+          if (!isConversation(c.id)) continue;
+          const jid = this.canonical(c.id, c.pnJid);
+          const unread = Number(c.unreadCount ?? 0);
+          this.store.ensureChat(jid, { status: unread > 0 ? "aberta" : "resolvida", unread: Math.max(0, unread) });
+          if (c.name) this.store.setNames(jid, { saved: c.name });
+        }
+        for (const contact of contacts) this.applyContact(contact);
+        for (const m of messages) this.ingest(m, false, true);
+      });
       this.emit("reload");
     });
 
