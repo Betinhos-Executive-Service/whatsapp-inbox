@@ -1,4 +1,4 @@
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
@@ -128,6 +128,20 @@ function guard(req: IncomingMessage, port: number) {
   }
 }
 
+/** Arquivo da interface em memória; a chave (tamanho + mtime) detecta rebuild em desenvolvimento. */
+type StaticFile = { key: string; etag: string; body: Buffer };
+const staticCache = new Map<string, StaticFile>();
+
+async function readStatic(file: string): Promise<StaticFile> {
+  const info = await stat(file);
+  const key = `${info.size}-${info.mtimeMs}`;
+  const cached = staticCache.get(file);
+  if (cached?.key === key) return cached;
+  const entry: StaticFile = { key, etag: `"${key}"`, body: await readFile(file) };
+  staticCache.set(file, entry);
+  return entry;
+}
+
 export function createHandler(api: Api) {
   const { store } = api;
 
@@ -144,7 +158,7 @@ export function createHandler(api: Api) {
     if (path === "/api/chats" && method === "GET") return json(res, 200, store.listChats());
 
     if (jid) {
-      if (!store.getChat(jid)) throw new HttpError(404, "Conversa não encontrada.");
+      if (!store.hasChat(jid)) throw new HttpError(404, "Conversa não encontrada.");
       if (action === "" && method === "PATCH") {
         const patch = parse(chatPatchSchema, await readJson(req));
         if (patch.label && !store.listLabels().some((l) => l.name === patch.label)) throw new HttpError(400, "Etiqueta não cadastrada.");
@@ -282,19 +296,27 @@ export function createHandler(api: Api) {
     if (method !== "GET") throw new HttpError(405, "Método não permitido.");
     const file = normalize(join(api.distDir, path === "/" ? "index.html" : path));
     if (!file.startsWith(normalize(api.distDir))) throw new HttpError(403, "Caminho inválido.");
+    let entry: StaticFile;
     try {
-      const body = await readFile(file);
-      // Fontes e pedaços do bundle têm hash no nome: podem ficar em cache para sempre.
-      const hashed = /^\/(assets|chunks)\//.test(path);
-      res.writeHead(200, {
-        "content-type": TYPES[extname(file)] ?? "application/octet-stream",
-        "cache-control": hashed ? "public, max-age=31536000, immutable" : "no-cache",
-      });
-      res.end(body);
+      entry = await readStatic(file);
     } catch {
       if (path === "/") throw new HttpError(503, "Interface não compilada. Rode pnpm build.");
       throw new HttpError(404, "Arquivo não encontrado.");
     }
+    // Fontes e pedaços do bundle têm hash no nome: podem ficar em cache para sempre.
+    // Os demais revalidam por ETag: o app.js só é baixado (e recompilado) de novo quando muda.
+    const hashed = /^\/(assets|chunks)\//.test(path);
+    const headers = {
+      "content-type": TYPES[extname(file)] ?? "application/octet-stream",
+      "cache-control": hashed ? "public, max-age=31536000, immutable" : "no-cache",
+      etag: entry.etag,
+    };
+    if (req.headers["if-none-match"] === entry.etag) {
+      res.writeHead(304, headers);
+      return res.end();
+    }
+    res.writeHead(200, { ...headers, "content-length": entry.body.length });
+    res.end(entry.body);
   }
 
   return async (req: IncomingMessage, res: ServerResponse) => {

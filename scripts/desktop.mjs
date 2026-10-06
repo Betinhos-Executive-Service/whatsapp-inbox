@@ -29,8 +29,8 @@ if (release) {
 
 await rm(resolve(root, "dist"), { recursive: true, force: true });
 await rm(resolve(root, "dist-electron"), { recursive: true, force: true });
-await esbuild.build(uiOptions(build));
-await copyHtml();
+const ui = await esbuild.build(uiOptions(build));
+await copyHtml(ui.metafile);
 writeIcon(resolve(root, "dist/icon.ico"));
 const nodeOptions = { bundle: true, platform: "node", target: "node24", logLevel: "warning" };
 await esbuild.build({

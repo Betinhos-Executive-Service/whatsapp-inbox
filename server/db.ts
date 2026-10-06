@@ -251,6 +251,10 @@ export class Store {
     return (this.q(`${CHAT_SELECT} where c.last_at > 0 order by c.last_at desc limit ?`).all(limit) as Row[]).map(toChat);
   }
 
+  hasChat(jid: string): boolean {
+    return this.q("select 1 from chats where jid = ?").get(jid) !== undefined;
+  }
+
   getChat(jid: string): Chat | null {
     const r = this.q(`${CHAT_SELECT} where c.jid = ?`).get(jid) as Row | undefined;
     return r ? toChat(r) : null;
@@ -258,8 +262,8 @@ export class Store {
 
   /** Garante a conversa. Conversa criada pelo histórico nasce resolvida, salvo se tiver não lidas. */
   ensureChat(jid: string, initial: { status?: Status; unread?: number } = {}): void {
-    this.db
-      .prepare(
+    this
+      .q(
         `insert or ignore into chats (jid, status, unread, saved_name, push_name) values (?, ?, ?,
            (select saved_name from contacts where jid = ?), (select push_name from contacts where jid = ?))`,
       )
@@ -272,13 +276,17 @@ export class Store {
    */
   setNames(jid: string, names: { saved?: string | null; push?: string | null }): boolean {
     if (!names.saved && !names.push) return false;
-    this.db
-      .prepare(
+    // Só grava quando algo muda: no histórico o mesmo nome chega repetido a cada mensagem.
+    const contact = this
+      .q(
         `insert into contacts (jid, saved_name, push_name) values (?, ?, ?)
          on conflict(jid) do update set saved_name = coalesce(excluded.saved_name, saved_name),
-                                        push_name = coalesce(excluded.push_name, push_name)`,
+                                        push_name = coalesce(excluded.push_name, push_name)
+         where coalesce(excluded.saved_name, saved_name) is not saved_name
+            or coalesce(excluded.push_name, push_name) is not push_name`,
       )
       .run(jid, names.saved || null, names.push || null);
+    if (contact.changes === 0) return false;
     let changed = false;
     if (names.saved) {
       changed = this.q("update chats set saved_name = ? where jid = ? and saved_name is not ?").run(names.saved, jid, names.saved).changes > 0 || changed;
@@ -293,8 +301,8 @@ export class Store {
     if (patch.status) this.q("update chats set status = ? where jid = ?").run(patch.status, jid);
     if (patch.label) this.recordLabelExample(jid, patch.label);
     if (patch.label !== undefined) {
-      this.db
-        .prepare("update chats set label = ?, label_source = ? where jid = ?")
+      this
+        .q("update chats set label = ?, label_source = ? where jid = ?")
         .run(patch.label, patch.label === null ? null : "manual", jid);
     }
     return this.getChat(jid);
@@ -304,8 +312,8 @@ export class Store {
     const chat = this.q("select unread from chats where jid = ?").get(jid) as Row | undefined;
     const unread = Number(chat?.unread ?? 0);
     if (!unread) return [];
-    const keys = this.db
-      .prepare("select id, raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc limit ?")
+    const keys = this
+      .q("select id, raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc limit ?")
       .all(jid, unread) as Row[];
     this.q("update chats set unread = 0 where jid = ?").run(jid);
     return keys.map((k) => ({ id: String(k.id), rawJid: String(k.raw_jid), participant: (k.participant as string) ?? null }));
@@ -315,8 +323,8 @@ export class Store {
     jid: string,
     result: { label: string; confidence: number; needsReply: number; urgent: number },
   ): Chat | null {
-    this.db
-      .prepare(
+    this
+      .q(
         `update chats set ai_label = ?, ai_confidence = ?, ai_needs_reply = ?, ai_urgent = ?, ai_at = ?, ai_error = null,
            label = case when label_source = 'manual' then label else ? end,
            label_source = case when label_source = 'manual' then 'manual' else 'jev' end
@@ -334,31 +342,36 @@ export class Store {
   // ---- messages
 
   /**
-   * Grava a mensagem e atualiza a conversa. Devolve null se ela já existia.
+   * Grava a mensagem e atualiza a conversa, sem ler nada de volta: é o caminho do lote do
+   * histórico (milhares de mensagens). Devolve false se ela já existia.
    * `live` = mensagem nova (não histórico): mexe em não lidas e no status.
    */
-  addMessage(m: IncomingMessage, live: boolean): { message: Message; chat: Chat } | null {
+  insertMessage(m: IncomingMessage, live: boolean): boolean {
     return this.tx(() => {
       this.ensureChat(m.chatJid, { status: live ? "aberta" : "resolvida" });
-      const inserted = this.db
-        .prepare("insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      const inserted = this
+        .q("insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(m.chatJid, m.id, m.rawJid, m.participant ?? null, m.fromMe ? 1 : 0, m.at, m.text, m.kind, m.media ?? null);
-      if (inserted.changes === 0) return null;
-      this.db
-        .prepare(
-          "update chats set last_at = ?, last_text = ?, last_from_me = ? where jid = ? and last_at <= ?",
-        )
+      if (inserted.changes === 0) return false;
+      this
+        .q("update chats set last_at = ?, last_text = ?, last_from_me = ? where jid = ? and last_at <= ?")
         .run(m.at, m.text, m.fromMe ? 1 : 0, m.chatJid, m.at);
       if (live && !m.fromMe) {
         this.q("update chats set unread = unread + 1, status = 'aberta' where jid = ?").run(m.chatJid);
       } else if (live && m.fromMe) {
-        this.db
-          .prepare("update chats set unread = 0, status = case when status = 'aberta' then 'aguardando' else status end where jid = ?")
+        this
+          .q("update chats set unread = 0, status = case when status = 'aberta' then 'aguardando' else status end where jid = ?")
           .run(m.chatJid);
       }
-      const message = toMessage(this.q("select * from messages where chat_jid = ? and id = ?").get(m.chatJid, m.id) as Row);
-      return { message, chat: this.getChat(m.chatJid)! };
+      return true;
     });
+  }
+
+  /** Grava a mensagem (ver insertMessage) e devolve mensagem e conversa já atualizadas, ou null se já existia. */
+  addMessage(m: IncomingMessage, live: boolean): { message: Message; chat: Chat } | null {
+    if (!this.insertMessage(m, live)) return null;
+    const message = toMessage(this.q("select * from messages where chat_jid = ? and id = ?").get(m.chatJid, m.id) as Row);
+    return { message, chat: this.getChat(m.chatJid)! };
   }
 
   listMessages(jid: string, before: number | null, limit = 80): Message[] {
@@ -386,15 +399,15 @@ export class Store {
     return this.tx(() => {
       this.q("insert into lid_map (lid, pn) values (?, ?) on conflict(lid) do update set pn = excluded.pn").run(lid, pn);
       // Nome que chegou pelo LID passa a valer para o número.
-      this.db
-        .prepare(
+      this
+        .q(
           `insert into contacts (jid, saved_name, push_name) select ?, saved_name, push_name from contacts where jid = ? and true
            on conflict(jid) do update set saved_name = coalesce(contacts.saved_name, excluded.saved_name),
                                           push_name = coalesce(contacts.push_name, excluded.push_name)`,
         )
         .run(pn, lid);
-      this.db
-        .prepare(
+      this
+        .q(
           `update chats set saved_name = coalesce(saved_name, (select saved_name from contacts where jid = ?)),
                             push_name = coalesce(push_name, (select push_name from contacts where jid = ?))
            where jid = ?`,
@@ -410,8 +423,8 @@ export class Store {
       this.q("update or ignore messages set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update reminders set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update chats set note = coalesce(note, (select note from chats where jid = ?)) where jid = ?").run(lid, pn);
-      this.db
-        .prepare(
+      this
+        .q(
           `update chats set
              unread = unread + ?,
              saved_name = coalesce(saved_name, ?),
@@ -446,8 +459,8 @@ export class Store {
    * do contato + a etiqueta certa. Guarda os 60 mais recentes, um por conversa.
    */
   recordLabelExample(jid: string, label: string): void {
-    const texts = (this.db
-      .prepare("select text from messages where chat_jid = ? and kind = 'text' order by at desc limit 8")
+    const texts = (this
+      .q("select text from messages where chat_jid = ? and kind = 'text' order by at desc limit 8")
       .all(jid) as Row[]).map((r) => String(r.text)).reverse();
     const snippet = texts.join(" / ").slice(-600);
     if (!snippet) return;
@@ -460,8 +473,8 @@ export class Store {
 
   /** Exemplos recentes de etiquetas que ainda existem, no máximo 2 por etiqueta. */
   labelExamples(excludeJid: string, limit = 10): LabelExample[] {
-    const rows = this.db
-      .prepare(
+    const rows = this
+      .q(
         `select label, snippet from label_examples
          where chat_jid <> ? and label in (select name from labels)
          order by created_at desc`,
@@ -491,8 +504,8 @@ export class Store {
   }
 
   addReminder(jid: string, dueAt: number, text: string): Reminder {
-    const r = this.db
-      .prepare("insert into reminders (chat_jid, due_at, text, created_at) values (?, ?, ?, ?) returning *")
+    const r = this
+      .q("insert into reminders (chat_jid, due_at, text, created_at) values (?, ?, ?, ?) returning *")
       .get(jid, dueAt, text.trim(), Date.now()) as Row;
     return toReminder(r);
   }
@@ -512,8 +525,8 @@ export class Store {
    */
   fireDueReminders(now = Date.now()): { reminder: Reminder; chat: Chat }[] {
     return this.tx(() => {
-      const due = (this.db
-        .prepare("select * from reminders where done_at is null and fired_at is null and due_at <= ? order by due_at")
+      const due = (this
+        .q("select * from reminders where done_at is null and fired_at is null and due_at <= ? order by due_at")
         .all(now) as Row[]).map(toReminder);
       for (const r of due) {
         this.q("update reminders set fired_at = ? where id = ?").run(now, r.id);
@@ -579,8 +592,8 @@ export class Store {
       const insert = this.q("insert into labels (name, description, position) values (?, ?, ?)");
       labels.forEach((l, i) => insert.run(l.name, l.description, i));
       // Etiqueta removida deixa de valer nas conversas.
-      this.db
-        .prepare(`update chats set label = null, label_source = null where label is not null and label not in (select name from labels)`)
+      this
+        .q(`update chats set label = null, label_source = null where label is not null and label not in (select name from labels)`)
         .run();
     });
     return this.listLabels();
