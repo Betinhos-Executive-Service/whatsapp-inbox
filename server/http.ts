@@ -13,7 +13,7 @@ export type Api = {
   send: (jid: string, text: string) => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   classify: (jid: string) => Promise<unknown>;
-  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; prefs?: Partial<Prefs> }) => void;
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
@@ -85,6 +85,7 @@ const settingsSchema = z.object({
   jevApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   deepseekApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   autoClassify: z.boolean().optional(),
+  classifyProvider: z.enum(["jev", "deepseek"]).optional(),
 });
 
 function json(res: ServerResponse, status: number, body: unknown) {

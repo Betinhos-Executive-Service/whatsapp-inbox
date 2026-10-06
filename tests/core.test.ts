@@ -146,7 +146,7 @@ test("Jev: perguntas, estado e resposta validados", () => {
   const labels = [{ name: "Cotação", description: "Preço" }, { name: "Outros", description: "" }];
   assert.throws(() => buildQuestions(labels.slice(0, 1)));
   const q = buildQuestions(labels);
-  assert.deepEqual(Object.keys(q), ["etiqueta", "responder", "urgente"]);
+  assert.deepEqual(Object.keys(q), ["etiqueta", "responder", "urgente", "prioridade"]);
   const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null }]));
   assert.equal(state.mensagens[0].de, "contato");
   assert.equal(state.mensagens[0].texto.length, 1000);
@@ -156,9 +156,11 @@ test("Jev: perguntas, estado e resposta validados", () => {
       etiqueta: { type: "choice", choice: "Cotação", confidence: 0.82, probabilities: {} },
       responder: { type: "noul", noul: 0.9 },
       urgente: { type: "noul", noul: 0.1 },
+      prioridade: { type: "choice", choice: "media", confidence: 0.7, probabilities: {} },
     },
   };
-  assert.deepEqual(parseResponse(ok, labels), { label: "Cotação", confidence: 0.82, needsReply: 0.9, urgent: 0.1 });
+  assert.deepEqual(parseResponse(ok, labels), { label: "Cotação", confidence: 0.82, needsReply: 0.9, urgent: 0.1, priority: "media", reason: null });
+  assert.throws(() => parseResponse({ ...ok, answers: { ...ok.answers, prioridade: { type: "choice", choice: "urgentíssima" } } }, labels));
   assert.throws(() => parseResponse({ ...ok, answers: { ...ok.answers, etiqueta: { ...ok.answers.etiqueta, choice: "Inventada" } } }, labels));
 });
 
