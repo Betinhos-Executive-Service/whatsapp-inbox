@@ -104,9 +104,14 @@ export class WhatsApp extends EventEmitter<{
       media: media ? JSON.stringify(media) : null,
     };
     const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
-    const result = this.store.addMessage(incoming, isLive);
+    // Nome antes da mensagem: a conversa já nasce com ele e a resposta de addMessage vale como está.
     if (!group && !m.key.fromMe && m.pushName) this.store.setNames(chatJid, { push: m.pushName });
-    if (result && !quiet) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive });
+    if (quiet) {
+      this.store.addMessageQuiet(incoming, isLive);
+      return;
+    }
+    const result = this.store.addMessage(incoming, isLive);
+    if (result) this.emit("message", { ...result, live: isLive });
   }
 
   /** Nome do autor em grupo: agenda, depois nome do perfil, depois número. */
