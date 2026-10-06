@@ -486,6 +486,10 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, q
   const [quickActive, setQuickActive] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => composer.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [chat.jid]);
   const ai = useAiStatus();
   const aiReady = isAiReady(ai);
   const [drafting, setDrafting] = useState(false);
