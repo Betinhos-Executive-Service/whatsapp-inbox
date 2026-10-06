@@ -25,9 +25,9 @@ import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
-import { aiName, isAiReady, publishAi, useAiStatus } from "./ai-state.ts";
+import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
-import { dayLabel, formatBuild, formatTime, initials, listTime, normalize, percent, sameDay } from "./format.ts";
+import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
 // Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
 import { UpdateDialog } from "./update.tsx";
@@ -488,6 +488,7 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, q
   const composer = useRef<HTMLTextAreaElement>(null);
   const ai = useAiStatus();
   const aiReady = isAiReady(ai);
+  const usdBrl = useUsdBrl();
   const [drafting, setDrafting] = useState(false);
   const suggest = async () => {
     if (draft.trim() && !window.confirm("Trocar o texto que você já escreveu pela sugestão da IA?")) return;
@@ -749,6 +750,11 @@ function ChatView({ chat, labels, connected, jevReady, onBack, notify, onChat, q
           <span className="composer__label">Enviar</span>
         </button>
       </form>
+      {chat.aiUsage.calls > 0 && (
+        <p className="ai-usage-line" title="Tokens e custo estimado de toda a IA usada nesta conversa (classificação, rascunho e resumo)">
+          IA nesta conversa: {formatTokens(chat.aiUsage.tokens)} · ≈ {formatBrl(chat.aiUsage.costUsd * usdBrl)}
+        </p>
+      )}
     </section>
   );
 }

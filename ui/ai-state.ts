@@ -30,4 +30,25 @@ export const isAiReady = (ai: AiStatus | null) =>
 
 export const aiName = (ai: AiStatus | null) => (ai?.provider === "deepseek" ? "IA" : "IA local");
 
+// Cotação US$→R$ usada para mostrar o custo da IA em reais. Carregada uma vez; o painel de
+// gastos avisa (evento) quando a pessoa troca a cotação.
+const DEFAULT_USD_BRL = 5.5;
+let rate: number | null = null;
+let rateLoading: Promise<void> | null = null;
+const rateListeners = new Set<(r: number) => void>();
+export const publishUsdBrl = (r: number) => {
+  rate = r;
+  for (const fn of rateListeners) fn(r);
+};
+export function useUsdBrl(): number {
+  const [value, setValue] = useState(rate ?? DEFAULT_USD_BRL);
+  useEffect(() => {
+    rateListeners.add(setValue);
+    if (rate !== null) setValue(rate);
+    else rateLoading ??= api.aiUsage(1).then((s) => publishUsdBrl(s.usdBrl)).catch(() => undefined).finally(() => (rateLoading = null));
+    return () => void rateListeners.delete(setValue);
+  }, []);
+  return value;
+}
+
 export const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1).replace(".", ",")} GB`;

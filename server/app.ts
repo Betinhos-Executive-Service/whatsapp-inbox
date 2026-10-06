@@ -9,7 +9,8 @@ import { loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS, LocalAI, MODELS, type ModelId } from "./ai.ts";
 import { DeepSeekAI, DEEPSEEK_MODEL } from "./deepseek.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
-import type { Jev } from "./jev.ts";
+import { DEFAULT_USD_BRL, estimateCostUsd, type Provider as UsageProvider, type TokenUsage, type UsageKind } from "./pricing.ts";
+import { JEV_MODEL, type Jev } from "./jev.ts";
 import type { ConnectionState, WhatsApp } from "./whatsapp.ts";
 
 // A libsignal (dependência do Baileys) escreve no console o conteúdo das sessões
@@ -112,6 +113,35 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     instructions: aiInstructions(),
     customInstructions: !!store.getSetting("ai_instructions"),
   });
+  // ---- gastos com IA: cada chamada (inclusive falha) entra no painel de gastos
+
+  const usdBrl = () => Number(store.getSetting("usd_brl")) || DEFAULT_USD_BRL;
+  type UsageExtra = { label?: string; confidence?: number; needsReply?: number; urgent?: number };
+  function recordUsage(provider: UsageProvider, kind: UsageKind, jid: string | null, usage: TokenUsage | null, extra: UsageExtra = {}) {
+    const at = Date.now();
+    const u = usage ?? { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+    store.recordAiUsage({
+      at, provider, kind, chatJid: jid,
+      model: provider === "deepseek" ? DEEPSEEK_MODEL : provider === "jev" ? JEV_MODEL : MODELS[localAi.model_].file,
+      usage: u, costUsd: estimateCostUsd(provider, u, new Date(at)),
+      label: extra.label ?? null, confidence: extra.confidence ?? null, needsReply: extra.needsReply ?? null, urgent: extra.urgent ?? null,
+      ok: usage !== null,
+    });
+    const chat = jid ? store.getChat(jid) : null;
+    if (chat) broadcast("chat", chat);
+  }
+  /** Executa a geração e registra tokens; em falha registra a chamada sem tokens e repassa o erro. */
+  async function tracked<T>(provider: UsageProvider, kind: UsageKind, jid: string, fn: () => Promise<{ usage: TokenUsage } & T>): Promise<T> {
+    try {
+      const out = await fn();
+      recordUsage(provider, kind, jid, out.usage);
+      return out;
+    } catch (error) {
+      recordUsage(provider, kind, jid, null);
+      throw error;
+    }
+  }
+
   const requireDeepseekKey = () => {
     const key = deepseekKey();
     if (!key) throw new Error("Cole a chave da DeepSeek em Configurações › IA.");
@@ -140,10 +170,12 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       const chat = store.getChat(jid);
       if (!chat) throw new Error("Conversa não encontrada.");
       try {
-        const result = await (await getJev()).classify(key, chat.name, store.listMessages(jid, null, 30), store.listLabels(), store.labelExamples(jid));
+        const { result, usage } = await (await getJev()).classify(key, chat.name, store.listMessages(jid, null, 30), store.listLabels(), store.labelExamples(jid));
+        recordUsage("jev", "classificar", jid, usage, result);
         return store.saveClassification(jid, result);
       } catch (error) {
         const message = `Jev não classificou: ${error instanceof Error ? error.message : String(error)}`;
+        recordUsage("jev", "classificar", jid, null);
         store.saveClassificationError(jid, message);
         throw new Error(message);
       } finally {
@@ -241,16 +273,24 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       download: (id) => void localAi.download(id).then(() => store.setSetting("ai_model", localAi.model_)),
       cancel: () => localAi.cancelDownload(),
       remove: (id) => localAi.remove(id),
-      draft: (jid) => {
+      draft: async (jid) => {
         const { chat, messages } = chatOrThrow(jid);
-        if (provider() === "local") return localAi.draft(chat.name, messages, aiInstructions());
-        return deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions());
+        const p = provider();
+        const { text } = await tracked(p, "rascunho", jid, () =>
+          p === "local" ? localAi.draft(chat.name, messages, aiInstructions()) : deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions()),
+        );
+        return text;
       },
-      summarize: (jid) => {
+      summarize: async (jid) => {
         const { chat, messages } = chatOrThrow(jid);
-        if (provider() === "local") return localAi.summarize(chat.name, messages);
-        return deepseek.summarize(requireDeepseekKey(), chat.name, messages);
+        const p = provider();
+        const { summary } = await tracked(p, "resumo", jid, () =>
+          p === "local" ? localAi.summarize(chat.name, messages) : deepseek.summarize(requireDeepseekKey(), chat.name, messages),
+        );
+        return summary;
       },
+      usage: (days) => store.aiUsageSummary(days === null ? null : Date.now() - days * 86_400_000, usdBrl()),
+      setUsdBrl: (rate) => store.setSetting("usd_brl", rate === null ? null : String(rate)),
       setProvider: (p) => {
         store.setSetting("ai_provider", p);
         broadcast("ai", aiState());

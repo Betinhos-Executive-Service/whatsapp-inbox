@@ -1,6 +1,7 @@
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk";
 import { z } from "zod";
 import type { Label, LabelExample, Message } from "./db.ts";
+import type { TokenUsage } from "./pricing.ts";
 
 export const JEV_MODEL = process.env.JEV_MODEL || "jev-1.13.0";
 
@@ -75,13 +76,18 @@ export class Jev {
     return this.client;
   }
 
-  async classify(apiKey: string, contactName: string, messages: Message[], labels: Label[], examples: LabelExample[] = []): Promise<Classification> {
+  async classify(
+    apiKey: string, contactName: string, messages: Message[], labels: Label[], examples: LabelExample[] = [],
+  ): Promise<{ result: Classification; usage: TokenUsage }> {
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto para classificar.");
     const response = await this.clientFor(apiKey).systemOne({
       model: JEV_MODEL,
       state: buildState(contactName, messages, new Date(), examples),
       questions: buildQuestions(labels),
     });
-    return parseResponse(response, labels);
+    return {
+      result: parseResponse(response, labels),
+      usage: { inputTokens: response.usage?.input_tokens ?? 0, outputTokens: response.usage?.output_tokens ?? 0, cachedTokens: 0 },
+    };
   }
 }

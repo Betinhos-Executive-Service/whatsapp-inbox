@@ -16,8 +16,11 @@ function fakeFetch(status: number, body: unknown, seen: { body?: any; auth?: str
 
 test("DeepSeek: rascunho usa a chave, desliga o thinking e passa pela trava de preço", async () => {
   const seen: { body?: any; auth?: string } = {};
-  const ai = new DeepSeekAI(fakeFetch(200, { choices: [{ message: { content: '"Bom dia! O valor é R$ 300,00. Saímos às 7h."' } }] }, seen));
-  const text = await ai.draft("sk-teste", "Ana", conversa, "");
+  const ai = new DeepSeekAI(
+    fakeFetch(200, { choices: [{ message: { content: '"Bom dia! O valor é R$ 300,00. Saímos às 7h."' } }], usage: { prompt_tokens: 320, completion_tokens: 18, prompt_cache_hit_tokens: 64 } }, seen),
+  );
+  const { text, usage } = await ai.draft("sk-teste", "Ana", conversa, "");
+  assert.deepEqual(usage, { inputTokens: 320, outputTokens: 18, cachedTokens: 64 });
   assert.equal(seen.auth, "Bearer sk-teste");
   assert.deepEqual(seen.body.thinking, { type: "disabled" });
   assert.match(seen.body.messages[1].content, /\[\d{2}\/\d{2}/); // mensagens com data/hora
@@ -28,7 +31,9 @@ test("DeepSeek: rascunho usa a chave, desliga o thinking e passa pela trava de p
 
 test("DeepSeek: resumo no formato de três partes", async () => {
   const ai = new DeepSeekAI(fakeFetch(200, { choices: [{ message: { content: "RESUMO: Ana quer carro amanhã.\nPEDIDO: valor\nPRÓXIMO PASSO: enviar cotação" } }] }));
-  assert.deepEqual(await ai.summarize("k", "Ana", conversa), { resumo: "Ana quer carro amanhã.", pedido: "valor", proximoPasso: "enviar cotação" });
+  const { summary, usage } = await ai.summarize("k", "Ana", conversa);
+  assert.deepEqual(summary, { resumo: "Ana quer carro amanhã.", pedido: "valor", proximoPasso: "enviar cotação" });
+  assert.deepEqual(usage, { inputTokens: 0, outputTokens: 0, cachedTokens: 0 }); // resposta sem "usage" não quebra
 });
 
 test("DeepSeek: erros viram mensagem clara", async () => {

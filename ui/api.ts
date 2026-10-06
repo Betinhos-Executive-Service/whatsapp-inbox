@@ -16,6 +16,28 @@ export type Chat = {
   aiError: string | null;
   note: string | null;
   reminderAt: number | null;
+  /** Tokens e custo estimado (US$) de toda a IA usada nesta conversa. */
+  aiUsage: { calls: number; tokens: number; costUsd: number };
+};
+
+export type UsageKind = "classificar" | "rascunho" | "resumo";
+export type UsageProvider = "jev" | "deepseek" | "local";
+export type AiUsageSummary = {
+  sinceAt: number | null;
+  usdBrl: number;
+  totals: { calls: number; failures: number; inputTokens: number; outputTokens: number; cachedTokens: number; costUsd: number };
+  byKind: { kind: UsageKind; calls: number; tokens: number; costUsd: number }[];
+  byProvider: { provider: UsageProvider; calls: number; tokens: number; costUsd: number }[];
+  byDay: { day: string; calls: number; costUsd: number }[];
+  classification: {
+    total: number;
+    failures: number;
+    avgConfidence: number | null;
+    needsReplyShare: number | null;
+    urgentShare: number | null;
+    byLabel: { label: string; count: number; avgConfidence: number }[];
+  };
+  topChats: { jid: string; name: string; calls: number; costUsd: number }[];
 };
 
 export type AiStatus = (
@@ -105,6 +127,8 @@ export const api = {
   removeAi: (id: "leve" | "melhor") => request<AiStatus>("POST", "/api/ai/remove", { id }),
   setAiProvider: (provider: "deepseek" | "local") => request<AiStatus>("PUT", "/api/ai/provider", { provider }),
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
+  aiUsage: (days: number | null) => request<AiUsageSummary>("GET", `/api/ai/usage?days=${days ?? "all"}`),
+  setAiUsageRate: (rate: number) => request<{ ok: true }>("PUT", "/api/ai/usage/rate", { rate }),
   draft: (jid: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, {}),
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
   quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),

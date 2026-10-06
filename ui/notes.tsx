@@ -1,8 +1,8 @@
 import { AlarmClock, Check, LoaderCircle, Trash2, WandSparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, type Chat, type Reminder, type Summary } from "./api.ts";
-import { aiName, isAiReady, useAiStatus } from "./ai-state.ts";
-import { dayLabel, formatTime } from "./format.ts";
+import { aiName, isAiReady, useAiStatus, useUsdBrl } from "./ai-state.ts";
+import { dayLabel, formatBrl, formatTime, formatTokens, formatUsd } from "./format.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 /** Valor de <input type="datetime-local"> no horário deste computador. */
@@ -41,6 +41,7 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
   const [adding, setAdding] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const ai = useAiStatus();
+  const usdBrl = useUsdBrl();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [summarizing, setSummarizing] = useState(false);
   useEffect(() => setSummary(null), [chat.jid]);
@@ -165,6 +166,23 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
               {summary ? "Resumir de novo" : "Resumir conversa"}
             </button>
           </div>
+        </div>
+        <div className="stack">
+          <span className="field__label">IA nesta conversa</span>
+          {chat.aiUsage.calls === 0 ? (
+            <p className="hint">Nenhuma chamada de IA ainda. Classificação, rascunho e resumo entram aqui.</p>
+          ) : (
+            <dl className="summary">
+              <dt>Tokens</dt>
+              <dd>{formatTokens(chat.aiUsage.tokens)}</dd>
+              <dt>Valor estimado</dt>
+              <dd>
+                {formatBrl(chat.aiUsage.costUsd * usdBrl)} <span className="hint">({formatUsd(chat.aiUsage.costUsd)})</span>
+              </dd>
+              <dt>Chamadas</dt>
+              <dd>{chat.aiUsage.calls}</dd>
+            </dl>
+          )}
         </div>
         <label className="field">
           <span className="field__label">Nota interna</span>

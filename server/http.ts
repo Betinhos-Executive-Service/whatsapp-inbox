@@ -28,6 +28,9 @@ export type Api = {
     setInstructions: (text: string | null) => void;
     select: (id: "leve" | "melhor") => Promise<void>;
     setProvider: (provider: "deepseek" | "local") => void;
+    /** Resumo de gastos; days = null: desde sempre. */
+    usage: (days: number | null) => unknown;
+    setUsdBrl: (rate: number | null) => void;
   };
   /** Caminho de uma cópia consistente do banco, para download. */
   backup: () => Promise<string>;
@@ -188,6 +191,15 @@ export function createHandler(api: Api) {
     }
 
     if (path === "/api/ai" && method === "GET") return json(res, 200, api.ai.status());
+    if (path === "/api/ai/usage" && method === "GET") {
+      const days = url.searchParams.get("days");
+      return json(res, 200, api.ai.usage(days === null || days === "all" ? null : Math.max(1, Math.min(3650, Number(days) || 30))));
+    }
+    if (path === "/api/ai/usage/rate" && method === "PUT") {
+      const { rate } = parse(z.object({ rate: z.number().positive().max(100).nullable() }), await readJson(req));
+      api.ai.setUsdBrl(rate);
+      return json(res, 200, { ok: true });
+    }
     const modelId = z.object({ id: z.enum(["leve", "melhor"]) });
     if (path === "/api/ai/download" && method === "POST") {
       api.ai.download(parse(modelId, await readJson(req)).id);
