@@ -159,23 +159,39 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
 
   const jevKey = () => process.env.JEV_API_KEY || store.getSetting("jev_api_key");
   const autoClassify = () => store.getSetting("auto_classify") !== "0";
+  /** Quem classifica: Jev (padrão quando há chave) ou DeepSeek. Sem chave do escolhido, cai no outro. */
+  type Classifier = "jev" | "deepseek";
+  const classifier = (): Classifier => {
+    const saved = store.getSetting("classify_provider");
+    const wanted: Classifier = saved === "deepseek" ? "deepseek" : "jev";
+    if (wanted === "jev" && !jevKey() && deepseekKey()) return "deepseek";
+    if (wanted === "deepseek" && !deepseekKey() && jevKey()) return "jev";
+    return wanted;
+  };
+  const classifierKey = () => (classifier() === "jev" ? jevKey() : deepseekKey());
+  const classifierName = () => (classifier() === "jev" ? "Jev" : "DeepSeek");
 
   let queue = Promise.resolve();
   const pending = new Map<string, NodeJS.Timeout>();
 
   function classify(jid: string): Promise<Chat | null> {
     const run = queue.then(async () => {
-      const key = jevKey();
-      if (!key) throw new Error("Configure a chave do Jev em Configurações.");
+      const which = classifier();
+      const key = classifierKey();
+      if (!key) throw new Error("Configure a chave do Jev ou da DeepSeek em Configurações › IA.");
       const chat = store.getChat(jid);
       if (!chat) throw new Error("Conversa não encontrada.");
       try {
-        const { result, usage } = await (await getJev()).classify(key, chat.name, store.listMessages(jid, null, 30), store.listLabels(), store.labelExamples(jid));
-        recordUsage("jev", "classificar", jid, usage, result);
+        const messages = store.listMessages(jid, null, 30);
+        const { result, usage } =
+          which === "jev"
+            ? await (await getJev()).classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid))
+            : await deepseek.classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid));
+        recordUsage(which, "classificar", jid, usage, result);
         return store.saveClassification(jid, result);
       } catch (error) {
-        const message = `Jev não classificou: ${error instanceof Error ? error.message : String(error)}`;
-        recordUsage("jev", "classificar", jid, null);
+        const message = `${classifierName()} não classificou: ${error instanceof Error ? error.message : String(error)}`;
+        recordUsage(which, "classificar", jid, null);
         store.saveClassificationError(jid, message);
         throw new Error(message);
       } finally {
@@ -189,7 +205,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
 
   /** Espera a pessoa terminar de mandar mensagens antes de classificar (uma chamada por rajada). */
   function scheduleClassify(jid: string) {
-    if (!jevKey() || !autoClassify()) return;
+    if (!classifierKey() || !autoClassify()) return;
     clearTimeout(pending.get(jid));
     pending.set(
       jid,
@@ -207,6 +223,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       ? { status: "desconectado", qr: null, me: null, error: "WhatsApp desligado (WA_DISABLED=1)." }
       : (wa?.state ?? bootingState),
     jev: { configured: !!jevKey(), fromEnv: !!process.env.JEV_API_KEY, autoClassify: autoClassify() },
+    classifier: { provider: classifier(), configured: !!classifierKey(), deepseekConfigured: !!deepseekKey() },
     prefs: readPrefs(store),
     labels: store.listLabels(),
   });
@@ -257,6 +274,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         broadcast("ai", aiState());
       }
       if (s.autoClassify !== undefined) store.setSetting("auto_classify", s.autoClassify ? "1" : "0");
+      if (s.classifyProvider !== undefined) store.setSetting("classify_provider", s.classifyProvider);
       broadcast("state", publicState());
     },
     logout: () => connected().logout(),
@@ -337,7 +355,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   port = (server.address() as AddressInfo).port;
 
   if (!disabled) startWhatsApp().catch((e) => process.stderr.write(`[whatsapp] ${e instanceof Error ? e.message : e}\n`));
-  if (jevKey()) void getJev();
+  if (jevKey() && classifier() === "jev") void getJev();
 
   options.onPrefs?.(readPrefs(store));
   fireReminders();

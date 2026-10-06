@@ -104,9 +104,15 @@ export class WhatsApp extends EventEmitter<{
       media: media ? JSON.stringify(media) : null,
     };
     const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
+    if (quiet) {
+      // Lote do histórico: só grava; a tela recarrega uma vez no fim, então não lê nada de volta.
+      this.store.insertMessage(incoming, isLive);
+      if (!group && !m.key.fromMe && m.pushName) this.store.setNames(chatJid, { push: m.pushName });
+      return;
+    }
     const result = this.store.addMessage(incoming, isLive);
     if (!group && !m.key.fromMe && m.pushName) this.store.setNames(chatJid, { push: m.pushName });
-    if (result && !quiet) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive });
+    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive });
   }
 
   /** Nome do autor em grupo: agenda, depois nome do perfil, depois número. */
@@ -139,15 +145,36 @@ export class WhatsApp extends EventEmitter<{
     }
   }
 
+  /**
+   * Versão do WhatsApp Web a anunciar. A consulta ao GitHub ficava no caminho da conexão
+   * (segundos sem internet boa); agora vale a última conhecida e a nova fica para a próxima vez.
+   */
+  private async waVersion(): Promise<[number, number, number] | undefined> {
+    const cached = this.store.getSetting("wa_version");
+    const refresh = fetchLatestBaileysVersion()
+      .then((r) => {
+        if (r.isLatest) this.store.setSetting("wa_version", JSON.stringify(r.version));
+        return r.version as [number, number, number];
+      })
+      .catch(() => undefined);
+    if (cached) {
+      try {
+        return JSON.parse(cached) as [number, number, number];
+      } catch {
+        this.store.setSetting("wa_version", null);
+      }
+    }
+    // Primeira vez: espera no máximo 4 s; sem resposta, usa a versão embutida na biblioteca.
+    return Promise.race([refresh, new Promise<undefined>((r) => setTimeout(r, 4000, undefined).unref())]);
+  }
+
   async start(): Promise<void> {
     this.stopped = false;
     this.setState({ status: this.retries ? "reconectando" : "iniciando", qr: null, error: null });
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     // Sessão salva de outro número (ex.: data/auth trocado): separa antes de qualquer evento.
     if (state.creds.me?.id) this.checkAccount(jidNormalizedUser(state.creds.me.id));
-    const version = await fetchLatestBaileysVersion()
-      .then((r) => r.version)
-      .catch(() => undefined);
+    const version = await this.waVersion();
     const sock = makeWASocket({
       ...(version ? { version } : {}),
       auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },

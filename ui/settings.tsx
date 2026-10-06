@@ -1,6 +1,6 @@
 import { Bell, ChartColumn, Download, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { api, type AiStatus, type AppState, type Label, type Prefs, type QuickReply } from "./api.ts";
+import { api, type AiStatus, type AppState, type Classifier, type Label, type Prefs, type QuickReply } from "./api.ts";
 import { desktop, type ReleaseInfo, type UpdateState } from "./desktop.ts";
 import { publishAi, useAiStatus } from "./ai-state.ts";
 import { AiModels } from "./ai-models.tsx";
@@ -232,6 +232,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const [key, setKey] = useState("");
   const [removeKey, setRemoveKey] = useState(false);
   const [auto, setAuto] = useState(state.jev.autoClassify);
+  const [classifier, setClassifier] = useState<Classifier>(state.classifier.provider);
   const [dsKey, setDsKey] = useState("");
   const [removeDsKey, setRemoveDsKey] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -261,6 +262,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
     setDsKey("");
     setRemoveDsKey(false);
     setAuto(state.jev.autoClassify);
+    setClassifier(state.classifier.provider);
     setError(null);
     setConfirm(null);
     returnFocus.current = document.activeElement;
@@ -271,7 +273,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => setPrefs((p) => ({ ...p, [k]: v }));
   const quietOn = !!(prefs.quietStart && prefs.quietEnd);
   const dirty =
-    !sameLabels(labels, state.labels) || aiText !== savedAiText || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || dsKey.trim() !== "" || removeDsKey || auto !== state.jev.autoClassify;
+    !sameLabels(labels, state.labels) || aiText !== savedAiText || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || dsKey.trim() !== "" || removeDsKey || auto !== state.jev.autoClassify || classifier !== state.classifier.provider;
 
   const requestClose = () => {
     if (saving) return;
@@ -345,6 +347,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
       if (dsKey.trim()) settings.deepseekApiKey = dsKey.trim();
       else if (removeDsKey) settings.deepseekApiKey = null;
       if (auto !== state.jev.autoClassify) settings.autoClassify = auto;
+      if (classifier !== state.classifier.provider) settings.classifyProvider = classifier;
       if (!samePrefs(prefs, state.prefs)) settings.prefs = prefs;
       if (Object.keys(settings).length) next = await api.saveSettings(settings);
       onSaved(next, "Configurações salvas.");
@@ -479,7 +482,25 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
 
           {tab === "ia" && (
             <section className="surface stack">
-              <h3 className="eyebrow">Jev</h3>
+              <h3 className="eyebrow">Classificação</h3>
+              <div className="segmented" role="radiogroup" aria-label="Quem classifica as conversas">
+                {(
+                  [
+                    ["jev", "Jev"],
+                    ["deepseek", "DeepSeek"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button key={id} type="button" role="radio" aria-checked={classifier === id} className="segmented__item" onClick={() => setClassifier(id)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="hint">
+                {classifier === "jev"
+                  ? "O Jev devolve etiqueta, se espera resposta, urgência e prioridade (alta, média ou baixa)."
+                  : "A DeepSeek devolve o mesmo que o Jev e ainda o motivo da prioridade em uma frase. Usa a chave da seção Rascunho e resumo."}{" "}
+                Sem chave do escolhido, o app usa o outro que tiver chave.
+              </p>
               {state.jev.fromEnv ? (
                 <p className="hint">A chave do Jev está definida no arquivo .env.local deste computador.</p>
               ) : (
@@ -510,9 +531,9 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 checked={auto}
                 onChange={setAuto}
                 label="Classificar sozinho quando chegar mensagem nova"
-                hint="Espera 15 s sem mensagens novas na conversa e chama o Jev uma vez."
+                hint="Espera 15 s sem mensagens novas na conversa e classifica uma vez."
               />
-              <p className="hint">O Jev recebe o nome do contato e o texto das últimas 30 mensagens da conversa para sugerir a etiqueta.</p>
+              <p className="hint">A IA recebe o nome do contato e o texto das últimas 30 mensagens da conversa; nenhum identificador do WhatsApp sai do seu PC.</p>
             </section>
           )}
           {tab === "ia" && (

@@ -1,4 +1,6 @@
 export type Status = "aberta" | "aguardando" | "resolvida";
+export type Priority = "alta" | "media" | "baixa";
+export type Classifier = "jev" | "deepseek";
 
 export type Chat = {
   jid: string;
@@ -12,7 +14,7 @@ export type Chat = {
   status: Status;
   label: string | null;
   labelSource: "manual" | "jev" | null;
-  ai: { label: string; confidence: number; needsReply: number; urgent: number; at: number } | null;
+  ai: { label: string; confidence: number; needsReply: number; urgent: number; priority: Priority | null; reason: string | null; at: number } | null;
   aiError: string | null;
   note: string | null;
   reminderAt: number | null;
@@ -92,6 +94,8 @@ export type AppState = {
   prefs: Prefs;
   connection: Connection;
   jev: { configured: boolean; fromEnv: boolean; autoClassify: boolean };
+  /** Quem classifica de fato (já com o fallback aplicado) e se tem chave. */
+  classifier: { provider: Classifier; configured: boolean; deepseekConfigured: boolean };
   labels: Label[];
 };
 
@@ -135,7 +139,8 @@ export const api = {
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),
   saveLabels: (labels: Label[]) => request<Label[]>("PUT", "/api/labels", labels),
-  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; prefs?: Partial<Prefs> }) => request<AppState>("PUT", "/api/settings", s),
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; classifyProvider?: Classifier; prefs?: Partial<Prefs> }) =>
+    request<AppState>("PUT", "/api/settings", s),
   logout: () => request<AppState>("POST", "/api/logout", {}),
   reset: (reconnect: boolean) => request<AppState>("POST", "/api/reset", { reconnect }),
 };

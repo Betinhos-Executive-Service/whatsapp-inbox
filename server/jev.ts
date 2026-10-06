@@ -5,7 +5,18 @@ import type { TokenUsage } from "./pricing.ts";
 
 export const JEV_MODEL = process.env.JEV_MODEL || "jev-1.13.0";
 
-export type Classification = { label: string; confidence: number; needsReply: number; urgent: number };
+export const PRIORITIES = ["alta", "media", "baixa"] as const;
+export type Priority = (typeof PRIORITIES)[number];
+
+/** Resultado de uma classificação (Jev ou DeepSeek). `reason` só vem da DeepSeek. */
+export type Classification = { label: string; confidence: number; needsReply: number; urgent: number; priority: Priority; reason: string | null };
+
+/** Critério de prioridade compartilhado por Jev e DeepSeek: número de gestão da Betinhos. */
+export const PRIORITY_CRITERIA = {
+  alta: "Serviço em andamento ou nas próximas horas com problema, atraso, motorista ou passageiro esperando, reclamação, cobrança vencida ou decisão que só a gestão pode tomar agora.",
+  media: "Pedido com prazo nos próximos dias: cotação, reserva, aprovação, pagamento a agendar, dúvida de cliente ou de motorista que espera retorno.",
+  baixa: "Sem ação ou sem prazo: agradecimento, aviso, confirmação, conversa social, assunto já resolvido.",
+} as const;
 
 const probability = z.number().finite().min(0).max(1);
 
@@ -30,6 +41,10 @@ export function buildQuestions(labels: Label[]) {
         false: "Sem prazo ou impacto concreto, ou urgência já vencida.",
       },
     ),
+    prioridade: choice(
+      "Este é o WhatsApp de gestão de uma empresa de transporte executivo. Com que prioridade a gestão deve tratar esta conversa agora? Compare as datas das mensagens com a data de agora.",
+      PRIORITY_CRITERIA,
+    ),
   };
 }
 
@@ -41,12 +56,13 @@ export function parseResponse(value: unknown, labels: Label[]): Classification {
         etiqueta: z.object({ type: z.literal("choice"), choice: z.string(), confidence: probability }),
         responder: z.object({ type: z.literal("noul"), noul: probability }),
         urgente: z.object({ type: z.literal("noul"), noul: probability }),
+        prioridade: z.object({ type: z.literal("choice"), choice: z.enum(PRIORITIES) }),
       }),
     })
     .parse(value);
-  const { etiqueta, responder, urgente } = response.answers;
+  const { etiqueta, responder, urgente, prioridade } = response.answers;
   if (!names.includes(etiqueta.choice)) throw new Error(`Etiqueta desconhecida na resposta: ${etiqueta.choice}`);
-  return { label: etiqueta.choice, confidence: etiqueta.confidence, needsReply: responder.noul, urgent: urgente.noul };
+  return { label: etiqueta.choice, confidence: etiqueta.confidence, needsReply: responder.noul, urgent: urgente.noul, priority: prioridade.choice, reason: null };
 }
 
 /** Estado enviado ao Jev: só as últimas mensagens de texto, sem identificadores do WhatsApp. */

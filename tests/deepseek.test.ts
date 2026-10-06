@@ -36,6 +36,25 @@ test("DeepSeek: resumo no formato de três partes", async () => {
   assert.deepEqual(usage, { inputTokens: 0, outputTokens: 0, cachedTokens: 0 }); // resposta sem "usage" não quebra
 });
 
+test("DeepSeek: classificação em JSON com prioridade e motivo; etiqueta fora da lista é erro", async () => {
+  const labels = [{ name: "Cotação", description: "Preço" }, { name: "Operação", description: "Serviço em andamento" }];
+  const seen: { body?: any } = {};
+  const ai = new DeepSeekAI(
+    fakeFetch(200, { choices: [{ message: { content: '{"etiqueta":"cotacao","confianca":0.9,"responder":0.95,"urgente":0.2,"prioridade":"media","motivo":"Pede valor para amanhã."}' } }] }, seen),
+  );
+  const { result: r } = await ai.classify("k", "Ana", conversa, labels);
+  assert.deepEqual(r, { label: "Cotação", confidence: 0.9, needsReply: 0.95, urgent: 0.2, priority: "media", reason: "Pede valor para amanhã." });
+  assert.deepEqual(seen.body.response_format, { type: "json_object" });
+  assert.match(seen.body.messages[0].content, /- Cotação: Preço/);
+  assert.match(seen.body.messages[0].content, /- alta: /);
+  assert.ok(!seen.body.messages[1].content.includes("whatsapp.net"));
+  const bad = new DeepSeekAI(fakeFetch(200, { choices: [{ message: { content: '{"etiqueta":"Reserva","responder":0.5,"urgente":0,"prioridade":"baixa"}' } }] }));
+  await assert.rejects(bad.classify("k", "Ana", conversa, labels), /Etiqueta desconhecida/);
+  const semJson = new DeepSeekAI(fakeFetch(200, { choices: [{ message: { content: "não sei" } }] }));
+  await assert.rejects(semJson.classify("k", "Ana", conversa, labels), /JSON/);
+  await assert.rejects(ai.classify("k", "Ana", conversa, labels.slice(0, 1)), /duas etiquetas/);
+});
+
 test("DeepSeek: erros viram mensagem clara", async () => {
   await assert.rejects(new DeepSeekAI(fakeFetch(401, { error: { message: "bad key" } })).draft("k", "Ana", conversa, ""), /Chave da DeepSeek inválida/);
   await assert.rejects(new DeepSeekAI(fakeFetch(402, {})).draft("k", "Ana", conversa, ""), /Sem saldo/);
