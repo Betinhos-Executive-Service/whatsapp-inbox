@@ -3,7 +3,7 @@ import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, type Chat, type Message, type Reminder } from "./db.ts";
+import { Store, type Chat, type Label, type Message, type QuickReply, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { cacheMedia, loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
@@ -43,7 +43,12 @@ export type AppOptions = {
   onReminder?: (chat: Chat, reminder: Reminder) => void;
   /** Conversa marcada como lida (na página ou pelo toast): o app desktop zera a notificação. */
   onRead?: (jid: string) => void;
+  /** Conexão do WhatsApp mudou (QR, conectado…): o app desktop mostra no seletor de contas. */
+  onConnection?: (state: ConnectionState) => void;
 };
+
+/** Configurações copiáveis entre contas: nunca conversas, número conectado ou auth. */
+export type SettingsSnapshot = { settings: [key: string, value: string][]; labels: Label[]; quickReplies: QuickReply[] };
 
 export type RunningApp = {
   port: number;
@@ -51,8 +56,15 @@ export type RunningApp = {
   send: (jid: string, text: string) => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   avatar: (jid: string) => Promise<Buffer | null>;
+  connection: () => ConnectionState;
+  logout: () => Promise<void>;
+  exportSettings: () => SettingsSnapshot;
+  importSettings: (snapshot: SettingsSnapshot) => void;
   close: () => Promise<void>;
 };
+
+// Estado do número conectado: não vai junto ao copiar configurações para outra conta.
+const PER_NUMBER_SETTINGS = new Set(["account", "contacts_backfill", "wa_version"]);
 
 export async function startApp(options: AppOptions): Promise<RunningApp> {
   mkdirSync(options.dataDir, { recursive: true });
@@ -305,7 +317,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   async function startWhatsApp() {
     const { WhatsApp } = await import("./whatsapp.ts");
     const client = new WhatsApp(store, join(options.dataDir, "auth"));
-    client.on("connection", (s) => broadcast("connection", s));
+    client.on("connection", (s) => {
+      broadcast("connection", s);
+      options.onConnection?.(s);
+    });
     client.on("chat", (chat) => broadcast("chat", chat));
     client.on("update", (u) => broadcast("update", u));
     client.on("presence", (p) => broadcast("presence", p));
@@ -331,8 +346,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
             })
             .catch((error: Error) => console.warn(`Transcrição automática falhou: ${error.message}`));
         }
-        // Silenciada: chega e conta como não lida, só não avisa.
-        if (!chat.mutedUntil || chat.mutedUntil <= Date.now()) options.onIncoming?.(chat, message);
+        // Silenciada ou mantida no arquivo: chega e conta como não lida, só não avisa (como no WhatsApp).
+        if (!chat.archived && (!chat.mutedUntil || chat.mutedUntil <= Date.now())) options.onIncoming?.(chat, message);
       }
     });
     wa = client;
@@ -457,6 +472,9 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       if (readPrefs(store).sendTyping) await wa?.typing(jid, state);
     },
     markRead,
+    syncArchive: (jid, archived) => {
+      wa?.setArchived(jid, archived).catch((e: Error) => console.warn(`Arquivar no celular falhou: ${e.message}`));
+    },
     deleteMessage: async (jid, id, mode) => {
       const ref = store.messageKey(jid, id);
       if (!ref) throw new Error("Mensagem não encontrada.");
@@ -622,6 +640,20 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     send,
     markRead,
     avatar,
+    connection: () => (wa?.state ?? bootingState),
+    logout: () => connected().logout(),
+    exportSettings: () => ({
+      settings: store.listSettings().filter(([key]) => !PER_NUMBER_SETTINGS.has(key)),
+      labels: store.listLabels(),
+      quickReplies: store.listQuickReplies(),
+    }),
+    importSettings: (snapshot) => {
+      for (const [key, value] of snapshot.settings) if (!PER_NUMBER_SETTINGS.has(key)) store.setSetting(key, value);
+      store.saveLabels(snapshot.labels);
+      store.saveQuickReplies(snapshot.quickReplies);
+      options.onPrefs?.(readPrefs(store));
+      broadcast("state", publicState());
+    },
     close: async () => {
       clearInterval(heartbeat);
       clearInterval(reminderTimer);

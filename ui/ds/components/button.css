@@ -1,0 +1,62 @@
+/* Button: toda cor, altura, raio e espaço vem de token. */
+.bt-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--bt-space-2);
+  min-height: var(--bt-control-height-default);
+  padding: 0 var(--bt-space-3-5);
+  border: var(--bt-border-width-default) solid transparent;
+  border-radius: var(--bt-radius-md);
+  font-family: var(--bt-font-family-sans);
+  font-size: var(--bt-font-size-13);
+  font-weight: var(--bt-font-weight-extrabold);
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform var(--bt-duration-fast) var(--bt-ease-out),
+    background-color var(--bt-duration-fast) ease,
+    filter var(--bt-duration-fast) ease;
+}
+.bt-button > svg { flex: 0 0 auto; }
+.bt-button__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.bt-button--primary { color: var(--bt-color-surface); background-color: var(--bt-color-brand); }
+.bt-button--secondary { color: var(--bt-color-brand); background-color: var(--bt-color-surface); border-color: var(--bt-color-border); }
+.bt-button--action { color: var(--bt-color-surface); background-color: var(--bt-color-action); }
+.bt-button--ghost { color: var(--bt-color-action); background-color: transparent; }
+.bt-button--danger { color: var(--bt-color-surface); background-color: var(--bt-color-danger); }
+
+.bt-button--compact { min-height: var(--bt-control-height-compact); padding: 0 var(--bt-space-2-5); gap: var(--bt-space-1-5); border-radius: var(--bt-radius-sm); font-size: var(--bt-font-size-12); }
+.bt-button--touch { min-height: var(--bt-control-height-touch); }
+.bt-button--full { width: 100%; }
+.bt-button--icon { padding: 0; aspect-ratio: 1; }
+
+.bt-button:active:not(:disabled) { transform: scale(.97); }
+.bt-button:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--bt-color-surface), 0 0 0 4px var(--bt-focus-border); }
+.bt-button:disabled { cursor: not-allowed; }
+.bt-button:disabled:not([aria-busy='true']) { opacity: var(--bt-opacity-disabled); }
+.bt-button[aria-busy='true'] { cursor: progress; }
+.bt-button__spinner { animation: bt-button-spin 800ms linear infinite; }
+@keyframes bt-button-spin { to { transform: rotate(360deg); } }
+
+@media (hover: hover) and (pointer: fine) {
+  .bt-button--primary:hover:not(:disabled) { background-color: var(--bt-color-brand-hover); }
+  .bt-button--secondary:hover:not(:disabled) { background-color: var(--bt-color-surface-soft); }
+  .bt-button--ghost:hover:not(:disabled) { background-color: var(--bt-color-action-soft); }
+  .bt-button--action:hover:not(:disabled), .bt-button--danger:hover:not(:disabled) { filter: brightness(.92); }
+}
+
+/* Em toque, o alvo padrão sobe para 44px; compact continua sendo escolha explícita. */
+@media (pointer: coarse) {
+  .bt-button:not(.bt-button--compact) { min-height: var(--bt-control-height-touch); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bt-button { transition: none; }
+  .bt-button__spinner { animation-duration: 2.4s; }
+}

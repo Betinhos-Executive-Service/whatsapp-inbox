@@ -44,6 +44,8 @@ export type Api = {
   watch: (jid: string) => Promise<void>;
   typing: (jid: string, state: "composing" | "paused") => Promise<void>;
   markRead: (jid: string) => Promise<void>;
+  /** Leva ao celular o arquivar/desarquivar feito aqui (sem bloquear a tela). */
+  syncArchive: (jid: string, archived: boolean) => void;
   classify: (jid: string) => Promise<unknown>;
   saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
@@ -247,6 +249,7 @@ export function createHandler(api: Api) {
         if (patch.snoozedUntil && patch.snoozedUntil <= Date.now()) throw new HttpError(400, "Escolha um horário no futuro para adiar.");
         store.updateChat(jid, patch);
         if (patch.note !== undefined) store.setNote(jid, patch.note);
+        if (patch.archived !== undefined) api.syncArchive(jid, patch.archived);
         api.onChatChanged(jid);
         return json(res, 200, store.getChat(jid));
       }
