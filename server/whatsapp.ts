@@ -25,6 +25,8 @@ export type ConnectionState = { status: ConnectionStatus; qr: string | null; me:
 
 /** Mensagem com até 2 min de idade conta como "ao vivo": mexe em não lidas e status. */
 const LIVE_WINDOW_MS = 2 * 60 * 1000;
+/** A agenda é pedida de novo a cada 6 h: nomes salvos no celular depois chegam sozinhos. */
+const CONTACTS_RESYNC_MS = 6 * 60 * 60 * 1000;
 const logger = pino({ level: "silent" });
 
 /** Conversas individuais e grupos; status, listas e canais ficam de fora. */
@@ -289,8 +291,10 @@ export class WhatsApp extends EventEmitter<{
         const me = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
         this.checkAccount(me);
         this.setState({ status: "conectado", qr: null, error: null, me });
-        // Depois do histórico inicial; numa reconexão comum é só uma consulta à configuração.
+        // Depois do histórico inicial; numa reconexão recente é só uma consulta à configuração.
         setTimeout(() => void this.backfillContacts(sock), 20000);
+        // Enquanto esta conexão durar, confere a cada hora se a agenda já venceu.
+        const timer = setInterval(() => (this.sock === sock ? void this.backfillContacts(sock) : clearInterval(timer)), 60 * 60 * 1000);
         void this.loadGroups(sock);
       }
       if (u.connection === "close") {
@@ -369,15 +373,17 @@ export class WhatsApp extends EventEmitter<{
   }
 
   /**
-   * Uma vez por instalação: pede de novo ao WhatsApp a agenda completa (coleção de contatos
-   * do app state). Recupera nomes que chegaram antes de a conversa existir. Só leitura.
+   * A cada 6 h: pede de novo ao WhatsApp a agenda completa (coleção de contatos do app state).
+   * Recupera nomes que chegaram antes de a conversa existir ou foram salvos no celular depois. Só leitura.
    */
   private async backfillContacts(sock: WASocket) {
-    if (this.store.getSetting("contacts_backfill") === "1") return;
+    // Guarda a hora da última sincronização; o antigo "1" conta como vencido.
+    const last = Number(this.store.getSetting("contacts_backfill") ?? 0);
+    if (this.sock !== sock || Date.now() - last < CONTACTS_RESYNC_MS) return;
     try {
       await sock.authState.keys.set({ "app-state-sync-version": { critical_unblock_low: null } });
       await sock.resyncAppState(["critical_unblock_low"], true);
-      this.store.setSetting("contacts_backfill", "1");
+      this.store.setSetting("contacts_backfill", String(Date.now()));
       this.emit("reload");
     } catch (error) {
       process.stderr.write(`[whatsapp] agenda não sincronizou: ${error instanceof Error ? error.message : error}\n`);
