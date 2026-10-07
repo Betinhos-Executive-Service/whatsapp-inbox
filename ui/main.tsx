@@ -69,7 +69,7 @@ import { MessageMenu, type MenuAt } from "./message-menu.tsx";
 import { AckIcon, canEdit, CopyButton, EditBar, ReactButton, ReactionList } from "./message-extras.tsx";
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
 import { toggleWa } from "./wa-text.ts";
-import { desktop } from "./desktop.ts";
+import { desktop, useAccount } from "./desktop.ts";
 import { BADGE_FONT, badgeImage } from "./badge.ts";
 import "./ds/styles.css";
 import "./app.css";
@@ -291,6 +291,7 @@ function ChatList(props: {
   /** Arquivar ou fixar pelo clique direito, sem abrir a conversa. */
   onPatch: (jid: string, patch: ChatPatch) => void;
 }) {
+  const account = useAccount();
   const [tab, setTab] = useState<Tab>("aberta");
   const [menu, setMenu] = useState<{ jid: string; x: number; y: number } | null>(null);
   const openMenu = useCallback((jid: string, x: number, y: number) => setMenu({ jid, x, y }), []);
@@ -397,7 +398,10 @@ function ChatList(props: {
       <ResizeHandle cssVar="--inbox-list-w" storageKey="inbox:list-w" initial={360} min={280} max={520} edge="end" reserve={360} label="Largura da lista de conversas" />
       <header className="list-pane__header">
         <div className="split">
-          <h1 className="heading-page">Conversas</h1>
+          <div>
+            {account && account.count > 1 && <p className="eyebrow">{account.name}</p>}
+            <h1 className="heading-page">Conversas</h1>
+          </div>
           <Button variant="ghost" aria-label="Abrir configurações" title="Configurações" icon={<Settings size={18} aria-hidden />} onClick={props.onSettings} />
         </div>
         <ConnectionPill connection={props.connection} online={props.online} />
@@ -1706,7 +1710,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsUsed = useRef(false);
   if (settingsOpen) settingsUsed.current = true;
-  const [settingsTab, setSettingsTab] = useState<"geral" | "ia" | undefined>(undefined);
+  const [settingsTab, setSettingsTab] = useState<"geral" | "ia" | "conta" | undefined>(undefined);
   const [skipConnect, setSkipConnect] = useState(false);
   const { toasts, push, dismiss } = useToasts();
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
@@ -1886,7 +1890,10 @@ function App() {
       setSkipConnect(true);
       openChat(jid);
     });
-    const offSettings = bridge.onOpenSettings(() => setSettingsOpen(true));
+    const offSettings = bridge.onOpenSettings((tab) => {
+      if (tab === "conta") setSettingsTab("conta");
+      setSettingsOpen(true);
+    });
     return () => {
       offChat();
       offSettings();

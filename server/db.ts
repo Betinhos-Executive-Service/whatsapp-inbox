@@ -1134,6 +1134,10 @@ export class Store {
     };
   }
 
+  listSettings(): [key: string, value: string][] {
+    return (this.q("select key, value from settings order by key").all() as Row[]).map((r) => [String(r.key), String(r.value)]);
+  }
+
   getSetting(key: string): string | null {
     const r = this.q("select value from settings where key = ?").get(key) as Row | undefined;
     return r ? String(r.value) : null;
