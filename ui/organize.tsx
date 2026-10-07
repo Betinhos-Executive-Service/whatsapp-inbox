@@ -1,5 +1,5 @@
 import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, ChevronDown, Clock, FolderCog, Keyboard, MessageSquareText, Pin, PinOff, Tags, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Chat, ChatPatch, SearchHit } from "./api.ts";
 import { dayLabel, formatTime, listTime } from "./format.ts";
 
@@ -129,6 +129,76 @@ export function ChatMenu({ chat, onChange }: { chat: Chat; onChange: (patch: Cha
   );
 }
 
+/** Clique direito numa conversa da lista: arquivar e fixar sem abrir, como no WhatsApp. */
+export function ChatItemMenu({ chat, x, y, onChange, onClose }: { chat: Chat; x: number; y: number; onChange: (patch: ChatPatch) => void; onClose: () => void }) {
+  const panel = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: x, top: y });
+
+  // Cabe na tela: abre para cima/esquerda quando falta espaço.
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const gap = 8;
+    setPos({ left: Math.max(gap, Math.min(x, window.innerWidth - width - gap)), top: Math.max(gap, y + height + gap > window.innerHeight ? y - height : y) });
+    el.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+  }, [x, y]);
+
+  useEffect(() => {
+    const outside = (e: Event) => !panel.current?.contains(e.target as Node) && onClose();
+    window.addEventListener("pointerdown", outside, true);
+    window.addEventListener("scroll", outside, true);
+    window.addEventListener("resize", onClose);
+    window.addEventListener("blur", onClose);
+    return () => {
+      window.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("scroll", outside, true);
+      window.removeEventListener("resize", onClose);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const list = [...(panel.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
+    const i = list.indexOf(document.activeElement as HTMLElement);
+    if (e.key === "Escape" || e.key === "Tab") {
+      e.preventDefault();
+      onClose();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      list[(i + (e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length]?.focus();
+    }
+  };
+
+  const items: { label: string; icon: ReactNode; patch: ChatPatch }[] = [
+    chat.archived
+      ? { label: "Desarquivar conversa", icon: <ArchiveRestore size={16} aria-hidden />, patch: { archived: false } }
+      : { label: "Arquivar conversa", icon: <Archive size={16} aria-hidden />, patch: { archived: true } },
+    chat.pinnedAt
+      ? { label: "Desafixar conversa", icon: <PinOff size={16} aria-hidden />, patch: { pinned: false } }
+      : { label: "Fixar conversa", icon: <Pin size={16} aria-hidden />, patch: { pinned: true } },
+  ];
+  return (
+    <div ref={panel} className="message-menu" role="menu" aria-label={`Opções de ${chat.name}`} style={pos} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}>
+      {items.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          role="menuitem"
+          className="message-menu__item"
+          onClick={() => {
+            onClose();
+            onChange(item.patch);
+          }}
+        >
+          {item.icon}
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** Etiquetas extras da conversa, além da principal. */
 export function ExtraLabelsPicker({ chat, labels, onChange }: { chat: Chat; labels: string[]; onChange: (patch: ChatPatch) => void }) {
   const [open, setOpen] = useState(false);
@@ -221,6 +291,7 @@ const SHORTCUTS: [string, string][] = [
   ["Ctrl + K", "Buscar conversas e mensagens"],
   ["Alt + ↓ / Alt + ↑", "Próxima / conversa anterior da lista"],
   ["Ctrl + Enter", "Marcar como resolvida (fora do campo de mensagem)"],
+  ["Ctrl + E", "Arquivar ou desarquivar a conversa aberta"],
   ["Esc", "Fechar painel, cancelar resposta ou edição"],
   ["/", "Respostas rápidas (no começo do campo)"],
   ["@", "Mencionar em grupo"],

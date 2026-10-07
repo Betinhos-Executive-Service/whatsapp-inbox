@@ -195,6 +195,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       profile: async () => ({}),
       photo: async () => null,
       markRead: async () => undefined,
+      syncArchive: () => undefined,
       classify: async () => null,
       saveSettings: () => undefined,
       logout: async () => undefined,

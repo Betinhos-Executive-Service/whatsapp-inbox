@@ -256,6 +256,7 @@ export class WhatsApp extends EventEmitter<{
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     // Sessão salva de outro número (ex.: data/auth trocado): separa antes de qualquer evento.
     if (state.creds.me?.id) this.checkAccount(jidNormalizedUser(state.creds.me.id));
+    this.store.keepArchived = !state.creds.accountSettings?.unarchiveChats;
     const version = await this.waVersion();
     const sock = makeWASocket({
       ...(version ? { version } : {}),
@@ -277,6 +278,7 @@ export class WhatsApp extends EventEmitter<{
     sock.ev.on("creds.update", (update) => {
       // Logo depois de ler o QR o número já é conhecido, antes do histórico chegar.
       if (update.me?.id) this.checkAccount(jidNormalizedUser(update.me.id));
+      if (update.accountSettings) this.store.keepArchived = !update.accountSettings.unarchiveChats;
       void saveCreds();
     });
 
@@ -323,6 +325,7 @@ export class WhatsApp extends EventEmitter<{
           const unread = Number(c.unreadCount ?? 0);
           this.store.ensureChat(jid, { status: unread > 0 ? "aberta" : "resolvida", unread: Math.max(0, unread) });
           if (c.name) this.store.setNames(jid, { saved: c.name });
+          if (typeof c.archived === "boolean") this.store.updateChat(jid, { archived: c.archived });
         }
         for (const contact of contacts) this.applyContact(contact);
         for (const m of messages) this.ingest(m, false, true);
@@ -330,6 +333,17 @@ export class WhatsApp extends EventEmitter<{
       this.emit("reload");
     });
 
+    // Arquivada ou desarquivada no celular (ou desarquivada por mensagem nova, conforme o ajuste dele).
+    sock.ev.on("chats.update", (list) => {
+      for (const u of list) {
+        if (typeof u.archived !== "boolean" || !u.id || !isConversation(u.id)) continue;
+        const jid = this.canonical(u.id);
+        const current = this.store.getChat(jid);
+        if (!current || current.archived === u.archived) continue;
+        const chat = this.store.updateChat(jid, { archived: u.archived });
+        if (chat && chat.lastAt > 0) this.emit("chat", chat);
+      }
+    });
     sock.ev.on("groups.upsert", (list) => list.forEach((g) => this.setGroupName(g.id, g.subject)));
     sock.ev.on("groups.update", (list) => list.forEach((g) => this.setGroupName(g.id, g.subject)));
     sock.ev.on("lid-mapping.update", (map) => this.learnLid(map.lid, map.pn));
@@ -560,6 +574,13 @@ export class WhatsApp extends EventEmitter<{
     await this.sock.readMessages(
       keys.map((k) => ({ remoteJid: k.rawJid, id: k.id, fromMe: false, ...(k.participant ? { participant: k.participant } : {}) })),
     );
+  }
+
+  /** Arquiva ou desarquiva também no celular; o WhatsApp pede a última mensagem da conversa. */
+  async setArchived(last: MessageKeyRef, archived: boolean): Promise<void> {
+    if (!this.sock) return;
+    const key = { remoteJid: last.rawJid, id: last.id, fromMe: last.fromMe, ...(last.participant ? { participant: last.participant } : {}) };
+    await this.sock.chatModify({ archive: archived, lastMessages: [{ key, messageTimestamp: Math.floor(last.at / 1000) }] }, last.rawJid);
   }
 
   /** Desconecta este aparelho do WhatsApp e volta a mostrar o QR. */

@@ -331,8 +331,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
             })
             .catch((error: Error) => console.warn(`Transcrição automática falhou: ${error.message}`));
         }
-        // Silenciada: chega e conta como não lida, só não avisa.
-        if (!chat.mutedUntil || chat.mutedUntil <= Date.now()) options.onIncoming?.(chat, message);
+        // Silenciada ou mantida no arquivo: chega e conta como não lida, só não avisa (como no WhatsApp).
+        if (!chat.archived && (!chat.mutedUntil || chat.mutedUntil <= Date.now())) options.onIncoming?.(chat, message);
       }
     });
     wa = client;
@@ -457,6 +457,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       if (readPrefs(store).sendTyping) await wa?.typing(jid, state);
     },
     markRead,
+    syncArchive: (jid, archived) => {
+      const last = store.lastMessageKey(jid);
+      if (last) wa?.setArchived(last, archived).catch((e: Error) => console.warn(`Arquivar no celular falhou: ${e.message}`));
+    },
     deleteMessage: async (jid, id, mode) => {
       const ref = store.messageKey(jid, id);
       if (!ref) throw new Error("Mensagem não encontrada.");
