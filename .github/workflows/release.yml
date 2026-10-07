@@ -30,6 +30,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # O binário do Electron (electronDist) não vem no install do CI; baixa explicitamente.
+      - run: node node_modules/electron/install.js
       - run: pnpm typecheck
       - run: pnpm test
       - name: Publicar versão
