@@ -40,3 +40,15 @@ test("escolha por conversa de transcrição automática persiste", async () => {
   assert.equal(store.updateChat(jid, { autoTranscribe: "on" })?.autoTranscribe, "on");
   assert.equal(store.updateChat(jid, { autoTranscribe: null })?.autoTranscribe, null);
 });
+
+test("resumo de áudio sobe prioridade só de conversa classificada", async () => {
+  const { Store } = await import("../server/db.ts");
+  const store = new Store(":memory:");
+  const jid = "5511988887777@s.whatsapp.net";
+  store.ensureChat(jid);
+  assert.equal(store.raisePriority(jid, "motivo"), false);
+  store.saveClassification(jid, { label: "Operação", confidence: 0.9, needsReply: 1, urgent: 0.2, priority: "baixa" });
+  assert.equal(store.raisePriority(jid, "Carro quebrado"), true);
+  assert.equal(store.getChat(jid)?.ai?.priority, "alta");
+  assert.equal(store.getChat(jid)?.ai?.reason, "Carro quebrado");
+});

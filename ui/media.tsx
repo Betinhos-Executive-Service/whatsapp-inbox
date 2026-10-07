@@ -1,4 +1,4 @@
-import { Download, FileText, LoaderCircle, Mic, Pause, Play, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { Download, FileText, LoaderCircle, Mic, Pause, Play, RefreshCw, Reply, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, mediaUrl, type AudioSummary, type Message, type OutgoingMedia } from "./api.ts";
 import { webmToOgg } from "./ogg.ts";
@@ -172,6 +172,8 @@ function Transcript({ m }: { m: Message }) {
   /** Com resumo, ele aparece primeiro; o botão alterna para a transcrição original. */
   const [view, setView] = useState<"resumo" | "texto">("resumo");
   const [busy, setBusy] = useState<"transcrever" | "resumir" | null>(null);
+  /** Resumo automático em andamento no servidor. */
+  const [remote, setRemote] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const show = useCallback(
     (value: string) => {
@@ -201,22 +203,38 @@ function Transcript({ m }: { m: Message }) {
         if (summary) showSummary(summary);
       })
       .catch(() => undefined);
+    const mine = (d: { chatJid: string; id: string }) => d.chatJid === m.chatJid && d.id === m.id;
     const onTranscript = (e: Event) => {
       const d = (e as CustomEvent<{ chatJid: string; id: string; text: string }>).detail;
-      if (d.chatJid === m.chatJid && d.id === m.id) show(d.text);
+      if (mine(d)) show(d.text);
+    };
+    const onSummary = (e: Event) => {
+      const d = (e as CustomEvent<{ chatJid: string; id: string; summary: AudioSummary }>).detail;
+      if (mine(d)) {
+        setRemote(false);
+        showSummary(d.summary);
+      }
+    };
+    const onStatus = (e: Event) => {
+      const d = (e as CustomEvent<{ chatJid: string; id: string; state: string }>).detail;
+      if (mine(d)) setRemote(d.state === "summarizing");
     };
     window.addEventListener("inbox:transcript", onTranscript);
+    window.addEventListener("inbox:audio-summary", onSummary);
+    window.addEventListener("inbox:audio-status", onStatus);
     return () => {
       alive = false;
       window.removeEventListener("inbox:transcript", onTranscript);
+      window.removeEventListener("inbox:audio-summary", onSummary);
+      window.removeEventListener("inbox:audio-status", onStatus);
     };
   }, [cacheKey, m.chatJid, m.id, show, showSummary]);
-  const run = async (what: "transcrever" | "resumir") => {
+  const run = async (what: "transcrever" | "resumir", force = false) => {
     setBusy(what);
     setError(null);
     try {
       if (what === "transcrever") show((await api.transcribe(m.chatJid, m.id)).text);
-      else showSummary((await api.summarizeAudio(m.chatJid, m.id)).summary);
+      else showSummary((await api.summarizeAudio(m.chatJid, m.id, force)).summary);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -239,25 +257,44 @@ function Transcript({ m }: { m: Message }) {
     );
   }
   const hasSpeech = text !== "(sem fala reconhecida)";
+  const summarizing = busy === "resumir" || remote;
+  const showingSummary = !!summary && view === "resumo";
   return (
     <div className="transcript-box">
-      {summary && view === "resumo" ? <AudioSummaryView s={summary} /> : <p className="transcript">{text}</p>}
-      {hasSpeech && (
+      {summarizing ? (
+        <p className="audio-summary audio-summary--loading" role="status">
+          <LoaderCircle size={12} className="spin" aria-hidden /> Resumindo o áudio…
+        </p>
+      ) : showingSummary ? (
+        <AudioSummaryView s={summary} />
+      ) : (
+        <p className="transcript">{text}</p>
+      )}
+      {hasSpeech && !summarizing && (
         <div className="transcript-bar">
           {summary ? (
-            <button type="button" className="transcript__action" onClick={() => setView((v) => (v === "resumo" ? "texto" : "resumo"))}>
-              {view === "resumo" ? "Ver transcrição" : "Ver resumo"}
-            </button>
+            <>
+              <button type="button" className="transcript__action" onClick={() => setView((v) => (v === "resumo" ? "texto" : "resumo"))}>
+                {view === "resumo" ? "Ver transcrição" : "Ver resumo"}
+              </button>
+              {!m.fromMe && (
+                <button type="button" className="transcript__action" onClick={() => window.dispatchEvent(new CustomEvent("inbox:suggest", { detail: { chatJid: m.chatJid } }))} title="Gerar um rascunho de resposta com base no áudio">
+                  <Reply size={12} aria-hidden /> Responder
+                </button>
+              )}
+              <button type="button" className="transcript__action transcript__action--quiet" onClick={() => void run("resumir", true)} disabled={busy !== null} aria-label="Gerar o resumo de novo" title="Gerar o resumo de novo">
+                <RefreshCw size={12} aria-hidden />
+              </button>
+            </>
           ) : (
             <button
               type="button"
               className="transcript__action"
               onClick={() => void run("resumir")}
               disabled={busy !== null}
-              aria-busy={busy !== null || undefined}
               title="Resumo com os pontos principais, a tratativa e a prioridade"
             >
-              <Sparkles size={12} aria-hidden /> {busy ? "Resumindo…" : "Resumir"}
+              <Sparkles size={12} aria-hidden /> Resumir
             </button>
           )}
           {errorLine}

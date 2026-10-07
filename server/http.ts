@@ -29,7 +29,7 @@ export type Api = {
   typing: (jid: string, state: "composing" | "paused") => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   classify: (jid: string) => Promise<unknown>;
-  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
@@ -38,7 +38,7 @@ export type Api = {
   transcribeRecording: (body: Buffer, mimetype: string) => Promise<string>;
   /** Só o cache: não chama a Groq. */
   cachedTranscript: (jid: string, id: string) => Promise<{ text: string | null; summary: unknown }>;
-  summarizeAudio: (jid: string, id: string) => Promise<unknown>;
+  summarizeAudio: (jid: string, id: string, force?: boolean) => Promise<unknown>;
   ai: {
     status: () => unknown;
     draft: (jid: string) => Promise<string>;
@@ -47,6 +47,7 @@ export type Api = {
     setProvider: (provider: "deepseek" | "claude") => void;
     setDeepseekModel: (model: "deepseek-v4-pro" | "deepseek-flash") => void;
     setClaudeModel: (model: "sonnet" | "opus" | "fable" | "haiku") => void;
+    setSummaryModel: (choice: { provider?: "same" | "deepseek" | "claude"; deepseekModel?: "deepseek-v4-pro" | "deepseek-flash"; claudeModel?: "sonnet" | "opus" | "fable" | "haiku" }) => void;
     setClaudeOptions: (options: ClaudeOptions | null) => void;
     setJevContext: (n: number | null) => void;
     /** null volta tudo ao padrão. */
@@ -118,6 +119,7 @@ const settingsSchema = z.object({
   deepseekApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   groqApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   autoTranscribe: z.boolean().optional(),
+  autoSummarize: z.boolean().optional(),
   autoClassify: z.boolean().optional(),
   classifyProvider: z.enum(["jev", "deepseek"]).optional(),
 });
@@ -353,6 +355,18 @@ export function createHandler(api: Api) {
       api.ai.setClaudeModel(model);
       return json(res, 200, api.ai.status());
     }
+    if (path === "/api/ai/summary-model" && method === "PUT") {
+      const choice = parse(
+        z.object({
+          provider: z.enum(["same", "deepseek", "claude"]).optional(),
+          deepseekModel: z.enum(["deepseek-v4-pro", "deepseek-flash"]).optional(),
+          claudeModel: z.enum(["sonnet", "opus", "fable", "haiku"]).optional(),
+        }),
+        await readJson(req),
+      );
+      api.ai.setSummaryModel(choice);
+      return json(res, 200, api.ai.status());
+    }
     if (path === "/api/ai/claude-options" && method === "PUT") {
       const { options } = parse(z.object({ options: claudeOptionsSchema.nullable() }), await readJson(req));
       api.ai.setClaudeOptions(options);
@@ -385,8 +399,8 @@ export function createHandler(api: Api) {
     }
     const audioSummaryMatch = path.match(/^\/api\/transcribe\/([^/]+)\/([^/]+)\/summary$/);
     if (audioSummaryMatch && method === "POST") {
-      await readJson(req);
-      const summary = await api.summarizeAudio(decodeURIComponent(audioSummaryMatch[1]), decodeURIComponent(audioSummaryMatch[2])).catch((error: Error) => {
+      const { force } = parse(z.object({ force: z.boolean().optional() }), await readJson(req));
+      const summary = await api.summarizeAudio(decodeURIComponent(audioSummaryMatch[1]), decodeURIComponent(audioSummaryMatch[2]), force).catch((error: Error) => {
         throw new HttpError(502, error.message);
       });
       return json(res, 200, { summary });
