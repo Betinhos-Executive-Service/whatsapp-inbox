@@ -119,12 +119,21 @@ function withCaption(label: string, caption: unknown): string {
   return c ? `${label} ${c}` : label;
 }
 
+/** Visualização única: o WhatsApp não entrega a mídia a aparelhos conectados; só o celular abre. */
+export const VIEW_ONCE_KIND = "view_once";
+const VIEW_ONCE_LABEL: Record<string, string> = { imageMessage: "Foto", videoMessage: "Vídeo", audioMessage: "Áudio" };
+
+export function viewOnceText(what = "Mídia"): Extracted {
+  return { text: `[${what} de visualização única] Abra no celular para ver.`, kind: VIEW_ONCE_KIND };
+}
+
 /** Converte a mensagem em texto exibível. Devolve null para o que não deve aparecer. */
 export function extractText(content: Content): Extracted | null {
   if (!content) return null;
   const type = Object.keys(content).find((k) => !IGNORED.has(k) && content[k] != null);
   if (!type) return null;
   const m = content[type];
+  if (m?.viewOnce === true && VIEW_ONCE_LABEL[type]) return viewOnceText(VIEW_ONCE_LABEL[type]);
   switch (type) {
     case "conversation":
       return typeof m === "string" && m.trim() ? { text: m, kind: "text" } : null;
