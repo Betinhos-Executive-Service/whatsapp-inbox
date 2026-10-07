@@ -70,6 +70,7 @@ import { WaInline, WaLive, WaText } from "./wa-format.tsx";
 import { toggleWa } from "./wa-text.ts";
 import { desktop } from "./desktop.ts";
 import { BADGE_FONT, badgeImage } from "./badge.ts";
+import "./ds/styles.css";
 import "./app.css";
 
 declare const __APP_VERSION__: string;

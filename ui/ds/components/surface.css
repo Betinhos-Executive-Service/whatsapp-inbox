@@ -1,0 +1,10 @@
+/* Surface: o card base. Até três níveis: canvas, surface, bloco suave. */
+.bt-surface { padding: var(--bt-space-4); border: var(--bt-border-width-default) solid var(--bt-color-border); border-radius: var(--bt-radius-lg); background-color: var(--bt-color-surface); box-shadow: var(--bt-shadow-panel); font-family: var(--bt-font-family-sans); color: var(--bt-color-text-primary); }
+.bt-surface--compact { padding: var(--bt-space-2-5) var(--bt-space-3); }
+.bt-surface--flush { padding: 0; overflow: hidden; }
+.bt-surface--flush > .bt-surface__head { padding: var(--bt-space-3-5) var(--bt-space-4) 0; }
+.bt-surface__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--bt-space-3); margin-bottom: var(--bt-space-3-5); }
+.bt-surface__heading { display: grid; gap: var(--bt-space-0-5); min-width: 0; }
+.bt-surface__eyebrow { font-size: var(--bt-font-size-11); font-weight: var(--bt-font-weight-extrabold); letter-spacing: 0.8px; text-transform: uppercase; color: var(--bt-color-text-secondary); }
+.bt-surface__title { margin: 0; font-size: var(--bt-font-size-17); font-weight: var(--bt-font-weight-extrabold); line-height: 1.29; color: var(--bt-color-brand); }
+.bt-surface__action { flex: 0 0 auto; }

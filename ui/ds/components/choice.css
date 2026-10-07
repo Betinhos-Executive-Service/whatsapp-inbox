@@ -1,0 +1,38 @@
+/* Checkbox, Radio e Switch: o input nativo fica invisível mas focável; o controle desenhado segue o estado. */
+.bt-choice { position: relative; display: inline-flex; align-items: flex-start; gap: var(--bt-space-2-5); min-height: var(--bt-space-6); font-family: var(--bt-font-family-sans); font-size: var(--bt-font-size-13); color: var(--bt-color-text-primary); cursor: pointer; }
+.bt-choice.is-disabled { opacity: var(--bt-opacity-disabled); cursor: not-allowed; }
+.bt-choice__input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; }
+.bt-choice__control { flex: 0 0 auto; display: grid; place-items: center; width: 18px; height: 18px; margin-top: 3px; border: var(--bt-border-width-emphasis) solid var(--bt-color-text-secondary); border-radius: var(--bt-radius-xs); background-color: var(--bt-color-surface); color: var(--bt-color-surface); transition: background-color var(--bt-duration-fast) ease, border-color var(--bt-duration-fast) ease; }
+.bt-choice__control > svg { width: 12px; height: 12px; opacity: 0; }
+.bt-choice__input:checked + .bt-choice__control { border-color: var(--bt-color-action); background-color: var(--bt-color-action); }
+.bt-choice__input:checked + .bt-choice__control > svg { opacity: 1; }
+.bt-choice__input:focus-visible + .bt-choice__control { box-shadow: 0 0 0 2px var(--bt-color-surface), 0 0 0 4px var(--bt-focus-border); }
+.bt-choice__text { display: grid; gap: var(--bt-space-0-5); min-width: 0; padding-top: 2px; }
+.bt-choice__label { font-weight: var(--bt-font-weight-semibold); line-height: 1.54; }
+.bt-choice__description { font-size: var(--bt-font-size-12); color: var(--bt-color-text-secondary); }
+
+.bt-choice--radio .bt-choice__control { border-radius: var(--bt-radius-full); }
+.bt-choice--radio .bt-choice__input:checked + .bt-choice__control { background-color: var(--bt-color-surface); box-shadow: inset 0 0 0 4px var(--bt-color-action); }
+.bt-choice--radio .bt-choice__input:checked:focus-visible + .bt-choice__control { box-shadow: inset 0 0 0 4px var(--bt-color-action), 0 0 0 2px var(--bt-color-surface), 0 0 0 4px var(--bt-focus-border); }
+
+.bt-choice--switch .bt-choice__control { position: relative; width: 36px; height: 20px; margin-top: 2px; border: 0; border-radius: var(--bt-radius-full); background-color: var(--bt-color-text-secondary); }
+.bt-choice--switch .bt-choice__control::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: var(--bt-radius-full); background-color: var(--bt-color-surface); transition: transform var(--bt-duration-fast) var(--bt-ease-out); }
+.bt-choice--switch .bt-choice__input:checked + .bt-choice__control { background-color: var(--bt-color-success); }
+.bt-choice--switch .bt-choice__input:checked + .bt-choice__control::after { transform: translateX(16px); }
+
+.bt-choice-group { margin: 0; padding: 0; border: 0; min-width: 0; font-family: var(--bt-font-family-sans); }
+.bt-choice-group__legend { padding: 0; margin-bottom: var(--bt-space-2); font-size: var(--bt-font-size-12); font-weight: var(--bt-font-weight-extrabold); color: var(--bt-color-text-secondary); }
+.bt-choice-group__items { display: grid; gap: var(--bt-space-2); }
+.bt-choice-group__items--inline { display: flex; flex-wrap: wrap; gap: var(--bt-space-2) var(--bt-space-5); }
+.bt-choice-group__hint, .bt-choice-group__error { margin: var(--bt-space-1-5) 0 0; font-size: var(--bt-font-size-12); }
+.bt-choice-group__hint { color: var(--bt-color-text-secondary); }
+.bt-choice-group__error { font-weight: var(--bt-font-weight-bold); color: var(--bt-color-danger); }
+
+@media (pointer: coarse) {
+  .bt-choice { min-height: var(--bt-control-height-touch); align-items: center; }
+  .bt-choice__control { margin-top: 0; }
+  .bt-choice__text { padding-top: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bt-choice__control, .bt-choice--switch .bt-choice__control::after { transition: none; }
+}
