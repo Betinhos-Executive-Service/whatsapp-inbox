@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Message } from "../server/db.ts";
-import { DeepSeekAI } from "../server/deepseek.ts";
+import { DeepSeekAI, parseDeepSeekOptions } from "../server/deepseek.ts";
 
 const msg = (fromMe: boolean, text: string, at: number): Message => ({ chatJid: "x", id: String(at), fromMe, at, text, kind: "text", media: null });
 const conversa = [msg(false, "Bom dia! Preciso de carro amanhã às 7h para Guarulhos. Qual o valor?", 1_760_000_000_000)];
@@ -74,4 +74,26 @@ test("DeepSeek: usa o modelo escolhido no app", async () => {
   model = "deepseek-v4-pro";
   await ai.draft("k", "Ana", conversa, "");
   assert.equal(sent, "deepseek-v4-pro");
+});
+
+test("DeepSeek: thinking, janela e limites por tarefa vêm das opções do app", async () => {
+  let body: Record<string, any> = {};
+  const spy = (async (_url: string, init: RequestInit) => {
+    body = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: "Olá" } }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+  let options = parseDeepSeekOptions(null);
+  const ai = new DeepSeekAI(spy, () => "deepseek-flash", () => options);
+  await ai.draft("k", "Ana", conversa, "");
+  assert.deepEqual(body.thinking, { type: "disabled" });
+  assert.equal(body.max_tokens, 400);
+  assert.equal(body.temperature, 0.5);
+  options = parseDeepSeekOptions(JSON.stringify({ thinking: "high", contextMessages: 2, draft: { maxTokens: 900, temperature: 9 } }));
+  assert.equal(options.contextMessages, 120); // abaixo do mínimo: volta ao padrão
+  assert.equal(options.draft.temperature, 0.5);
+  options = { ...options, contextMessages: 10, draft: { maxTokens: 900, temperature: 1 } };
+  await ai.draft("k", "Ana", conversa, "");
+  assert.deepEqual(body.thinking, { type: "enabled", reasoning_effort: "high" });
+  assert.equal(body.max_tokens, 900 + 16000);
+  assert.equal(body.temperature, undefined);
 });

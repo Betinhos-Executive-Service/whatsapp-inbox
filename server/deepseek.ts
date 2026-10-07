@@ -1,6 +1,6 @@
 // IA na nuvem (DeepSeek): rascunho e resumo bem melhores e em segundos. O texto das últimas
 // mensagens da conversa vai para a API da DeepSeek; nada de identificador do WhatsApp.
-// Modelo escolhido em Configurações › IA, sempre em modo rápido (sem thinking) e com janela de conversa maior.
+// Modelo, thinking, janela de conversa e limites por tarefa vêm de Configurações › IA (DeepSeekOptions).
 import { z } from "zod";
 import type { Label, LabelExample, Message } from "./db.ts";
 import type { TokenUsage } from "./pricing.ts";
@@ -16,29 +16,69 @@ export type DeepSeekModel = keyof typeof DEEPSEEK_MODELS;
 export const isDeepSeekModel = (v: unknown): v is DeepSeekModel => typeof v === "string" && v in DEEPSEEK_MODELS;
 /** Padrão quando nada foi escolhido no app: DEEPSEEK_MODEL do .env.local, se for um modelo conhecido; senão o V4 Pro. */
 export const DEFAULT_DEEPSEEK_MODEL: DeepSeekModel = isDeepSeekModel(process.env.DEEPSEEK_MODEL) ? process.env.DEEPSEEK_MODEL : "deepseek-v4-pro";
-/** Quantas mensagens recentes da conversa vão para a DeepSeek (o contexto do modelo é de 1M tokens). */
-export const DEEPSEEK_CONTEXT_MESSAGES = 120;
-/** Limite de caracteres por mensagem enviada à DeepSeek. */
-export const DEEPSEEK_MESSAGE_CHARS = 1500;
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
-const TIMEOUT_MS = 45_000;
 
 type Fetch = typeof fetch;
 
-const CLOUD_WINDOW = { messages: DEEPSEEK_CONTEXT_MESSAGES, chars: DEEPSEEK_MESSAGE_CHARS } as const;
+/** Esforço de raciocínio ("thinking"). "off" = modo rápido, resposta direta. */
+export const THINKING_LEVELS = ["off", "low", "high", "max"] as const;
+export type Thinking = (typeof THINKING_LEVELS)[number];
+export type DeepSeekTask = "draft" | "summary" | "classify";
+const taskSchema = (maxTokens: number, temperature: number) =>
+  z.object({
+    maxTokens: z.number().int().min(50).max(8000).catch(maxTokens),
+    temperature: z.number().min(0).max(2).catch(temperature),
+  }).catch({ maxTokens, temperature });
+
+/** Tudo que dá para ajustar na DeepSeek pelo app. Valor inválido ou ausente volta ao padrão. */
+export const deepseekOptionsSchema = z.object({
+  thinking: z.enum(THINKING_LEVELS).catch("off"),
+  /** Quantas mensagens recentes da conversa vão para a DeepSeek (o contexto do modelo é de 1M tokens). */
+  contextMessages: z.number().int().min(10).max(1000).catch(120),
+  /** Limite de caracteres por mensagem enviada. */
+  messageChars: z.number().int().min(100).max(10000).catch(1500),
+  draft: taskSchema(400, 0.5),
+  summary: taskSchema(400, 0.2),
+  classify: taskSchema(300, 0.1),
+});
+export type DeepSeekOptions = z.infer<typeof deepseekOptionsSchema>;
+export const DEFAULT_DEEPSEEK_OPTIONS: DeepSeekOptions = deepseekOptionsSchema.parse({});
+
+export function parseDeepSeekOptions(raw: string | null | undefined): DeepSeekOptions {
+  try {
+    return deepseekOptionsSchema.parse(raw ? JSON.parse(raw) : {});
+  } catch {
+    return DEFAULT_DEEPSEEK_OPTIONS;
+  }
+}
+
+/** Com thinking, o raciocínio também gasta tokens de saída: folga para ele não cortar a resposta. */
+const THINKING_BUDGET: Record<Thinking, number> = { off: 0, low: 4000, high: 16000, max: 32000 };
 
 export class DeepSeekAI {
   private readonly fetchImpl: Fetch;
   private readonly model: () => DeepSeekModel;
+  private readonly options: () => DeepSeekOptions;
 
-  constructor(fetchImpl: Fetch = fetch, model: () => DeepSeekModel = () => DEFAULT_DEEPSEEK_MODEL) {
+  constructor(
+    fetchImpl: Fetch = fetch,
+    model: () => DeepSeekModel = () => DEFAULT_DEEPSEEK_MODEL,
+    options: () => DeepSeekOptions = () => DEFAULT_DEEPSEEK_OPTIONS,
+  ) {
     this.fetchImpl = fetchImpl;
     this.model = model;
+    this.options = options;
   }
 
-  private async complete(
-    apiKey: string, { system, user }: Prompt, maxTokens: number, temperature: number, json = false,
-  ): Promise<{ text: string; usage: TokenUsage }> {
+  private get window() {
+    const o = this.options();
+    return { messages: o.contextMessages, chars: o.messageChars };
+  }
+
+  private async complete(apiKey: string, { system, user }: Prompt, task: DeepSeekTask, json = false): Promise<{ text: string; usage: TokenUsage }> {
+    const o = this.options();
+    const { maxTokens, temperature } = o[task];
+    const thinking = o.thinking;
     let res: Response;
     try {
       res = await this.fetchImpl(ENDPOINT, {
@@ -50,14 +90,14 @@ export class DeepSeekAI {
             { role: "system", content: system },
             { role: "user", content: user },
           ],
-          // Modo rápido: sem "thinking", resposta direta em poucos segundos mesmo no modelo pro.
-          thinking: { type: "disabled" },
-          max_tokens: maxTokens,
-          temperature,
+          // "off": modo rápido, resposta direta. Com thinking a temperatura não tem efeito na API.
+          thinking: thinking === "off" ? { type: "disabled" } : { type: "enabled", reasoning_effort: thinking },
+          max_tokens: maxTokens + THINKING_BUDGET[thinking],
+          ...(thinking === "off" ? { temperature } : {}),
           stream: false,
           ...(json ? { response_format: { type: "json_object" } } : {}),
         }),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(thinking === "off" ? 45_000 : thinking === "max" ? 300_000 : 150_000),
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.name === "TimeoutError";
@@ -88,12 +128,13 @@ export class DeepSeekAI {
 
   /** Rascunho de resposta para a última mensagem do contato. Nunca envia sozinho. */
   async draft(apiKey: string, contactName: string, messages: Message[], instructions: string): Promise<{ text: string; usage: TokenUsage }> {
-    const { text, usage } = await this.complete(apiKey, draftPrompt(contactName, messages, instructions, true, CLOUD_WINDOW), 400, 0.5);
-    return { text: guardDraft(unquote(text), plainTranscript(contactName, messages, CLOUD_WINDOW)), usage };
+    const window = this.window;
+    const { text, usage } = await this.complete(apiKey, draftPrompt(contactName, messages, instructions, true, window), "draft");
+    return { text: guardDraft(unquote(text), plainTranscript(contactName, messages, window)), usage };
   }
 
   async summarize(apiKey: string, contactName: string, messages: Message[]): Promise<{ summary: Summary; usage: TokenUsage }> {
-    const { text, usage } = await this.complete(apiKey, summaryPrompt(contactName, messages, true, CLOUD_WINDOW), 400, 0.2);
+    const { text, usage } = await this.complete(apiKey, summaryPrompt(contactName, messages, true, this.window), "summary");
     return { summary: parseSummary(text), usage };
   }
 
@@ -103,12 +144,15 @@ export class DeepSeekAI {
   ): Promise<{ result: Classification; usage: TokenUsage }> {
     if (labels.length < 2) throw new Error("Cadastre pelo menos duas etiquetas para classificar.");
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto para classificar.");
-    const { text, usage } = await this.complete(apiKey, classifyPrompt(contactName, messages, labels, examples), 300, 0.1, true);
+    const { text, usage } = await this.complete(apiKey, classifyPrompt(contactName, messages, labels, examples, this.window), "classify", true);
     return { result: parseClassification(text, labels), usage };
   }
 }
 
-export function classifyPrompt(contactName: string, messages: Message[], labels: Label[], examples: LabelExample[] = []): Prompt {
+export function classifyPrompt(
+  contactName: string, messages: Message[], labels: Label[], examples: LabelExample[] = [],
+  window = { messages: DEFAULT_DEEPSEEK_OPTIONS.contextMessages, chars: DEFAULT_DEEPSEEK_OPTIONS.messageChars },
+): Prompt {
   const etiquetas = labels.map((l) => `- ${l.name}: ${l.description || l.name}`).join("\n");
   const prioridades = PRIORITIES.map((p) => `- ${p}: ${PRIORITY_CRITERIA[p]}`).join("\n");
   return {
@@ -122,7 +166,7 @@ ${prioridades}
 
 Formato da resposta:
 {"etiqueta": "<nome exato>", "confianca": <0 a 1>, "responder": <0 a 1: probabilidade de a última mensagem do contato esperar uma resposta minha ainda não dada>, "urgente": <0 a 1: probabilidade de urgência concreta e atual>, "prioridade": "alta" | "media" | "baixa", "motivo": "<uma frase curta, em português, dizendo por que esta prioridade>"}`,
-    user: buildState(contactName, messages, new Date(), examples, CLOUD_WINDOW),
+    user: buildState(contactName, messages, new Date(), examples, window),
   };
 }
 

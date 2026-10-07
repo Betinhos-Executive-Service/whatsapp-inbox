@@ -4,6 +4,7 @@ import { api, type AiStatus, type AppState, type Classifier, type Label, type Pr
 import { desktop, type ReleaseInfo, type UpdateState } from "./desktop.ts";
 import { publishAi, useAiStatus } from "./ai-state.ts";
 import { AiModels } from "./ai-models.tsx";
+import { DeepSeekOptionsPanel } from "./ai-options.tsx";
 import { AiUsagePanel } from "./ai-usage.tsx";
 
 type Props = {
@@ -143,9 +144,16 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
                 </button>
               ))}
             </div>
-            {dsModel && <span className="hint">{dsModel.hint} Vale para rascunho, resumo e classificação pela DeepSeek.</span>}
+            {dsModel && <span className="hint">{dsModel.hint}</span>}
           </div>
-          <p className="hint">Rascunho e resumo em segundos, em modo rápido. A DeepSeek recebe o nome do contato e o texto das últimas 120 mensagens da conversa.</p>
+          <p className="hint">
+            A DeepSeek recebe o nome do contato e o texto das últimas {ai.deepseek.options.contextMessages} mensagens da conversa. Modelo e opções valem para rascunho,
+            resumo e classificação pela DeepSeek e são salvos na hora.
+          </p>
+          <details className="ai-advanced" open={JSON.stringify(ai.deepseek.options) !== JSON.stringify(ai.deepseek.defaults) || undefined}>
+            <summary>Thinking, contexto e limites</summary>
+            <DeepSeekOptionsPanel ai={ai} onChange={setLocal} />
+          </details>
         </>
       ) : (
         <AiModels ai={ai} onChange={setLocal} />
