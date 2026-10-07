@@ -24,9 +24,9 @@ import {
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
-import { mediaUrl, api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
+import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
-import { AttachmentTray, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, type Attachment } from "./media.tsx";
+import { AttachmentTray, clock, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
@@ -613,7 +613,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     try {
       // A legenda vai no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
       for (const [i, a] of attachments.entries()) {
-        onChat(await api.sendMedia(chat.jid, await fileToOutgoing(a.file, i === 0 && text ? text : undefined)));
+        onChat(await api.sendMedia(chat.jid, a.voice ?? (await fileToOutgoing(a.file, i === 0 && text ? text : undefined))));
         removeAttachment(a.id);
       }
       if (text && !attachments.length) onChat(await api.send(chat.jid, text));
@@ -628,12 +628,20 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const sendVoice = async () => {
     setSending(true);
     stickToBottom.current = true;
+    let voice: OutgoingMedia | null = null;
     try {
-      const voice = await recorder.finish();
+      voice = await recorder.finish();
       if (!voice) return notify("error", "Gravação curta demais; segure por pelo menos meio segundo.");
       onChat(await api.sendMedia(chat.jid, voice));
     } catch (e) {
-      notify("error", `Áudio não enviado. ${(e as Error).message}`);
+      // Não perde a gravação: volta para a bandeja de anexos, pronta para reenviar.
+      if (voice) {
+        const ready = voice;
+        const bytes = Uint8Array.from(atob(voice.data), (c) => c.charCodeAt(0));
+        const name = `Mensagem de voz (${clock(voice.seconds ?? 0)}).ogg`;
+        setAttachments((list) => [...list, { ...toAttachment(new File([bytes], name, { type: "audio/ogg" })), voice: ready }]);
+      }
+      notify("error", `Áudio não enviado${voice ? "; ele ficou nos anexos para reenviar" : ""}. ${(e as Error).message}`);
     } finally {
       setSending(false);
     }
@@ -772,7 +780,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }}
         />
         {recorder.recording ? (
-          <RecordingBar elapsed={recorder.elapsed} onCancel={recorder.cancel} />
+          <RecordingBar recorder={recorder} />
         ) : (
           <>
         <button
