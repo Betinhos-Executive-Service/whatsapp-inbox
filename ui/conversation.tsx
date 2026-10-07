@@ -1,16 +1,24 @@
-import { LoaderCircle, Reply, Trash2, X } from "lucide-react";
+import { LoaderCircle, Reply, Trash2, Users, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { Message, Participant } from "./api.ts";
 import { Avatar } from "./avatar.tsx";
 import { normalize } from "./format.ts";
 
+import { MENTION_ALL, MENTION_ALL_LABEL } from "./mentions.ts";
+
 export { applyMentions, insertMention, mentionQuery, type MentionPick } from "./mentions.ts";
 
-export const mentionLabel = (p: Participant) => p.name.replace(/^\+/, "");
+export const mentionLabel = (p: Participant) => (p.jid === MENTION_ALL ? MENTION_ALL_LABEL : p.name.replace(/^\+/, ""));
 
-export function filterParticipants(list: Participant[], query: string): Participant[] {
+/** Item "@todos" no topo da lista de menções do grupo. */
+const ALL: Participant = { jid: MENTION_ALL, name: "Todos do grupo", phone: null, admin: false, me: false };
+
+/** Em grupo, "@todos" vem primeiro quando combina com o que foi digitado ("t", "tod", "all"). */
+export function filterParticipants(list: Participant[], query: string, isGroup = false): Participant[] {
   const q = normalize(query);
-  return list.filter((p) => !p.me && (!q || normalize(p.name).includes(q) || (p.phone ?? "").includes(q))).slice(0, 8);
+  const people = list.filter((p) => !p.me && (!q || normalize(p.name).includes(q) || (p.phone ?? "").includes(q)));
+  const all = isGroup && (MENTION_ALL_LABEL.startsWith(q) || "all".startsWith(q)) ? [ALL] : [];
+  return [...all, ...people].slice(0, 8);
 }
 
 export function MentionMenu({ items, active, onPick, onHover }: {
@@ -35,9 +43,19 @@ export function MentionMenu({ items, active, onPick, onHover }: {
           }}
           onMouseEnter={() => onHover(i)}
         >
-          <Avatar jid={p.jid} name={p.name} className="avatar--sm" />
+          {p.jid === MENTION_ALL ? (
+            <span className="avatar avatar--sm" aria-hidden>
+              <Users size={14} />
+            </span>
+          ) : (
+            <Avatar jid={p.jid} name={p.name} className="avatar--sm" />
+          )}
           <span className="quick-menu__shortcut">@{mentionLabel(p)}</span>
-          {p.phone && p.name !== `+${p.phone}` && <span className="quick-menu__text">+{p.phone}</span>}
+          {p.jid === MENTION_ALL ? (
+            <span className="quick-menu__text">Notifica todos do grupo</span>
+          ) : (
+            p.phone && p.name !== `+${p.phone}` && <span className="quick-menu__text">+{p.phone}</span>
+          )}
         </li>
       ))}
     </ul>
