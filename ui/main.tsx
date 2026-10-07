@@ -35,7 +35,7 @@ import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayo
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
-import { ChatItemMenu, ChatMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
+import { ChatItemMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import {
@@ -1431,9 +1431,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onClick={() => setSide((v) => (v === "notes" ? null : "notes"))}
           >
             <StickyNote size={16} aria-hidden />
-            {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
+            <span className="chat-pane__notes-label">Notas</span>
+            {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden className="chat-pane__notes-alarm" />}
           </button>
-          <ChatMenu chat={chat} onChange={(patch) => void change(patch)} />
           <AiQuickPicker onMore={onSetupAi} />
         </div>
       </header>
