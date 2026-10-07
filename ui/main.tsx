@@ -38,6 +38,7 @@ import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatP
 import { ChatMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
+import { Button, SearchBox, Select } from "./ds/index.ts";
 import {
   applyMentions,
   canRevoke,
@@ -113,9 +114,7 @@ function Toasts({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number) =>
         <div key={t.id} className={`toast toast--${t.kind}`} role={t.kind === "error" ? "alert" : "status"}>
           {t.kind === "error" ? <TriangleAlert size={18} aria-hidden /> : <CheckCircle2 size={18} aria-hidden />}
           <span>{t.text}</span>
-          <button className="icon-button icon-button--plain" aria-label="Fechar aviso" onClick={() => dismiss(t.id)}>
-            <X size={16} aria-hidden />
-          </button>
+          <Button variant="ghost" size="compact" aria-label="Fechar aviso" icon={<X size={16} aria-hidden />} onClick={() => dismiss(t.id)} />
         </div>
       ))}
     </div>
@@ -168,9 +167,9 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
         )}
         {connection.error && <p className="hint hint--warning">{connection.error}</p>}
         <p className="hint">O código muda a cada poucos segundos. Ele aparece aqui sozinho.</p>
-        <button className="button button--ghost" onClick={onSkip}>
+        <Button variant="ghost" onClick={onSkip}>
           Ver conversas salvas
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -369,34 +368,17 @@ function ChatList(props: {
       <header className="list-pane__header">
         <div className="split">
           <h1 className="heading-page">Conversas</h1>
-          <button className="icon-button" aria-label="Abrir configurações" title="Configurações" onClick={props.onSettings}>
-            <Settings size={18} aria-hidden />
-          </button>
+          <Button variant="ghost" aria-label="Abrir configurações" title="Configurações" icon={<Settings size={18} aria-hidden />} onClick={props.onSettings} />
         </div>
         <ConnectionPill connection={props.connection} online={props.online} />
-        <label className={`search${searching ? " search--active" : ""}`}>
-          <Search size={16} aria-hidden />
-          <span className="sr-only">Buscar conversa</span>
-          <input
-            ref={searchInput}
-            id="chat-search"
-            type="search"
-            placeholder="Nome, número ou mensagem (Ctrl+K)"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape" && searching) {
-                e.preventDefault();
-                setQuery("");
-              }
-            }}
-          />
-          {searching && (
-            <button type="button" className="search__clear" aria-label="Limpar busca" title="Limpar busca (Esc)" onClick={clearSearch}>
-              <X size={14} aria-hidden />
-            </button>
-          )}
-        </label>
+        <SearchBox
+          ref={searchInput}
+          id="chat-search"
+          aria-label="Buscar conversa"
+          placeholder="Nome, número ou mensagem (Ctrl+K)"
+          value={query}
+          onChange={setQuery}
+        />
         <div className="segmented" role="tablist" aria-label="Status da conversa">
           {TABS.map((t) => (
             <button
@@ -414,25 +396,31 @@ function ChatList(props: {
           ))}
         </div>
         <div className="list-pane__filters">
-        <label className="field field--inline">
-          <span className="sr-only">Filtrar por etiqueta</span>
-          <select value={label} onChange={(e) => setLabel(e.target.value)}>
-            <option value="">Todas as etiquetas</option>
-            <option value="__none">Sem etiqueta</option>
-            {props.labels.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field field--inline">
-          <span className="sr-only">Ordenar conversas</span>
-          <select value={order} onChange={(e) => chooseOrder(e.target.value as "recentes" | "prioridade")}>
-            <option value="recentes">Mais recentes</option>
-            <option value="prioridade">Responder primeiro</option>
-          </select>
-        </label>
+        <Select
+          aria-label="Filtrar por etiqueta"
+          size="compact"
+          clearable={false}
+          searchable={props.labels.length > 8}
+          value={label}
+          onChange={(v) => setLabel(v ?? "")}
+          options={[
+            { value: "", label: "Todas as etiquetas" },
+            { value: "__none", label: "Sem etiqueta" },
+            ...props.labels.map((l) => ({ value: l, label: l })),
+          ]}
+        />
+        <Select
+          aria-label="Ordenar conversas"
+          size="compact"
+          clearable={false}
+          searchable={false}
+          value={order}
+          onChange={(v) => v && chooseOrder(v as "recentes" | "prioridade")}
+          options={[
+            { value: "recentes", label: "Mais recentes" },
+            { value: "prioridade", label: "Responder primeiro" },
+          ]}
+        />
         </div>
         {searching && props.loaded && (
           <div className="search-status" role="status">
@@ -440,10 +428,9 @@ function ChatList(props: {
             <p className="search-status__text">
               <strong>{filtered.length}</strong> {filtered.length === 1 ? "resultado" : "resultados"} para <q>{query.trim()}</q>
             </p>
-            <button type="button" className="button button--ghost button--compact" onClick={clearSearch}>
-              <X size={14} aria-hidden />
+            <Button variant="ghost" size="compact" icon={<X size={14} aria-hidden />} onClick={clearSearch}>
               Limpar busca
-            </button>
+            </Button>
           </div>
         )}
       </header>
@@ -481,10 +468,9 @@ function ChatList(props: {
                   : "Troque a aba de status ou a etiqueta."}
             </p>
             {searching && (
-              <button type="button" className="button button--secondary" onClick={clearSearch}>
-                <X size={16} aria-hidden />
+              <Button variant="secondary" icon={<X size={16} aria-hidden />} onClick={clearSearch}>
                 Limpar busca
-              </button>
+              </Button>
             )}
           </div>
         ) : (
@@ -495,9 +481,9 @@ function ChatList(props: {
           </ul>
         )}
         {filtered.length > limit && (
-          <button className="button button--ghost button--full" onClick={() => setLimit((l) => l + PAGE)}>
+          <Button variant="ghost" fullWidth onClick={() => setLimit((l) => l + PAGE)}>
             Mostrar mais {Math.min(PAGE, filtered.length - limit)}
-          </button>
+          </Button>
         )}
         {messageQuery && <MessageHits hits={hits} chats={props.byJid} loading={hitsLoading} onOpen={props.onOpenAt} />}
       </div>
@@ -537,28 +523,27 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
           </button>
         ))}
       </div>
-      <label className="field field--inline field--label">
-        <span className="sr-only">Etiqueta</span>
-        <select value={chat.label ?? ""} onChange={(e) => onChange({ label: e.target.value || null })}>
-          <option value="">Sem etiqueta</option>
-          {labels.map((l) => (
-            <option key={l} value={l}>
-              {l}
-            </option>
-          ))}
-        </select>
-      </label>
+      <Select
+        aria-label="Etiqueta"
+        size="compact"
+        className="field--label"
+        placeholder="Sem etiqueta"
+        searchable={labels.length > 8}
+        value={chat.label ?? null}
+        onChange={(v) => onChange({ label: v || null })}
+        options={labels.map((l) => ({ value: l, label: l }))}
+      />
       <ExtraLabelsPicker chat={chat} labels={labels} onChange={onChange} />
-      <button
-        className="button button--secondary button--compact"
+      <Button
+        variant="secondary"
+        size="compact"
         onClick={onClassify}
         disabled={classifying || !jevReady}
         aria-busy={classifying || undefined}
         title={jevReady ? `Pedir ao ${classifierName} para classificar esta conversa` : "Configure a chave do Jev ou da DeepSeek em Configurações › IA"}
         aria-label={`Classificar com ${classifierName}`}
-      >
-        {classifying ? <LoaderCircle className="spin" size={16} aria-hidden /> : <Sparkles size={16} aria-hidden />}
-      </button>
+        icon={classifying ? <LoaderCircle className="spin" size={16} aria-hidden /> : <Sparkles size={16} aria-hidden />}
+      />
       {chat.ai && (() => {
         const ai = chat.ai;
         const detail = [
@@ -646,10 +631,9 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   return (
     <>
       {hasMore && (
-        <button className="button button--ghost button--compact messages__more" onClick={onMore} disabled={loadingMore} aria-busy={loadingMore || undefined}>
-          {loadingMore && <LoaderCircle className="spin" size={16} aria-hidden />}
+        <Button variant="ghost" size="compact" className="messages__more" onClick={onMore} loading={loadingMore}>
           Carregar mensagens anteriores
-        </button>
+        </Button>
       )}
       {messages.map((m, i) => {
         const prev = messages[i - 1];
@@ -1350,9 +1334,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       )}
       <header className="chat-pane__header">
         <div className="chat-pane__title">
-          <button className="icon-button chat-pane__back" aria-label="Voltar para a lista" onClick={onBack}>
-            <ArrowLeft size={18} aria-hidden />
-          </button>
+          <Button variant="ghost" className="chat-pane__back" aria-label="Voltar para a lista" icon={<ArrowLeft size={18} aria-hidden />} onClick={onBack} />
           <button
             type="button"
             className="chat-pane__who"
@@ -1393,16 +1375,17 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             classifierName={classifierName}
           />
           <span className="chat-pane__divider" aria-hidden />
-          <button
-            className={`button button--secondary button--compact chat-pane__notes-toggle${chat.note || chat.reminderAt !== null ? " has-content" : ""}`}
+          <Button
+            variant="secondary"
+            size="compact"
+            className={`chat-pane__notes-toggle${chat.note || chat.reminderAt !== null ? " has-content" : ""}`}
             aria-pressed={notesOpen}
             aria-label={chat.note || chat.reminderAt !== null ? "Notas e lembretes (com conteúdo)" : "Notas e lembretes"}
             title="Notas e lembretes"
             onClick={() => setSide((v) => (v === "notes" ? null : "notes"))}
-          >
-            <StickyNote size={16} aria-hidden />
-            {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
-          </button>
+            icon={<StickyNote size={16} aria-hidden />}
+            iconEnd={chat.reminderAt !== null ? <AlarmClock size={14} aria-hidden /> : undefined}
+          />
           <ChatMenu chat={chat} onChange={(patch) => void change(patch)} />
           <AiQuickPicker onMore={onSetupAi} />
         </div>
@@ -1509,38 +1492,32 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           />
         ) : (
           <>
-        <button
-          type="button"
-          className="icon-button"
+        <Button
+          variant="ghost"
           aria-label="Anexar arquivo"
           title="Anexar imagem, vídeo ou documento (ou arraste para a conversa, ou cole com Ctrl+V)"
           disabled={!connected || sending}
           onClick={() => fileInput.current?.click()}
-        >
-          <Paperclip size={18} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
+          icon={<Paperclip size={18} aria-hidden />}
+        />
+        <Button
+          variant="ghost"
           aria-label="Respostas rápidas"
           title={quickReplies.length ? "Respostas rápidas (ou digite / no começo)" : "Cadastre respostas rápidas em Configurações"}
           disabled={!connected || !quickReplies.length}
           aria-expanded={showQuick}
           onClick={() => setQuickOpen((v) => !v)}
-        >
-          <Zap size={18} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
+          icon={<Zap size={18} aria-hidden />}
+        />
+        <Button
+          variant="ghost"
           aria-label={aiReady ? `Sugerir resposta com a ${aiName(ai)}` : "Ativar a IA"}
           title={aiReady ? `Sugerir resposta (${aiName(ai)}, revise antes de enviar)` : "Ativar a IA para sugerir respostas"}
           disabled={drafting || !connected}
           aria-busy={drafting || undefined}
           onClick={() => (aiReady ? void suggest() : onSetupAi())}
-        >
-          {drafting ? <LoaderCircle className="spin" size={18} aria-hidden /> : <WandSparkles size={18} aria-hidden />}
-        </button>
+          icon={drafting ? <LoaderCircle className="spin" size={18} aria-hidden /> : <WandSparkles size={18} aria-hidden />}
+        />
         <div className="composer__field">
         <div className="composer__mirror" ref={mirror} aria-hidden>
           <WaLive text={draft} />
@@ -1643,20 +1620,18 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           </>
         )}
         {recorder.recording || draft.trim() || attachments.length || sending ? (
-          <button
-            className="button button--primary"
+          <Button
+            variant="primary"
             type={recorder.recording ? "button" : "submit"}
             onClick={recorder.recording ? () => void sendVoice() : undefined}
             disabled={!connected || sending}
-            aria-busy={sending || undefined}
+            loading={sending}
+            icon={<SendHorizontal size={18} aria-hidden />}
           >
-            {sending ? <LoaderCircle className="spin" size={18} aria-hidden /> : <SendHorizontal size={18} aria-hidden />}
             <span className="composer__label">Enviar</span>
-          </button>
+          </Button>
         ) : (
-          <button type="button" className="button button--primary composer__mic" disabled={!connected} aria-label="Gravar mensagem de voz" title="Gravar mensagem de voz" onClick={() => void recorder.start()}>
-            <Mic size={18} aria-hidden />
-          </button>
+          <Button variant="primary" className="composer__mic" disabled={!connected} aria-label="Gravar mensagem de voz" title="Gravar mensagem de voz" icon={<Mic size={18} aria-hidden />} onClick={() => void recorder.start()} />
         )}
       </form>
       {chat.aiUsage.calls > 0 && (
