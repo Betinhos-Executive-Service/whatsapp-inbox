@@ -458,8 +458,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     markRead,
     syncArchive: (jid, archived) => {
-      const last = store.lastMessageKey(jid);
-      if (last) wa?.setArchived(last, archived).catch((e: Error) => console.warn(`Arquivar no celular falhou: ${e.message}`));
+      wa?.setArchived(jid, archived).catch((e: Error) => console.warn(`Arquivar no celular falhou: ${e.message}`));
     },
     deleteMessage: async (jid, id, mode) => {
       const ref = store.messageKey(jid, id);

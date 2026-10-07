@@ -62,6 +62,8 @@ export class WhatsApp extends EventEmitter<{
 }> {
   state: ConnectionState = { status: "iniciando", qr: null, me: null, error: null };
   private sock: WASocket | null = null;
+  /** Arquivar/desarquivar feito aqui que ainda não chegou ao celular (ex.: faltava a chave). */
+  private pendingArchive = new Map<string, boolean>();
   private retries = 0;
   private stopped = false;
   private readonly store: Store;
@@ -280,6 +282,8 @@ export class WhatsApp extends EventEmitter<{
       if (update.me?.id) this.checkAccount(jidNormalizedUser(update.me.id));
       if (update.accountSettings) this.store.keepArchived = !update.accountSettings.unarchiveChats;
       void saveCreds();
+      // Chave nova do celular (pedida em syncArchives): agora dá para enviar e receber o arquivamento.
+      if (update.myAppStateKeyId && this.state.status === "conectado") setTimeout(() => void this.syncArchives(sock), 3000);
     });
 
     sock.ev.on("connection.update", async (u) => {
@@ -293,6 +297,7 @@ export class WhatsApp extends EventEmitter<{
         this.setState({ status: "conectado", qr: null, error: null, me });
         // Depois do histórico inicial; numa reconexão comum é só uma consulta à configuração.
         setTimeout(() => void this.backfillContacts(sock), 20000);
+        setTimeout(() => void this.syncArchives(sock), 25000);
         void this.loadGroups(sock);
       }
       if (u.connection === "close") {
@@ -576,11 +581,69 @@ export class WhatsApp extends EventEmitter<{
     );
   }
 
-  /** Arquiva ou desarquiva também no celular; o WhatsApp pede a última mensagem da conversa. */
-  async setArchived(last: MessageKeyRef, archived: boolean): Promise<void> {
-    if (!this.sock) return;
-    const key = { remoteJid: last.rawJid, id: last.id, fromMe: last.fromMe, ...(last.participant ? { participant: last.participant } : {}) };
-    await this.sock.chatModify({ archive: archived, lastMessages: [{ key, messageTimestamp: Math.floor(last.at / 1000) }] }, last.rawJid);
+  /** Arquiva ou desarquiva também no celular. Sem conexão ou sem a chave, fica pendente. */
+  async setArchived(jid: string, archived: boolean): Promise<void> {
+    this.pendingArchive.set(jid, archived);
+    if (this.sock) await this.pushArchives(this.sock);
+  }
+
+  /** O WhatsApp pede a última mensagem da conversa junto com o arquivar. */
+  private async pushArchives(sock: WASocket): Promise<void> {
+    for (const [jid, archived] of [...this.pendingArchive]) {
+      const last = this.store.lastMessageKey(jid);
+      if (last) {
+        const key = { remoteJid: last.rawJid, id: last.id, fromMe: last.fromMe, ...(last.participant ? { participant: last.participant } : {}) };
+        try {
+          await sock.chatModify({ archive: archived, lastMessages: [{ key, messageTimestamp: Math.floor(last.at / 1000) }] }, last.rawJid);
+        } catch (error) {
+          if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(sock);
+          throw error;
+        }
+      }
+      if (this.pendingArchive.get(jid) === archived) this.pendingArchive.delete(jid);
+    }
+  }
+
+  /**
+   * Arquivar e fixar viajam no "estado do app", cifrado com uma chave que o celular troca de tempos
+   * em tempos. Sem a chave atual, nada vai nem vem: pede ao celular. Com ela, envia o que ficou
+   * pendente e relê o arquivamento inteiro do celular (o histórico inicial não traz isso direito).
+   */
+  private async syncArchives(sock: WASocket): Promise<void> {
+    if (this.sock !== sock) return;
+    try {
+      if (!(await this.hasAppStateKey(sock))) return void (await this.requestAppStateKey(sock));
+      await this.pushArchives(sock);
+      await sock.authState.keys.set({ "app-state-sync-version": { regular_low: null } });
+      await sock.resyncAppState(["regular_low"], false);
+    } catch (error) {
+      console.warn(`Sincronizar arquivadas com o celular falhou: ${(error as Error).message}`);
+    }
+  }
+
+  private async hasAppStateKey(sock: WASocket): Promise<boolean> {
+    const id = sock.authState.creds.myAppStateKeyId;
+    if (!id) return false;
+    const found = await sock.authState.keys.get("app-state-sync-key", [id]);
+    return !!found[id];
+  }
+
+  /** Pede ao celular a chave do estado do app; ela volta numa mensagem que o Baileys guarda sozinho. */
+  private async requestAppStateKey(sock: WASocket): Promise<void> {
+    const id = sock.authState.creds.myAppStateKeyId;
+    const me = sock.authState.creds.me?.id;
+    if (!id || !me) return;
+    console.warn(`Chave de sincronização ${id} ausente; pedindo ao celular.`);
+    await sock.relayMessage(
+      jidNormalizedUser(me),
+      {
+        protocolMessage: {
+          type: proto.Message.ProtocolMessage.Type.APP_STATE_SYNC_KEY_REQUEST,
+          appStateSyncKeyRequest: { keyIds: [{ keyId: Buffer.from(id, "base64") }] },
+        },
+      },
+      { additionalAttributes: { category: "peer", push_priority: "high_force" }, additionalNodes: [{ tag: "meta", attrs: { appdata: "default" } }] },
+    );
   }
 
   /** Desconecta este aparelho do WhatsApp e volta a mostrar o QR. */
