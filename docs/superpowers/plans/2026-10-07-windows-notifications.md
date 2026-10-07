@@ -440,7 +440,322 @@ Run: `pnpm typecheck`, `pnpm test`, `pnpm build` → verdes. Em `pnpm dev` no na
 
 ---
 
-### Tarefa 5: validação no app empacotado
+### Tarefa 5: foto de perfil no servidor (busca + cache de 24 h)
+
+**Arquivos:**
+- Criar: `server/avatars.ts`
+- Modificar: `server/whatsapp.ts` (novo método perto de `send`, ~linha 286), `server/app.ts` (tipo `RunningApp`, criação do cache antes de `createHandler`, objeto retornado)
+- Teste: `tests/avatars.test.ts`; acrescentar caso em `tests/close.test.ts`
+
+**Interfaces:**
+- Produz:
+  - `WhatsApp.profilePhotoUrl(jid: string): Promise<string | null>`. Sem conexão, lança. Sem foto ou com privacidade, devolve `null`.
+  - `avatarCache(dir: string, source: (jid: string) => Promise<string | null>, fetcher?: typeof fetch, now?: () => number): (jid: string) => Promise<string | null>`
+  - `RunningApp.avatar: (jid: string) => Promise<string | null>`, que devolve o caminho de um `.jpg` local ou `null`.
+
+- [ ] **Passo 1: teste que falha**: `tests/avatars.test.ts`
+
+```ts
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { avatarCache } from "../server/avatars.ts";
+
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+const okFetch = (async () => new Response(JPEG, { status: 200 })) as unknown as typeof fetch;
+
+test("avatar: baixa, guarda e reaproveita por 24 h", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wi-av-"));
+  let calls = 0;
+  const get = avatarCache(dir, async () => (calls++, "https://pps.whatsapp.net/x.jpg"), okFetch);
+  const first = await get("5511999999999@s.whatsapp.net");
+  assert.ok(first && first.endsWith(".jpg"));
+  assert.deepEqual(readFileSync(first), JPEG);
+  assert.equal(await get("5511999999999@s.whatsapp.net"), first);
+  assert.equal(calls, 1);
+});
+
+test("avatar: sem foto fica em cache como ausente; expira depois de 24 h", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wi-av-"));
+  let calls = 0;
+  let now = Date.now();
+  const get = avatarCache(dir, async () => (calls++, null), okFetch, () => now);
+  assert.equal(await get("g@g.us"), null);
+  assert.equal(await get("g@g.us"), null);
+  assert.equal(calls, 1);
+  now += 25 * 60 * 60 * 1000;
+  assert.equal(await get("g@g.us"), null);
+  assert.equal(calls, 2);
+});
+
+test("avatar: falha da fonte ou do download devolve null e não grava ausência", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wi-av-"));
+  let calls = 0;
+  const offline = avatarCache(dir, async () => {
+    calls++;
+    throw new Error("O WhatsApp não está conectado.");
+  }, okFetch);
+  assert.equal(await offline("a@s.whatsapp.net"), null);
+  assert.equal(await offline("a@s.whatsapp.net"), null);
+  assert.equal(calls, 2);
+  const broken = avatarCache(dir, async () => "https://x/y.jpg", (async () => new Response("", { status: 404 })) as unknown as typeof fetch);
+  assert.equal(await broken("b@s.whatsapp.net"), null);
+});
+
+test("avatar: chamadas simultâneas da mesma conversa fazem uma busca só", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wi-av-"));
+  let calls = 0;
+  const get = avatarCache(dir, async () => (calls++, "https://x/y.jpg"), okFetch);
+  const [a, b] = await Promise.all([get("c@s.whatsapp.net"), get("c@s.whatsapp.net")]);
+  assert.equal(a, b);
+  assert.equal(calls, 1);
+  assert.ok(a && existsSync(a));
+});
+```
+
+Em `tests/close.test.ts`, um teste novo:
+
+```ts
+test("avatar sem WhatsApp devolve null sem travar", async () => {
+  const app = await startApp({ port: 0, dataDir: mkdtempSync(join(tmpdir(), "wi-av-app-")), distDir: "dist", waDisabled: true });
+  try {
+    assert.equal(await app.avatar("5511999999999@s.whatsapp.net"), null);
+  } finally {
+    await app.close();
+  }
+});
+```
+
+- [ ] **Passo 2: rodar e ver falhar**: `node --test tests/avatars.test.ts tests/close.test.ts`. Deve falhar: o módulo não existe e `app.avatar` não é função.
+
+- [ ] **Passo 3: implementação**
+
+`server/avatars.ts`:
+
+```ts
+// Fotos de perfil para a notificação do Windows: um arquivo por conversa, válido por 24 h.
+// "Sem foto" também fica guardado (arquivo .none) para não perguntar ao WhatsApp a cada mensagem.
+import { createHash } from "node:crypto";
+import { mkdir, stat, unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+const TTL = 24 * 60 * 60 * 1000;
+
+export function avatarCache(
+  dir: string,
+  source: (jid: string) => Promise<string | null>,
+  fetcher: typeof fetch = fetch,
+  now: () => number = Date.now,
+): (jid: string) => Promise<string | null> {
+  const pending = new Map<string, Promise<string | null>>();
+  const fresh = async (path: string) => {
+    try {
+      return now() - (await stat(path)).mtimeMs < TTL;
+    } catch {
+      return false;
+    }
+  };
+
+  async function load(jid: string): Promise<string | null> {
+    const key = createHash("sha1").update(jid).digest("hex").slice(0, 16);
+    const photo = join(dir, `${key}.jpg`);
+    const none = join(dir, `${key}.none`);
+    if (await fresh(photo)) return photo;
+    if (await fresh(none)) return null;
+    try {
+      // Fonte que lança (ex.: WhatsApp desconectado) não vira "sem foto": tenta de novo depois.
+      const url = await source(jid);
+      await mkdir(dir, { recursive: true });
+      if (!url) {
+        await writeFile(none, "");
+        return null;
+      }
+      const res = await fetcher(url, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return null;
+      await writeFile(photo, Buffer.from(await res.arrayBuffer()));
+      await unlink(none).catch(() => undefined);
+      return photo;
+    } catch {
+      return null;
+    }
+  }
+
+  return (jid) => {
+    let p = pending.get(jid);
+    if (!p) {
+      p = load(jid).finally(() => pending.delete(jid));
+      pending.set(jid, p);
+    }
+    return p;
+  };
+}
+```
+
+Nota para o executor: o teste de expiração injeta `now` 25 h no futuro. O `.none` gravado tem `mtimeMs` real, então `now() - mtimeMs` passa de 24 h e a fonte é chamada de novo. Isso está correto.
+
+`server/whatsapp.ts`, logo antes de `async send(`:
+
+```ts
+  /** Miniatura da foto de perfil. Sem conexão lança; sem foto ou com privacidade devolve null. */
+  async profilePhotoUrl(jid: string): Promise<string | null> {
+    if (!this.sock || this.state.status !== "conectado") throw new Error("O WhatsApp não está conectado.");
+    try {
+      return (await this.sock.profilePictureUrl(jid, "preview")) ?? null;
+    } catch {
+      return null; // o WhatsApp responde erro quando não há foto visível para você
+    }
+  }
+```
+
+`server/app.ts`:
+- `import { avatarCache } from "./avatars.ts";`
+- No tipo `RunningApp`, depois de `markRead`: `avatar: (jid: string) => Promise<string | null>;`
+- Logo depois das funções `send`/`markRead` extraídas na Tarefa 2:
+
+```ts
+  const avatar = avatarCache(join(options.dataDir, "avatars"), (jid) => connected().profilePhotoUrl(jid));
+```
+
+- No objeto retornado, depois de `markRead,`: `avatar,`
+
+- [ ] **Passo 4: rodar e ver passar**: `node --test tests/avatars.test.ts tests/close.test.ts`, depois `pnpm typecheck` e `pnpm test`.
+
+- [ ] **Passo 5: commit**: `feat(servidor): foto de perfil com cache de 24 h para as notificações`. No corpo, explicar a busca em miniatura, o cache de ausência, que uma falha de conexão não é cacheada e que buscas simultâneas da mesma conversa são deduplicadas.
+
+---
+
+### Tarefa 6: foto arredondada no toast (`desktop/`)
+
+**Arquivos:**
+- Criar: `desktop/avatar-mask.ts` (puro, testável) e `desktop/avatar.ts` (usa `nativeImage`)
+- Modificar: `desktop/main.ts` (`notify`, `remind`)
+- Teste: `tests/avatar-mask.test.ts`
+
+**Interfaces:**
+- Consome: `RunningApp.avatar(jid)` da Tarefa 5. Também `counter`, `byChat`, `clearChat` e `openChat`, já existentes em `desktop/main.ts` desde a Tarefa 3.
+- Produz: `circleMask(bgra: Buffer, size: number): Buffer` e `roundAvatar(photo: string, outDir: string): Promise<string | null>`
+
+- [ ] **Passo 1: teste que falha**: `tests/avatar-mask.test.ts`
+
+```ts
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { circleMask } from "../desktop/avatar-mask.ts";
+
+const SIZE = 96;
+const alpha = (buf: Buffer, x: number, y: number) => buf[(y * SIZE + x) * 4 + 3];
+
+test("máscara circular: cantos transparentes, miolo e bordas do círculo opacos, borda suavizada", () => {
+  const out = circleMask(Buffer.alloc(SIZE * SIZE * 4, 255), SIZE);
+  assert.equal(alpha(out, 0, 0), 0);
+  assert.equal(alpha(out, SIZE - 1, SIZE - 1), 0);
+  assert.equal(alpha(out, 13, 13), 0);
+  assert.equal(alpha(out, 48, 48), 255);
+  assert.equal(alpha(out, 0, 48), 255);
+  assert.equal(alpha(out, 48, 0), 255);
+  let partial = 0;
+  for (let i = 3; i < out.length; i += 4) if (out[i] > 0 && out[i] < 255) partial++;
+  assert.ok(partial > 0, "borda precisa de pixels semitransparentes");
+});
+
+test("máscara circular: pré-multiplica as cores junto com o alfa e não altera a entrada", () => {
+  const input = Buffer.alloc(SIZE * SIZE * 4, 200);
+  const out = circleMask(input, SIZE);
+  assert.equal(input[3], 200);
+  const i = 0;
+  assert.deepEqual([out[i], out[i + 1], out[i + 2], out[i + 3]], [0, 0, 0, 0]);
+});
+```
+
+- [ ] **Passo 2: rodar e ver falhar**: `node --test tests/avatar-mask.test.ts`
+
+- [ ] **Passo 3: implementação**
+
+`desktop/avatar-mask.ts`:
+
+```ts
+// Recorte circular da foto de perfil, direto nos bytes BGRA (sem canvas no processo principal).
+// O Windows não arredonda o ícone do toast sem toastXml; um PNG com fundo transparente resolve.
+
+/** Aplica um círculo com borda suavizada; as cores são multiplicadas junto (BGRA pré-multiplicado do Chromium). */
+export function circleMask(bgra: Buffer, size: number): Buffer {
+  const out = Buffer.from(bgra);
+  const r = size / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const coverage = Math.min(1, Math.max(0, r - Math.hypot(x + 0.5 - r, y + 0.5 - r) + 0.5));
+      if (coverage === 1) continue;
+      const i = (y * size + x) * 4;
+      for (let k = 0; k < 4; k++) out[i + k] = Math.round(out[i + k] * coverage);
+    }
+  }
+  return out;
+}
+```
+
+`desktop/avatar.ts`:
+
+```ts
+// Foto de perfil pronta para o toast: 96×96, recortada em círculo, PNG transparente.
+import { mkdir, stat, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { nativeImage } from "electron";
+import { circleMask } from "./avatar-mask.ts";
+
+const SIZE = 96;
+
+export async function roundAvatar(photo: string, outDir: string): Promise<string | null> {
+  const out = join(outDir, basename(photo).replace(/\.jpg$/, ".png"));
+  try {
+    // Reaproveita o recorte enquanto a foto de origem não mudar.
+    if ((await stat(out)).mtimeMs >= (await stat(photo)).mtimeMs) return out;
+  } catch {
+    // ainda não recortada
+  }
+  try {
+    const image = nativeImage.createFromPath(photo);
+    if (image.isEmpty()) return null;
+    const square = image.resize({ width: SIZE, height: SIZE, quality: "best" });
+    const round = nativeImage.createFromBitmap(circleMask(square.toBitmap(), SIZE), { width: SIZE, height: SIZE });
+    await mkdir(outDir, { recursive: true });
+    await writeFile(out, round.toPNG());
+    return out;
+  } catch {
+    return null;
+  }
+}
+```
+
+`desktop/main.ts`:
+- Imports: `import { roundAvatar } from "./avatar.ts";`
+- Helper, perto de `iconPath`:
+
+```ts
+// A foto não pode atrasar o aviso: sem ela em 1,5 s, vai o ícone do app.
+const AVATAR_WAIT = 1500;
+async function chatIcon(jid: string): Promise<string> {
+  if (!server) return iconPath();
+  const photo = server.avatar(jid).then((p) => (p ? roundAvatar(p, join(app.getPath("userData"), "avatars-round")) : null));
+  const late = new Promise<null>((resolve) => setTimeout(() => resolve(null), AVATAR_WAIT));
+  return (await Promise.race([photo, late]).catch(() => null)) ?? iconPath();
+}
+```
+
+- `notify`: preserve os guards, o `flashFrame(true)`, as opções do toast e os handlers de `click`/`action`/`reply`/`close` da Tarefa 3. Mude só isto:
+  1. `const count = counter.bump(chat.jid);` continua antes de qualquer `await`.
+  2. Depois, `void chatIcon(chat.jid).then((icon) => { ... })`. O bloco que fecha o toast anterior, cria o `Notification` e liga os handlers vai para dentro do `then`, com `icon` no lugar de `iconPath()`.
+  3. No começo do `then`, `if (counter.get(chat.jid) !== count) return;`. Uma mensagem mais nova, ou a conversa lida no meio da espera, descarta este toast. O título usa `count`.
+- `remind`: troque `icon: iconPath()` pela foto. Envolva a criação em `void chatIcon(chat.jid).then((icon) => { ... })`, sem checar contador. O lembrete continua avisando no silêncio e em foco.
+
+- [ ] **Passo 4: rodar e ver passar**: `node --test tests/avatar-mask.test.ts`, depois `pnpm typecheck` e `pnpm test`.
+
+- [ ] **Passo 5: commit**: `feat(notificações): foto de perfil em círculo no toast`. No corpo, explicar o recorte por máscara BGRA (o Windows não arredonda o ícone sem `toastXml`), a espera máxima de 1,5 s com o ícone do app como alternativa e o descarte de toast obsoleto pelo contador.
+
+---
+
+### Tarefa 7: validação no app empacotado
 
 **Arquivos:** nenhum (só verificação); se algo falhar, corrigir na tarefa de origem com novo commit.
 
@@ -455,3 +770,4 @@ Run: `pnpm typecheck`, `pnpm test`, `pnpm build` → verdes. Em `pnpm dev` no na
 - [ ] **Passo 9:** horário de silêncio ativo → nada de toast nem piscar; lembrete continua aparecendo.
 
 Se ações/resposta não dispararem no app instalado, registrar o comportamento (versão do Windows, AUMID no atalho) antes de qualquer correção.
+- [ ] **Passo 10:** mensagem de contato com foto mostra a foto em círculo no toast; contato sem foto (ou privacidade) mostra o ícone do app; grupo com foto mostra a foto do grupo.

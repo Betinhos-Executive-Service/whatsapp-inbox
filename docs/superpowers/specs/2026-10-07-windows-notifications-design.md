@@ -50,9 +50,16 @@ Funções puras, testáveis sem Electron:
 - Preload expõe `setUnread`; `main.ts` aplica `window.setOverlayIcon(nativeImage.createFromDataURL(dataUrl), "N não lidas")` (ou `null` com 0) e `tray.setToolTip("WhatsApp Inbox — N não lidas")`. Valida no main: inteiro ≥ 0 e `dataUrl` começando com `data:image/png;base64,`.
 - Mensagem nova com a janela sem foco → `window.flashFrame(true)`; para ao focar (`focus` → `flashFrame(false)`). Respeita `notifyEnabled` e horário de silêncio.
 
+### 6. Foto de perfil arredondada (adendo aprovado em 07/10/2026)
+
+- **Busca:** `WhatsApp.profilePhotoUrl(jid)` chama `sock.profilePictureUrl(jid, "preview")`; sem conexão ou sem foto (privacidade) → `null`.
+- **Cache:** `server/avatars.ts` grava a foto baixada em `<dataDir>/avatars/<hash do jid>.jpg` e a ausência em `<hash>.none`; ambos valem 24 h. `RunningApp.avatar(jid): Promise<string | null>` devolve o caminho do arquivo ou `null`. Falha de rede = `null`, sem lançar.
+- **Arredondar:** o Windows não recorta o `icon` sem `toastXml` (que quebraria `actions`/`hasReply`/`id`). Então o app recorta: `desktop/avatar.ts` redimensiona para 96×96 com `nativeImage`, aplica máscara circular com borda suavizada nos bytes BGRA (`toBitmap` → alfa → `createFromBitmap`) e grava um PNG transparente em `<userData>/avatars-round/`. O Windows exibe o PNG com transparência, então a foto aparece em círculo.
+- **Toast:** `notify` não espera mais que 1,5 s pela foto; sem foto a tempo usa o ícone do app. O contador sobe antes da espera; o toast usa a contagem atual ao ser criado. Lembretes também usam a foto.
+
 ## Fora do escopo
 
-Foto do contato no toast, `toastXml`, novas preferências na tela de Configurações, mudanças no servidor além de `onRead` e da exposição de `send`/`markRead`.
+`toastXml`, novas preferências na tela de Configurações, mudanças no servidor além de `onRead` e da exposição de `send`/`markRead`.
 
 ## Riscos
 
