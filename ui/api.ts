@@ -99,6 +99,7 @@ export type Prefs = {
   quietEnd: string | null;
   startWithWindows: boolean;
   startMinimized: boolean;
+  sendTyping: boolean;
 };
 export type AppState = {
   prefs: Prefs;
@@ -131,6 +132,12 @@ export const api = {
   send: (jid: string, text: string, quotedId?: string) => request<Chat>("POST", `${chatPath(jid)}/send`, { text, quotedId }),
   /** Emoji vazio tira a reação. */
   react: (jid: string, id: string, emoji: string) => request<Message>("POST", `${chatPath(jid)}/react`, { id, emoji }),
+  editMessage: (jid: string, id: string, text: string) => request<Message>("POST", `${chatPath(jid)}/edit`, { id, text }),
+  /** Apaga para todos. */
+  revokeMessage: (jid: string, id: string) => request<Message>("POST", `${chatPath(jid)}/revoke`, { id }),
+  forward: (jid: string, id: string, to: string) => request<Chat>("POST", `${chatPath(jid)}/forward`, { id, to }),
+  watch: (jid: string) => request<{ ok: true }>("POST", `${chatPath(jid)}/watch`, {}),
+  typing: (jid: string, state: "composing" | "paused") => request<{ ok: true }>("POST", `${chatPath(jid)}/typing`, { state }),
   sendMedia: (jid: string, file: OutgoingMedia) => request<Chat>("POST", `${chatPath(jid)}/send-media`, file),
   update: (jid: string, patch: { status?: Status; label?: string | null; note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
   reminders: (jid: string) => request<Reminder[]>("GET", `${chatPath(jid)}/reminders`),

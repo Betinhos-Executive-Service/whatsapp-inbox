@@ -506,6 +506,15 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 />
               </section>
               <section className="surface stack">
+                <h3 className="eyebrow">Privacidade</h3>
+                <Toggle
+                  checked={prefs.sendTyping}
+                  onChange={(v) => setPref("sendTyping", v)}
+                  label="Mostrar “digitando…” ao contato"
+                  hint="Desligado, o contato não vê quando você escreve por aqui. O “digitando…” dele aparece de qualquer jeito."
+                />
+              </section>
+              <section className="surface stack">
                 <h3 className="eyebrow">Atualização</h3>
                 <UpdatePanel />
               </section>

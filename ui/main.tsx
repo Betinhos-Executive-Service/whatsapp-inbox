@@ -12,8 +12,12 @@ import {
   Mic,
   Paperclip,
   MessageSquareText,
+  Forward,
+  MoreHorizontal,
+  Pencil,
   Reply,
   SmilePlus,
+  Trash2,
   Search,
   SendHorizontal,
   Settings,
@@ -26,7 +30,7 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
@@ -38,6 +42,7 @@ import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, l
 // Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
 import { UpdateDialog } from "./update.tsx";
+import { ForwardDialog } from "./forward.tsx";
 import { desktop } from "./desktop.ts";
 import "./app.css";
 
@@ -473,34 +478,44 @@ function ReactionList({ m, onReact }: { m: Message; onReact: (m: Message, emoji:
   );
 }
 
-/** Responder e reagir: aparecem ao passar o mouse ou com foco na mensagem. */
-function MessageActions({ m, onReply, onReact, disabled }: { m: Message; onReply: (m: Message) => void; onReact: (m: Message, emoji: string) => void; disabled: boolean }) {
-  const [open, setOpen] = useState(false);
+/** Prazos do WhatsApp (mesmos do servidor, server/text.ts). */
+const EDIT_WINDOW_MS = 15 * 60_000;
+const REVOKE_WINDOW_MS = 60 * 3600_000;
+
+type MessageHandlers = {
+  reply: (m: Message) => void;
+  react: (m: Message, emoji: string) => void;
+  forward: (m: Message) => void;
+  edit: (m: Message) => void;
+  revoke: (m: Message) => void;
+};
+
+/** Responder e reagir à vista; encaminhar, editar e apagar no menu "Mais". Aparecem ao passar o mouse ou com foco. */
+function MessageActions({ m, on, disabled }: { m: Message; on: MessageHandlers; disabled: boolean }) {
+  const [open, setOpen] = useState<"react" | "more" | null>(null);
   const mine = m.reactions.find((r) => r.fromMe)?.emoji ?? null;
+  const age = Date.now() - m.at;
+  const canEdit = m.fromMe && m.kind === "text" && age <= EDIT_WINDOW_MS;
+  const canRevoke = m.fromMe && age <= REVOKE_WINDOW_MS;
+  const toggle = (menu: "react" | "more") => setOpen((v) => (v === menu ? null : menu));
+  const closeOnLeave = (e: FocusEvent<HTMLDivElement>) => !e.currentTarget.contains(e.relatedTarget) && setOpen(null);
+  const pick = (fn: () => void) => {
+    setOpen(null);
+    fn();
+  };
   return (
-    <div className={`message-actions${open ? " is-open" : ""}`}>
-      <button type="button" className="message-actions__button" aria-label="Responder citando" title="Responder citando" disabled={disabled} onClick={() => onReply(m)}>
+    <div className={`message-actions${open ? " is-open" : ""}`} onBlur={closeOnLeave} onKeyDown={(e) => e.key === "Escape" && setOpen(null)}>
+      <button type="button" className="message-actions__button" aria-label="Responder citando" title="Responder citando" disabled={disabled} onClick={() => on.reply(m)}>
         <Reply size={16} aria-hidden />
       </button>
-      <button
-        type="button"
-        className="message-actions__button"
-        aria-label="Reagir"
-        title="Reagir"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-      >
+      <button type="button" className="message-actions__button" aria-label="Reagir" title="Reagir" aria-expanded={open === "react"} disabled={disabled} onClick={() => toggle("react")}>
         <SmilePlus size={16} aria-hidden />
       </button>
-      {open && (
-        <div
-          className="reaction-picker"
-          role="menu"
-          aria-label="Escolher reação"
-          onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
-          onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}
-        >
+      <button type="button" className="message-actions__button" aria-label="Mais ações" title="Mais ações" aria-expanded={open === "more"} disabled={disabled} onClick={() => toggle("more")}>
+        <MoreHorizontal size={16} aria-hidden />
+      </button>
+      {open === "react" && (
+        <div className="reaction-picker" role="menu" aria-label="Escolher reação">
           {REACTIONS.map((emoji, i) => (
             <button
               key={emoji}
@@ -509,14 +524,28 @@ function MessageActions({ m, onReply, onReact, disabled }: { m: Message; onReply
               className={`reaction-picker__item${mine === emoji ? " is-selected" : ""}`}
               aria-label={mine === emoji ? `Tirar reação ${emoji}` : `Reagir com ${emoji}`}
               autoFocus={i === 0}
-              onClick={() => {
-                setOpen(false);
-                onReact(m, mine === emoji ? "" : emoji);
-              }}
+              onClick={() => pick(() => on.react(m, mine === emoji ? "" : emoji))}
             >
               {emoji}
             </button>
           ))}
+        </div>
+      )}
+      {open === "more" && (
+        <div className="message-menu" role="menu" aria-label="Mais ações">
+          <button type="button" role="menuitem" className="message-menu__item" autoFocus onClick={() => pick(() => on.forward(m))}>
+            <Forward size={16} aria-hidden /> Encaminhar
+          </button>
+          {canEdit && (
+            <button type="button" role="menuitem" className="message-menu__item" onClick={() => pick(() => on.edit(m))}>
+              <Pencil size={16} aria-hidden /> Editar
+            </button>
+          )}
+          {canRevoke && (
+            <button type="button" role="menuitem" className="message-menu__item message-menu__item--danger" onClick={() => pick(() => on.revoke(m))}>
+              <Trash2 size={16} aria-hidden /> Apagar para todos
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -534,14 +563,13 @@ function jumpTo(id: string) {
 }
 
 /** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, onReply, onReact, connected }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, on, connected }: {
   messages: Message[];
   isGroup: boolean;
   hasMore: boolean;
   onMore: () => void;
   loadingMore: boolean;
-  onReply: (m: Message) => void;
-  onReact: (m: Message, emoji: string) => void;
+  on: MessageHandlers;
   connected: boolean;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
@@ -605,9 +633,9 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                     {m.fromMe && <AckIcon ack={m.ack} />}
                   </span>
                 </div>
-                <ReactionList m={m} onReact={onReact} />
+                <ReactionList m={m} onReact={on.react} />
               </div>
-              {!deleted && <MessageActions m={m} onReply={onReply} onReact={onReact} disabled={!connected} />}
+              {!deleted && <MessageActions m={m} on={on} disabled={!connected} />}
             </div>
           </div>
         );
@@ -616,8 +644,10 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   );
 });
 
-function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, quickReplies, onSetupAi }: {
+function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, quickReplies, onSetupAi, sendTyping }: {
   chat: Chat;
+  /** Avisar ao contato que você está digitando (preferência). */
+  sendTyping: boolean;
   onSetupAi: () => void;
   quickReplies: QuickReply[];
   labels: string[];
@@ -641,6 +671,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const fileInput = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [editing, setEditing] = useState<Message | null>(null);
+  const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [presence, setPresence] = useState<"composing" | "recording" | null>(null);
   const [dragging, setDragging] = useState(false);
   const recorder = useRecorder((text) => notify("error", text));
   const addFiles = (files: Iterable<File>) => {
@@ -665,6 +698,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     });
     recorder.cancel();
     setReplyTo(null);
+    setEditing(null);
+    setForwarding(null);
+    setPresence(null);
   }, [chat.jid]);
   useEffect(() => {
     const id = requestAnimationFrame(() => composer.current?.focus());
@@ -734,21 +770,80 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     return () => window.removeEventListener("inbox:message-update", onUpdate);
   }, [chat.jid]);
 
-  const reply = useCallback((m: Message) => {
-    setReplyTo(m);
-    requestAnimationFrame(() => composer.current?.focus());
-  }, []);
-  const react = useCallback(
-    async (m: Message, emoji: string) => {
-      try {
-        const updated = await api.react(chat.jid, m.id, emoji);
-        setMessages((list) => list?.map((x) => (x.id === updated.id ? updated : x)) ?? list);
-      } catch (e) {
-        notify("error", `Reação não enviada. ${(e as Error).message}`);
-      }
-    },
+  const replaceMessage = (updated: Message) => setMessages((list) => list?.map((x) => (x.id === updated.id ? updated : x)) ?? list);
+  // Estável entre renders para o memo de <Messages>.
+  const handlers = useMemo<MessageHandlers>(
+    () => ({
+      reply: (m) => {
+        setEditing(null);
+        setReplyTo(m);
+        requestAnimationFrame(() => composer.current?.focus());
+      },
+      react: async (m, emoji) => {
+        try {
+          replaceMessage(await api.react(chat.jid, m.id, emoji));
+        } catch (e) {
+          notify("error", `Reação não enviada. ${(e as Error).message}`);
+        }
+      },
+      forward: (m) => setForwarding(m),
+      edit: (m) => {
+        setReplyTo(null);
+        setEditing(m);
+        setDraft(m.text);
+        requestAnimationFrame(() => composer.current?.focus());
+      },
+      revoke: async (m) => {
+        if (!window.confirm("Apagar esta mensagem para todos? O contato deixa de vê-la; aqui ela continua guardada.")) return;
+        try {
+          replaceMessage(await api.revokeMessage(chat.jid, m.id));
+        } catch (e) {
+          notify("error", `Mensagem não apagada. ${(e as Error).message}`);
+        }
+      },
+    }),
     [chat.jid, notify],
   );
+
+  // "digitando" do contato: assina ao abrir a conversa e limpa sozinho se o aviso de parada não vier.
+  useEffect(() => {
+    if (connected) api.watch(chat.jid).catch(() => undefined);
+  }, [chat.jid, connected]);
+  useEffect(() => {
+    let timer = 0;
+    const onPresence = (e: Event) => {
+      const p = (e as CustomEvent<{ jid: string; state: "composing" | "recording" | null }>).detail;
+      if (p.jid !== chat.jid) return;
+      setPresence(p.state);
+      window.clearTimeout(timer);
+      if (p.state) timer = window.setTimeout(() => setPresence(null), 25_000);
+    };
+    window.addEventListener("inbox:presence", onPresence);
+    return () => {
+      window.removeEventListener("inbox:presence", onPresence);
+      window.clearTimeout(timer);
+    };
+  }, [chat.jid]);
+
+  // Meu "digitando": no máximo um aviso a cada 8 s; para depois de 4 s sem digitar.
+  const typingAt = useRef(0);
+  const typingStop = useRef(0);
+  const stopTyping = useCallback(() => {
+    window.clearTimeout(typingStop.current);
+    if (!typingAt.current) return;
+    typingAt.current = 0;
+    api.typing(chat.jid, "paused").catch(() => undefined);
+  }, [chat.jid]);
+  const noteTyping = () => {
+    if (!sendTyping || !connected) return;
+    if (Date.now() - typingAt.current > 8000) {
+      typingAt.current = Date.now();
+      api.typing(chat.jid, "composing").catch(() => undefined);
+    }
+    window.clearTimeout(typingStop.current);
+    typingStop.current = window.setTimeout(stopTyping, 4000);
+  };
+  useEffect(() => stopTyping, [stopTyping]);
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -787,6 +882,20 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const send = async () => {
     const text = draft.trim();
     if ((!text && !attachments.length) || sending) return;
+    stopTyping();
+    if (editing) {
+      setSending(true);
+      try {
+        if (text !== editing.text) replaceMessage(await api.editMessage(chat.jid, editing.id, text));
+        setEditing(null);
+        setDraft("");
+      } catch (e) {
+        notify("error", `Mensagem não editada. ${(e as Error).message}`);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
     setSending(true);
     stickToBottom.current = true;
     try {
@@ -891,8 +1000,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           </span>
           <div className="chat-pane__name">
             <h2 className="heading-card">{chat.name}</h2>
-            {chat.phone && <span className="hint">+{chat.phone}</span>}
-            {chat.isGroup && <span className="hint">Grupo</span>}
+            {presence ? (
+              <span className="hint chat-pane__presence" role="status">
+                {presence === "recording" ? "gravando áudio…" : chat.isGroup ? "alguém está digitando…" : "digitando…"}
+              </span>
+            ) : (
+              <>
+                {chat.phone && <span className="hint">+{chat.phone}</span>}
+                {chat.isGroup && <span className="hint">Grupo</span>}
+              </>
+            )}
           </div>
         </div>
         <button
@@ -927,19 +1044,20 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             <p className="hint">As próximas mensagens desta conversa aparecem aqui.</p>
           </div>
         ) : (
-          <Messages
-            messages={messages}
-            isGroup={chat.isGroup}
-            hasMore={hasMore}
-            onMore={loadMore}
-            loadingMore={loadingMore}
-            onReply={reply}
-            onReact={react}
-            connected={connected}
-          />
+          <Messages messages={messages} isGroup={chat.isGroup} hasMore={hasMore} onMore={loadMore} loadingMore={loadingMore} on={handlers} connected={connected} />
         )}
       </div>
       {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setNotesOpen(false)} />}
+      {forwarding && (
+        <ForwardDialog
+          message={forwarding}
+          onClose={() => setForwarding(null)}
+          onDone={(to) => {
+            setForwarding(null);
+            notify("success", `Mensagem encaminhada para ${to.name}.`);
+          }}
+        />
+      )}
       </div>
       <form
         className="composer"
@@ -952,6 +1070,26 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           Mensagem
         </label>
         {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
+        {editing && (
+          <div className="reply-bar">
+            <Pencil size={16} aria-hidden />
+            <div className="reply-bar__body">
+              <span className="reply-bar__title">Editando mensagem</span>
+              <span className="reply-bar__text">{editing.text}</span>
+            </div>
+            <button
+              type="button"
+              className="icon-button icon-button--small"
+              aria-label="Cancelar edição"
+              onClick={() => {
+                setEditing(null);
+                setDraft("");
+              }}
+            >
+              <X size={16} aria-hidden />
+            </button>
+          </div>
+        )}
         {replyTo && (
           <div className="reply-bar">
             <Reply size={16} aria-hidden />
@@ -1023,7 +1161,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           value={draft}
           disabled={!connected}
           placeholder={!connected ? "Conecte o WhatsApp para responder." : attachments.length ? "Legenda (opcional). Enter envia." : "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha."}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            noteTyping();
+          }}
           onPaste={(e) => {
             const files = [...e.clipboardData.files];
             if (!files.length) return;
@@ -1050,9 +1191,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
                 return;
               }
             }
-            if (e.key === "Escape" && replyTo) {
+            if (e.key === "Escape" && (replyTo || editing)) {
               e.preventDefault();
+              if (editing) setDraft("");
               setReplyTo(null);
+              setEditing(null);
               return;
             }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -1157,6 +1300,7 @@ function App() {
       upsert(chat);
       push("success", `Lembrete: ${chat.name}. A conversa voltou para Abertas.`);
     });
+    es.addEventListener("presence", (e) => window.dispatchEvent(new CustomEvent("inbox:presence", { detail: JSON.parse((e as MessageEvent).data) })));
     es.addEventListener("message-update", (e) => {
       const { message, chat } = JSON.parse((e as MessageEvent).data) as { message: Message; chat: Chat | null };
       if (chat) upsert(chat);
@@ -1233,6 +1377,7 @@ function App() {
               notify={push}
               onChat={upsert}
               quickReplies={quickReplies}
+              sendTyping={!!state?.prefs.sendTyping}
               onSetupAi={() => {
                 setSettingsTab("ia");
                 setSettingsOpen(true);

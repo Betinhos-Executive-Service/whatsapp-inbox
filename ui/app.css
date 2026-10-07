@@ -411,6 +411,51 @@ ul, ol { margin: 0; padding: 0; }
 .reaction-picker__item:active { transform: scale(.97); }
 .reaction-picker__item:focus-visible { outline: 0; box-shadow: var(--bt-focus-ring); }
 
+/* Menu "Mais ações" da mensagem. */
+.message-menu {
+  position: absolute; bottom: calc(100% + var(--bt-space-1)); left: 0; z-index: var(--bt-z-index-floating-action);
+  display: flex; flex-direction: column; min-width: 180px; padding: var(--bt-space-1);
+  background-color: var(--bt-color-surface); border: var(--bt-border-width-default) solid var(--bt-color-border); border-radius: 9px;
+  box-shadow: var(--bt-shadow-popover); animation: fade var(--bt-duration-instant) var(--bt-ease-out);
+}
+.message-row--me .message-menu { left: auto; right: 0; }
+.message-menu__item {
+  display: flex; align-items: center; gap: var(--bt-space-2); height: var(--bt-control-height-compact); padding: 0 var(--bt-space-2);
+  border: 0; border-radius: var(--bt-radius-sm); background-color: transparent; color: var(--bt-color-text-primary);
+  font: inherit; font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-semibold); text-align: left; cursor: pointer;
+}
+.message-menu__item > svg { color: var(--bt-color-text-secondary); }
+.message-menu__item--danger, .message-menu__item--danger > svg { color: var(--bt-color-danger); }
+.message-menu__item:focus-visible { outline: 0; box-shadow: var(--bt-focus-ring); }
+@media (hover: hover) and (pointer: fine) {
+  .message-menu__item:hover { background-color: var(--bt-color-surface-soft); }
+  .message-actions__button:hover:not(:disabled) { background-color: var(--bt-color-surface-soft); }
+}
+.chat-pane__presence { color: var(--bt-color-success); font-weight: var(--bt-font-weight-semibold); }
+
+/* Diálogo de encaminhar. */
+.forward-dialog { display: flex; flex-direction: column; gap: var(--bt-space-3); padding: var(--bt-space-5); width: min(100%, 460px); max-height: min(640px, 90vh); }
+.forward-dialog__head { display: flex; align-items: center; justify-content: space-between; gap: var(--bt-space-2); }
+.forward-dialog__preview {
+  padding: var(--bt-space-2) var(--bt-space-2-5); border-left: var(--bt-border-width-severity) solid var(--bt-color-action); border-radius: var(--bt-radius-xs);
+  background-color: var(--bt-color-surface-neutral); font-size: var(--bt-font-size-13); color: var(--bt-color-slate-700);
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; white-space: pre-wrap;
+}
+.forward-dialog__error { font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-semibold); color: var(--bt-color-danger); }
+.forward-dialog__empty { display: flex; align-items: center; gap: var(--bt-space-2); padding: var(--bt-space-3) 0; }
+.forward-dialog__list { list-style: none; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin: 0 calc(-1 * var(--bt-space-2)); }
+.forward-dialog__item {
+  display: flex; align-items: center; gap: var(--bt-space-2-5); width: 100%; min-height: 48px; padding: var(--bt-space-1-5) var(--bt-space-2);
+  border: 0; border-radius: var(--bt-radius-md); background-color: transparent; color: var(--bt-color-text-primary);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.forward-dialog__item > svg { margin-left: auto; color: var(--bt-color-action); flex: 0 0 auto; }
+.forward-dialog__item:disabled { cursor: not-allowed; }
+.forward-dialog__item:disabled:not([aria-busy='true']) { opacity: var(--bt-opacity-disabled); }
+.forward-dialog__item:focus-visible { outline: 0; box-shadow: var(--bt-focus-ring); }
+@media (hover: hover) and (pointer: fine) { .forward-dialog__item:hover:not(:disabled) { background-color: var(--bt-color-surface-soft); } }
+.forward-dialog__name { display: flex; flex-direction: column; min-width: 0; font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-bold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Barra "Respondendo a" acima do campo de mensagem. */
 .reply-bar {
   order: -1; flex-basis: 100%; display: flex; align-items: center; gap: var(--bt-space-2); min-width: 0;
