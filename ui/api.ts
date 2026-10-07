@@ -86,6 +86,8 @@ export type Message = {
   ack: number | null;
   editedAt: number | null;
   reactions: { emoji: string; fromMe: boolean }[];
+  /** Só no cliente: envio otimista ainda sem confirmação do servidor. */
+  pending?: "sending" | "failed";
 };
 
 /** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
