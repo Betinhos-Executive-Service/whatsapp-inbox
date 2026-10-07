@@ -72,6 +72,8 @@ export type AiStatus = {
   jev: { contextMessages: number };
 };
 export type Summary = { resumo: string; pedido: string; proximoPasso: string };
+/** Resumo organizado de uma mensagem de voz. */
+export type AudioSummary = { assunto: string; pontos: string[]; tratativa: string; prioridade: "alta" | "media" | "baixa"; motivo: string };
 
 export type Reminder = { id: number; chatJid: string; dueAt: number; text: string; firedAt: number | null };
 export type QuickReply = { shortcut: string; text: string };
@@ -214,7 +216,9 @@ export const api = {
   quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
   cachedTranscript: (jid: string, id: string) =>
-    request<{ text: string | null }>("GET", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`),
+    request<{ text: string | null; summary: AudioSummary | null }>("GET", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`),
+  summarizeAudio: (jid: string, id: string) =>
+    request<{ summary: AudioSummary }>("POST", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}/summary`, {}),
   transcribeRecording: (data: string, mimetype: string) => request<{ text: string }>("POST", "/api/transcribe-recording", { data, mimetype }),
   transcribe: (jid: string, id: string) =>
     request<{ text: string }>("POST", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`, {}),

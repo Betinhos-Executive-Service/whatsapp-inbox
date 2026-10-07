@@ -1,5 +1,6 @@
 // Prompts e proteções comuns aos provedores de IA (DeepSeek e Claude pelo plano).
 import type { Message } from "./db.ts";
+import { PRIORITIES, PRIORITY_CRITERIA, type Priority } from "./jev.ts";
 
 export const DEFAULT_INSTRUCTIONS =
   "Você responde pela Betinhos Executive Service, transporte executivo terrestre. Tom humano, preciso e seguro: cordial, direto, sem gírias e sem exagero. Frases curtas. Nunca invente preço, horário, placa ou nome de motorista: se faltar a informação, diga que vai confirmar.";
@@ -112,4 +113,33 @@ export function parseSummary(raw: string): Summary {
   const pedido = grab(/PEDIDO\s*:\s*([\s\S]*?)(?=\s*PR[ÓO]XIMO\s+PASSO\s*:|$)/i);
   const proximoPasso = grab(/PR[ÓO]XIMO\s+PASSO\s*:\s*([\s\S]*)$/i);
   return { resumo: resumo || raw.trim().slice(0, 400), pedido, proximoPasso };
+}
+
+/** Resumo de uma mensagem de voz: bater o olho e saber do que se trata e o que fazer. */
+export type AudioSummary = { assunto: string; pontos: string[]; tratativa: string; prioridade: Priority; motivo: string };
+
+export function audioSummaryPrompt(contactName: string, transcript: string): Prompt {
+  const prioridades = PRIORITIES.map((p) => `- ${p}: ${PRIORITY_CRITERIA[p]}`).join("\n");
+  return {
+    system:
+      "Você organiza mensagens de voz recebidas no WhatsApp pela Betinhos Executive Service (transporte executivo terrestre). Seja fiel ao áudio: não invente nomes, valores, horários, endereços ou placas. Escreva em português do Brasil, frases curtas.",
+    user: `Transcrição do áudio de ${contactName}:\n"""\n${transcript.slice(0, 12000)}\n"""\n\nCritérios de prioridade:\n${prioridades}\n\nResponda só com JSON neste formato:\n{"assunto": "<do que se trata, em até 10 palavras>", "pontos": ["<ponto principal: pedidos, datas, horários, locais, valores e nomes citados>", "..."], "tratativa": "<o que eu devo fazer agora, em 1 frase; ou \\"nenhuma ação necessária\\">", "prioridade": "alta" | "media" | "baixa", "motivo": "<por que essa prioridade, em até 12 palavras>"}\nUse de 1 a 6 pontos.`,
+  };
+}
+
+export function parseAudioSummary(raw: string): AudioSummary {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw) as Record<string, unknown>;
+  } catch {
+    throw new Error("A IA não devolveu um resumo legível. Tente de novo.");
+  }
+  const text = (v: unknown) => (typeof v === "string" ? v.trim().replace(/\s+/g, " ") : "");
+  const pontos = Array.isArray(data.pontos) ? data.pontos.map(text).filter(Boolean).slice(0, 6) : [];
+  const prioridade = (PRIORITIES as readonly string[]).includes(text(data.prioridade)) ? (text(data.prioridade) as Priority) : "media";
+  const assunto = text(data.assunto);
+  if (!assunto && !pontos.length) throw new Error("A IA não devolveu um resumo legível. Tente de novo.");
+  return { assunto: assunto || pontos[0], pontos, tratativa: text(data.tratativa), prioridade, motivo: text(data.motivo) };
 }

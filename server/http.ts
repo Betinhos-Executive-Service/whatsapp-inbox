@@ -37,7 +37,8 @@ export type Api = {
   transcribe: (jid: string, id: string) => Promise<string>;
   transcribeRecording: (body: Buffer, mimetype: string) => Promise<string>;
   /** Só o cache: não chama a Groq. */
-  cachedTranscript: (jid: string, id: string) => Promise<string | null>;
+  cachedTranscript: (jid: string, id: string) => Promise<{ text: string | null; summary: unknown }>;
+  summarizeAudio: (jid: string, id: string) => Promise<unknown>;
   ai: {
     status: () => unknown;
     draft: (jid: string) => Promise<string>;
@@ -382,10 +383,17 @@ export function createHandler(api: Api) {
       });
       return json(res, 200, { text });
     }
+    const audioSummaryMatch = path.match(/^\/api\/transcribe\/([^/]+)\/([^/]+)\/summary$/);
+    if (audioSummaryMatch && method === "POST") {
+      await readJson(req);
+      const summary = await api.summarizeAudio(decodeURIComponent(audioSummaryMatch[1]), decodeURIComponent(audioSummaryMatch[2])).catch((error: Error) => {
+        throw new HttpError(502, error.message);
+      });
+      return json(res, 200, { summary });
+    }
     const transcribeMatch = path.match(/^\/api\/transcribe\/([^/]+)\/([^/]+)$/);
     if (transcribeMatch && method === "GET") {
-      const text = await api.cachedTranscript(decodeURIComponent(transcribeMatch[1]), decodeURIComponent(transcribeMatch[2]));
-      return json(res, 200, { text });
+      return json(res, 200, await api.cachedTranscript(decodeURIComponent(transcribeMatch[1]), decodeURIComponent(transcribeMatch[2])));
     }
     if (transcribeMatch && method === "POST") {
       await readJson(req);
