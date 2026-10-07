@@ -21,10 +21,17 @@ if (release) {
 
 const started = performance.now();
 const build = await bumpVersion();
+let pushed = Promise.resolve();
 if (release) {
   git("add", "package.json");
   git("commit", "-m", `release: v${build.version}`);
-  git("push", "origin", "main");
+  // O envio corre junto com a compilação; a release só é criada depois que ele termina.
+  pushed = new Promise((ok, fail) =>
+    spawn("git", ["push", "origin", "main"], { cwd: root, stdio: "inherit" }).on("exit", (code) =>
+      code === 0 ? ok() : fail(new Error(`git push falhou (código ${code}).`)),
+    ),
+  );
+  pushed.catch(() => {}); // a falha é tratada no await antes de publicar
 }
 
 await rm(resolve(root, "dist"), { recursive: true, force: true });
@@ -63,6 +70,7 @@ if (runOnly) {
   if (!release) {
     console.log(`Instalador pronto: ${installer}`);
   } else {
+    await pushed;
     await publishRelease(build.version, files);
   }
 }
