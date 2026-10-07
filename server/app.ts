@@ -293,7 +293,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     distDir: options.distDir,
     state: publicState,
-    send: (jid, text, opts) => connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(jid, opts.quotedId) : null, mentions: opts.mentions }),
+    send: (jid, text, opts) =>
+      connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll }),
     sendMedia,
     react: (jid, id, emoji) => connected().react(jid, id, emoji),
     editMessage: (jid, id, text) => connected().editSent(jid, id, text),

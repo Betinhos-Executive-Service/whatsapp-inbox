@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Copy,
   Forward,
+  MoreVertical,
   Pencil,
   Reply,
   Trash2,
@@ -59,6 +60,7 @@ import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, l
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
 import { UpdateDialog } from "./update.tsx";
 import { ForwardDialog } from "./forward.tsx";
+import { MessageMenu, type MenuAt } from "./message-menu.tsx";
 import { AckIcon, canEdit, EditBar, ReactButton, ReactionList } from "./message-extras.tsx";
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
 import { toggleWa } from "./wa-text.ts";
@@ -503,7 +505,16 @@ function mergeTail(list: Message[], fresh: Message[]): Message[] {
 }
 
 /** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard }: {
+/** Texto exibido da mensagem (legenda, sem "[Imagem]" nem o nome do arquivo). */
+function captionOf(m: Message, body: string): string {
+  let caption = m.media ? body.replace(/^\[[^\]]+\]\s*/, "") : body;
+  // Documento: o texto começa pelo nome do arquivo, que já aparece no cartão.
+  const fileName = m.media?.fileName;
+  if (fileName && caption.startsWith(fileName)) caption = caption.slice(fileName.length).trim();
+  return caption;
+}
+
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu }: {
   messages: Message[];
   isGroup: boolean;
   hasMore: boolean;
@@ -522,6 +533,8 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   onEdit: (m: Message) => void;
   onRetry: (m: Message) => void;
   onDiscard: (m: Message) => void;
+  /** Botão direito ou "Mais opções": abre o menu da mensagem nesse ponto. */
+  onMenu: (m: Message, x: number, y: number) => void;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
   return (
@@ -538,15 +551,24 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         const { author, body } = parts[i];
         // Sequência do mesmo remetente em até 5 min vira um bloco: nome e "rabicho" só na primeira.
         const continues = !newDay && prev.fromMe === m.fromMe && parts[i - 1].author === author && m.at - prev.at < 5 * 60_000;
-        let caption = m.media ? body.replace(/^\[[^\]]+\]\s*/, "") : body;
-        // Documento: o texto começa pelo nome do arquivo, que já aparece no cartão.
-        const fileName = m.media?.fileName;
-        if (fileName && caption.startsWith(fileName)) caption = caption.slice(fileName.length).trim();
+        const caption = captionOf(m, body);
         const sender = m.sender;
         return (
           <div key={m.id} data-message-id={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
-            <div className="message-line">
+            <div
+              className="message-line"
+              onContextMenu={(e) => {
+                // Texto selecionado: deixa o menu do sistema (copiar a seleção). Bolha ainda
+                // não confirmada pelo servidor não tem ações (só tentar de novo ou descartar).
+                if (m.pending || window.getSelection()?.toString().trim()) return;
+                e.preventDefault();
+                // Pelo teclado (tecla Menu / Shift+F10) não há ponto do mouse: usa o balão.
+                const box = (e.currentTarget.querySelector(".bubble") ?? e.currentTarget).getBoundingClientRect();
+                const keyboard = e.clientX === 0 && e.clientY === 0;
+                onMenu(m, keyboard ? box.left + 8 : e.clientX, keyboard ? box.bottom : e.clientY);
+              }}
+            >
               {isGroup && !m.fromMe &&
                 (sender && !continues ? (
                   <button type="button" className="author-button" aria-label={`Ver perfil de ${author ?? "participante"}`} onClick={() => onAuthor(sender, author ?? "Participante")}>
@@ -626,6 +648,19 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                 )}
                 <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Apagar mensagem" title="Apagar" onClick={() => onDelete(m)}>
                   <Trash2 size={16} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  className="icon-button icon-button--plain icon-button--small"
+                  aria-label="Mais opções"
+                  aria-haspopup="menu"
+                  title="Mais opções (ou clique com o botão direito)"
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    onMenu(m, r.left, r.bottom + 4);
+                  }}
+                >
+                  <MoreVertical size={16} aria-hidden />
                 </button>
               </div>}
             </div>
@@ -830,7 +865,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
   }, [chat.jid, notify]);
 
-  type Outgoing = { text: string; quotedId?: string; mentions: string[] };
+  type Outgoing = { text: string; quotedId?: string; mentions: string[]; mentionAll?: boolean };
   const pendingSeq = useRef(0);
   // Payload de cada bolha otimista, para "Tentar de novo".
   const outbox = useRef(new Map<string, Outgoing>());
@@ -840,7 +875,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       if (!out) return;
       setMessages((list) => list && list.map((x) => (x.id === localId ? { ...x, pending: "sending" } : x)));
       try {
-        const updated = await api.send(chat.jid, out.text, { quotedId: out.quotedId, mentions: out.mentions.length ? out.mentions : undefined });
+        const updated = await api.send(chat.jid, out.text, { quotedId: out.quotedId, mentions: out.mentions.length ? out.mentions : undefined, mentionAll: out.mentionAll });
         outbox.current.delete(localId);
         onChat(updated);
         // A versão real chega pelo SSE e já substitui a bolha; se não chegou, recarrega o fim da conversa.
@@ -890,7 +925,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       const quoted = replyTo
         ? { id: replyTo.id, text: splitAuthor(replyTo, chat.isGroup).body, fromMe: replyTo.fromMe, author: replyTo.fromMe ? null : splitAuthor(replyTo, chat.isGroup).author }
         : null;
-      outbox.current.set(localId, { text: withMentions.text, quotedId, mentions: withMentions.mentions });
+      // "@todos" (ou "@all") digitado à mão também menciona o grupo inteiro.
+      const mentionAll = chat.isGroup && (withMentions.mentionAll || /(^|\s)@(todos|all)(?=$|[\s.,;:!?])/i.test(text));
+      outbox.current.set(localId, { text: withMentions.text, quotedId, mentions: withMentions.mentions, mentionAll: mentionAll || undefined });
       setMessages((list) => [
         ...(list ?? []),
         { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], pending: "sending" },
@@ -978,7 +1015,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       alive = false;
     };
   }, [mention !== null, participants, chat, connected, notify]);
-  const mentionItems = mention !== null && participants && !mentionClosed ? filterParticipants(participants, mention) : [];
+  const mentionItems = mention !== null && participants && !mentionClosed ? filterParticipants(participants, mention, chat.isGroup) : [];
   const showMention = mentionItems.length > 0;
   useEffect(() => {
     setMentionActive(0);
@@ -1004,9 +1041,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, []);
   const copy = useCallback(
     (m: Message) => {
-      const { body } = splitAuthor(m, chat.isGroup);
       // Mídia: copia só a legenda, sem o "[Imagem]" do começo.
-      const text = m.media ? body.replace(/^\[[^\]]+\]\s*/, "") : body;
+      const text = captionOf(m, splitAuthor(m, chat.isGroup).body);
       navigator.clipboard.writeText(text).then(
         () => notify("success", "Texto copiado."),
         () => notify("error", "Não foi possível copiar."),
@@ -1031,6 +1067,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     [chat.jid, notify],
   );
   const forward = useCallback((m: Message) => setForwarding(m), []);
+  const [menuAt, setMenuAt] = useState<MenuAt | null>(null);
+  const openMenu = useCallback((message: Message, x: number, y: number) => setMenuAt({ message, x, y }), []);
+  const closeMenu = useCallback(() => setMenuAt(null), []);
   const edit = useCallback((m: Message) => {
     setReplyTo(null);
     setEditing(m);
@@ -1256,12 +1295,27 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onEdit={edit}
             onRetry={retry}
             onDiscard={discard}
+            onMenu={openMenu}
           />
         )}
       </div>
       {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
       {side === "profile" && profileTarget && <ProfilePanel target={profileTarget} connected={connected} onClose={() => setSide(null)} />}
       </div>
+      {menuAt && (
+        <MessageMenu
+          at={menuAt}
+          canAct={connected}
+          hasText={!menuAt.message.deleted && !!captionOf(menuAt.message, splitAuthor(menuAt.message, chat.isGroup).body)}
+          author={
+            chat.isGroup && !menuAt.message.fromMe && menuAt.message.sender
+              ? { jid: menuAt.message.sender, name: splitAuthor(menuAt.message, true).author ?? "participante" }
+              : null
+          }
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor }}
+          onClose={closeMenu}
+        />
+      )}
       {forwarding && (
         <ForwardDialog
           message={forwarding}

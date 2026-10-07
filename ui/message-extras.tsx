@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { Message } from "./api.ts";
 
 /** Reações rápidas, as mesmas do WhatsApp. São conteúdo da mensagem, não ícones da interface. */
-const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+export const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 /** WhatsApp só deixa editar texto até 15 min depois do envio (o servidor confere de novo). */
 export const canEdit = (m: Message, now = Date.now()) => m.fromMe && !m.deleted && m.kind === "text" && now - m.at <= 15 * 60_000;

@@ -34,7 +34,7 @@ function isConversation(jid: string | null | undefined): jid is string {
 
 export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number };
 /** Resposta a uma mensagem (citação) e menções com @. */
-export type SendOptions = { quoted?: MessageKeyRef | null; mentions?: string[] };
+export type SendOptions = { quoted?: MessageKeyRef | null; mentions?: string[]; mentionAll?: boolean };
 
 export type Participant = { jid: string; name: string; phone: string | null; admin: boolean; me: boolean };
 export type Profile = {
@@ -400,7 +400,12 @@ export class WhatsApp extends EventEmitter<{
 
   async send(jid: string, text: string, opts: SendOptions = {}): Promise<void> {
     const sock = this.ready();
-    const mentions = opts.mentions?.length ? { mentions: opts.mentions } : {};
+    const all = opts.mentionAll && isJidGroup(jid);
+    // "@todos": marca o grupo (nonJidMentions) e menciona cada participante, para todos serem
+    // notificados também nos aparelhos que ainda não conhecem a menção ao grupo.
+    const everyone = all ? (await this.groupInfo(jid)).participants.map((p) => p.id).filter((id) => !this.isMe(id)) : [];
+    const list = [...new Set([...(opts.mentions ?? []), ...everyone])];
+    const mentions = list.length || all ? { ...(list.length ? { mentions: list } : {}), ...(all ? { mentionAll: true } : {}) } : {};
     const sent = await sock.sendMessage(jid, { text, ...mentions }, this.quoted(opts.quoted));
     if (sent) this.ingest(sent, true);
   }
