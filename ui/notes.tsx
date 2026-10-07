@@ -1,12 +1,13 @@
-import { AlarmClock, Check, LoaderCircle, Trash2, WandSparkles, X } from "lucide-react";
+import { AlarmClock, Check, Trash2, WandSparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, type Chat, type Reminder, type Summary } from "./api.ts";
 import { aiName, isAiReady, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { ResizeHandle } from "./resize.tsx";
+import { Button, Input, Textarea } from "./ds/index.ts";
 import { dayLabel, formatBrl, formatTime, formatTokens, formatUsd } from "./format.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
-/** Valor de <input type="datetime-local"> no horário deste computador. */
+/** Valor de <Input type="datetime-local"> no horário deste computador. */
 const toLocalInput = (ms: number) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -128,16 +129,16 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
       <ResizeHandle cssVar="--inbox-side-w" storageKey="inbox:side-w" initial={320} min={280} max={560} edge="start" reserve={360} label="Largura do painel lateral" />
       <header className="notes__header">
         <h3 className="heading-card">Notas e lembretes</h3>
-        <button
-          className="icon-button icon-button--plain"
+        <Button
+          variant="ghost"
+          size="compact"
+          icon={<X size={16} aria-hidden />}
           aria-label="Fechar notas e lembretes"
           onClick={() => {
             void saveNote(note);
             onClose();
           }}
-        >
-          <X size={16} aria-hidden />
-        </button>
+        />
       </header>
       <div className="notes__body">
         <div className="stack">
@@ -163,10 +164,9 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
             <p className="hint">{isAiReady(ai) ? (ai?.provider === "deepseek" ? "Gera um resumo das últimas mensagens com a DeepSeek." : ai?.provider === "claude" ? "Gera um resumo com o Claude do seu plano. Pode levar mais de um minuto." : "Gera um resumo das últimas mensagens.") : "Ative a IA em Configurações › IA para usar."}</p>
           )}
           <div className="cluster">
-            <button className="button button--secondary button--compact" disabled={!isAiReady(ai) || summarizing} aria-busy={summarizing || undefined} onClick={() => void summarize()}>
-              {summarizing ? <LoaderCircle className="spin" size={16} aria-hidden /> : <WandSparkles size={16} aria-hidden />}
+            <Button variant="secondary" size="compact" disabled={!isAiReady(ai)} loading={summarizing} icon={<WandSparkles size={16} aria-hidden />} onClick={() => void summarize()}>
               {summary ? "Resumir de novo" : "Resumir conversa"}
-            </button>
+            </Button>
           </div>
         </div>
         <div className="stack">
@@ -188,7 +188,7 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
         </div>
         <label className="field">
           <span className="field__label">Nota interna</span>
-          <textarea
+          <Textarea
             className="notes__note"
             rows={5}
             maxLength={5000}
@@ -222,12 +222,8 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
                       {due && <span className="badge badge--warning">Vencido</span>}
                       {r.text && <span className="hint">{r.text}</span>}
                     </span>
-                    <button className="icon-button icon-button--plain" aria-label={`Concluir lembrete de ${reminderLabel(r.dueAt)}`} onClick={() => void finish(r, "done")}>
-                      <Check size={16} aria-hidden />
-                    </button>
-                    <button className="icon-button icon-button--plain" aria-label={`Apagar lembrete de ${reminderLabel(r.dueAt)}`} onClick={() => void finish(r, "delete")}>
-                      <Trash2 size={16} aria-hidden />
-                    </button>
+                    <Button variant="ghost" size="compact" icon={<Check size={16} aria-hidden />} aria-label={`Concluir lembrete de ${reminderLabel(r.dueAt)}`} onClick={() => void finish(r, "done")} />
+                    <Button variant="ghost" size="compact" icon={<Trash2 size={16} aria-hidden />} aria-label={`Apagar lembrete de ${reminderLabel(r.dueAt)}`} onClick={() => void finish(r, "delete")} />
                   </li>
                 );
               })}
@@ -235,24 +231,23 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
           )}
           <label className="field">
             <span className="sr-only">Texto do lembrete</span>
-            <input value={text} maxLength={300} placeholder="Sobre o quê? (opcional)" onChange={(e) => setText(e.target.value)} />
+            <Input value={text} maxLength={300} placeholder="Sobre o quê? (opcional)" onChange={(e) => setText(e.target.value)} />
           </label>
           <div className="cluster">
             {presets().map((p) => (
-              <button key={p.label} className="button button--secondary button--compact" disabled={adding} onClick={() => void add(p.at)}>
+              <Button key={p.label} variant="secondary" size="compact" disabled={adding} onClick={() => void add(p.at)}>
                 {p.label}
-              </button>
+              </Button>
             ))}
           </div>
           <div className="notes__custom">
             <label className="field">
               <span className="sr-only">Data e hora do lembrete</span>
-              <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+              <Input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
             </label>
-            <button className="button button--primary button--compact" disabled={adding || !when} aria-busy={adding || undefined} onClick={() => void add(new Date(when).getTime())}>
-              {adding && <LoaderCircle className="spin" size={16} aria-hidden />}
+            <Button variant="primary" size="compact" disabled={!when} loading={adding} onClick={() => void add(new Date(when).getTime())}>
               Lembrar
-            </button>
+            </Button>
           </div>
         </div>
       </div>

@@ -1,7 +1,8 @@
 import { Bot, ChevronDown, LoaderCircle, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { api, type AiStatus, type ClaudeEffort, type Thinking } from "./api.ts";
+import { api, type AiStatus, type ClaudeEffort, type ClaudeModel, type DeepSeekModel, type Thinking } from "./api.ts";
 import { publishAi, useAiStatus } from "./ai-state.ts";
+import { Button, SegmentedControl, Select } from "./ds/index.ts";
 
 export const THINKING_LABELS: Record<Thinking, string> = { off: "Desligado", low: "Baixo", high: "Alto", max: "Máximo" };
 export const EFFORT_LABELS: Record<ClaudeEffort, string> = { default: "Padrão", low: "Baixo", medium: "Médio", high: "Alto", xhigh: "Muito alto", max: "Máximo" };
@@ -59,66 +60,82 @@ export function AiQuickPicker({ onMore }: { onMore: () => void }) {
 
   return (
     <div className="ai-quick" ref={root}>
-      <button
-        type="button"
-        className="button button--secondary button--compact ai-quick__toggle"
+      <Button
+        variant="secondary"
+        size="compact"
+        className="ai-quick__toggle"
+        icon={<Bot size={16} aria-hidden />}
+        iconEnd={<ChevronDown size={14} aria-hidden />}
         aria-expanded={open}
         aria-haspopup="dialog"
         title="IA usada no rascunho e no resumo"
         onClick={() => setOpen((v) => !v)}
       >
-        <Bot size={16} aria-hidden />
         <span className="ai-quick__label">{aiSummary(ai)}</span>
-        <ChevronDown size={14} aria-hidden />
-      </button>
+      </Button>
       {open && (
         <div className="ai-quick__panel" role="dialog" aria-label="Escolher IA">
           <div className="field">
             <span className="field__label">IA</span>
-            <div className="segmented" role="radiogroup" aria-label="Onde a IA roda">
-              {(
-                [
-                  ["deepseek", "DeepSeek"],
-                  ["claude", "Claude"],
-                ] as const
-              ).map(([id, label]) => (
-                <button key={id} type="button" role="radio" aria-checked={ai.provider === id} className="segmented__item" disabled={busy} onClick={() => ai.provider !== id && void run(() => api.setAiProvider(id))}>
-                  {label}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl<AiStatus["provider"]>
+              aria-label="Onde a IA roda"
+              size="compact"
+              options={[
+                { value: "deepseek", label: "DeepSeek", disabled: busy },
+                { value: "claude", label: "Claude", disabled: busy },
+              ]}
+              value={ai.provider}
+              onChange={(id) => ai.provider !== id && void run(() => api.setAiProvider(id))}
+            />
           </div>
           <div className="field">
             <span className="field__label">Modelo</span>
-            <div className="segmented" role="radiogroup" aria-label="Modelo">
-              {ai.provider === "claude"
-                ? cl.models.map((m) => (
-                    <button key={m.id} type="button" role="radio" aria-checked={cl.model === m.id} className="segmented__item" disabled={busy} title={m.hint} onClick={() => cl.model !== m.id && void run(() => api.setClaudeModel(m.id))}>
-                      {m.name}
-                    </button>
-                  ))
-                : ds.models.map((m) => (
-                    <button key={m.id} type="button" role="radio" aria-checked={ds.model === m.id} className="segmented__item" disabled={busy} title={m.hint} onClick={() => ds.model !== m.id && void run(() => api.setDeepseekModel(m.id))}>
-                      {m.name}
-                    </button>
-                  ))}
-            </div>
+            {ai.provider === "claude" ? (
+              <Select
+                aria-label="Modelo"
+                size="compact"
+                searchable={false}
+                clearable={false}
+                disabled={busy}
+                options={cl.models.map((m) => ({ value: m.id, label: m.name, subtitle: m.hint }))}
+                value={cl.model}
+                onChange={(id) => id && cl.model !== id && void run(() => api.setClaudeModel(id as ClaudeModel))}
+              />
+            ) : (
+              <Select
+                aria-label="Modelo"
+                size="compact"
+                searchable={false}
+                clearable={false}
+                disabled={busy}
+                options={ds.models.map((m) => ({ value: m.id, label: m.name, subtitle: m.hint }))}
+                value={ds.model}
+                onChange={(id) => id && ds.model !== id && void run(() => api.setDeepseekModel(id as DeepSeekModel))}
+              />
+            )}
           </div>
           <div className="field">
             <span className="field__label">{ai.provider === "claude" ? "Esforço" : "Thinking"}</span>
-            <div className="segmented" role="radiogroup" aria-label={ai.provider === "claude" ? "Esforço do Claude" : "Thinking da DeepSeek"}>
-              {ai.provider === "claude"
-                ? (Object.keys(EFFORT_LABELS) as ClaudeEffort[]).map((id) => (
-                    <button key={id} type="button" role="radio" aria-checked={cl.options.effort === id} className="segmented__item" disabled={busy} onClick={() => cl.options.effort !== id && void run(() => api.setClaudeOptions({ ...cl.options, effort: id }))}>
-                      {EFFORT_LABELS[id]}
-                    </button>
-                  ))
-                : (Object.keys(THINKING_LABELS) as Thinking[]).map((id) => (
-                    <button key={id} type="button" role="radio" aria-checked={ds.options.thinking === id} className="segmented__item" disabled={busy} onClick={() => ds.options.thinking !== id && void run(() => api.setDeepseekOptions({ ...ds.options, thinking: id }))}>
-                      {THINKING_LABELS[id]}
-                    </button>
-                  ))}
-            </div>
+            {ai.provider === "claude" ? (
+              <Select
+                aria-label="Esforço do Claude"
+                size="compact"
+                searchable={false}
+                clearable={false}
+                disabled={busy}
+                options={(Object.keys(EFFORT_LABELS) as ClaudeEffort[]).map((id) => ({ value: id, label: EFFORT_LABELS[id] }))}
+                value={cl.options.effort}
+                onChange={(id) => id && cl.options.effort !== id && void run(() => api.setClaudeOptions({ ...cl.options, effort: id as ClaudeEffort }))}
+              />
+            ) : (
+              <SegmentedControl<Thinking>
+                aria-label="Thinking da DeepSeek"
+                size="compact"
+                options={(Object.keys(THINKING_LABELS) as Thinking[]).map((id) => ({ value: id, label: THINKING_LABELS[id], disabled: busy }))}
+                value={ds.options.thinking}
+                onChange={(id) => ds.options.thinking !== id && void run(() => api.setDeepseekOptions({ ...ds.options, thinking: id }))}
+              />
+            )}
           </div>
           <p className="hint">
             {ai.provider === "claude" ? `${cl.options.contextMessages} mensagens no contexto.` : `${ds.options.contextMessages} mensagens no contexto.`} Vale para rascunho e resumo, salvo na hora.
@@ -126,16 +143,17 @@ export function AiQuickPicker({ onMore }: { onMore: () => void }) {
           {error && <p className="hint hint--warning" role="alert">{error}</p>}
           <div className="split">
             {busy ? <LoaderCircle className="spin" size={16} aria-label="Salvando" /> : <span />}
-            <button
-              type="button"
-              className="button button--ghost button--compact"
+            <Button
+              variant="ghost"
+              size="compact"
+              icon={<Settings2 size={16} aria-hidden />}
               onClick={() => {
                 setOpen(false);
                 onMore();
               }}
             >
-              <Settings2 size={16} aria-hidden /> Todas as opções da IA
-            </button>
+              Todas as opções da IA
+            </Button>
           </div>
         </div>
       )}

@@ -1,7 +1,8 @@
-import { Forward, LoaderCircle, Search, X } from "lucide-react";
+import { Forward, LoaderCircle, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Chat, type Message } from "./api.ts";
 import { initials, normalize } from "./format.ts";
+import { Alert, Button, SearchBox } from "./ds/index.ts";
 
 /** Escolhe a conversa de destino e encaminha a mensagem. Fecha por X, Esc ou clique fora. */
 export function ForwardDialog({ message, onClose, onDone }: { message: Message; onClose: () => void; onDone: (chat: Chat) => void }) {
@@ -65,20 +66,14 @@ export function ForwardDialog({ message, onClose, onDone }: { message: Message; 
           <h2 id="forward-title" className="heading-card">
             Encaminhar mensagem
           </h2>
-          <button type="button" className="icon-button icon-button--plain" aria-label="Fechar" disabled={!!sending} onClick={onClose}>
-            <X size={18} aria-hidden />
-          </button>
+          <Button variant="ghost" size="compact" icon={<X size={18} aria-hidden />} aria-label="Fechar" disabled={!!sending} onClick={onClose} />
         </div>
         <p className="forward-dialog__preview">{message.text}</p>
-        <label className="search">
-          <Search size={16} aria-hidden />
-          <span className="sr-only">Buscar conversa</span>
-          <input ref={search} type="search" placeholder="Nome ou número" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </label>
+        <SearchBox ref={search} aria-label="Buscar conversa" placeholder="Nome ou número" value={query} onChange={setQuery} />
         {error && (
-          <p className="forward-dialog__error" role="alert">
+          <Alert tone="danger" role="alert">
             {error}
-          </p>
+          </Alert>
         )}
         {chats === null ? (
           <p className="hint forward-dialog__empty">

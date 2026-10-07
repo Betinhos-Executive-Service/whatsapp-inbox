@@ -1,7 +1,8 @@
-import { Download, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
+import { Download, RefreshCw, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { UpdateState } from "./desktop.ts";
+import { Button } from "./ds/index.ts";
 
 /**
  * Aviso de versão nova, só no app desktop. Aparece toda vez que a pessoa entra no app
@@ -76,13 +77,18 @@ export function UpdateDialog() {
           </div>
         )}
         <div className="cluster update-dialog__actions">
-          <button className="button button--secondary" onClick={() => setDismissed(true)} disabled={busy}>
+          <Button variant="secondary" onClick={() => setDismissed(true)} disabled={busy}>
             Depois
-          </button>
-          <button ref={primary} className="button button--primary" onClick={install} disabled={busy} aria-busy={busy || undefined}>
-            {busy ? <LoaderCircle className="spin" size={16} aria-hidden /> : state.status === "error" ? <RefreshCw size={16} aria-hidden /> : <Download size={16} aria-hidden />}
+          </Button>
+          <Button
+            ref={primary}
+            variant="primary"
+            onClick={install}
+            loading={busy}
+            icon={state.status === "error" ? <RefreshCw size={16} aria-hidden /> : <Download size={16} aria-hidden />}
+          >
             {state.status === "error" ? "Tentar de novo" : busy ? "Atualizando…" : "Atualizar agora"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
