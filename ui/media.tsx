@@ -129,14 +129,38 @@ function Transcript({ m }: { m: Message }) {
   const [text, setText] = useState<string | null>(() => transcripts.get(cacheKey) ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const show = useCallback(
+    (value: string) => {
+      const shown = value || "(sem fala reconhecida)";
+      transcripts.set(cacheKey, shown);
+      setText(shown);
+    },
+    [cacheKey],
+  );
+  // Já transcrito (manual ou automático): vem do cache do app, sem chamar a Groq.
+  useEffect(() => {
+    if (transcripts.has(cacheKey)) return;
+    let alive = true;
+    api
+      .cachedTranscript(m.chatJid, m.id)
+      .then(({ text }) => alive && text !== null && show(text))
+      .catch(() => undefined);
+    const onTranscript = (e: Event) => {
+      const d = (e as CustomEvent<{ chatJid: string; id: string; text: string }>).detail;
+      if (d.chatJid === m.chatJid && d.id === m.id) show(d.text);
+    };
+    window.addEventListener("inbox:transcript", onTranscript);
+    return () => {
+      alive = false;
+      window.removeEventListener("inbox:transcript", onTranscript);
+    };
+  }, [cacheKey, m.chatJid, m.id, show]);
   const run = async () => {
     setBusy(true);
     setError(null);
     try {
       const { text } = await api.transcribe(m.chatJid, m.id);
-      const value = text || "(sem fala reconhecida)";
-      transcripts.set(cacheKey, value);
-      setText(value);
+      show(text);
     } catch (e) {
       setError((e as Error).message);
     } finally {

@@ -43,7 +43,11 @@ export type Chat = {
   mutedUntil: number | null;
   /** Adiada: some das abertas até essa hora (ms) e volta como aberta. */
   snoozedUntil: number | null;
+  /** Transcrição automática dos áudios recebidos: null segue a opção global. */
+  autoTranscribe: AutoTranscribe | null;
 };
+
+export type AutoTranscribe = "on" | "off";
 
 /** Resultado da busca no histórico; `snippet` marca o trecho achado entre \u0002 e \u0003. */
 export type SearchHit = { chatJid: string; id: string; at: number; fromMe: boolean; snippet: string };
@@ -57,6 +61,7 @@ export type ChatPatch = {
   archived?: boolean;
   mutedUntil?: number | null;
   snoozedUntil?: number | null;
+  autoTranscribe?: AutoTranscribe | null;
 };
 
 /** Uma chamada de IA (Jev, DeepSeek ou local) registrada para o painel de gastos. */
@@ -280,6 +285,7 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
   ["chats", "archived", "integer not null default 0"],
   ["chats", "muted_until", "integer"],
   ["chats", "snoozed_until", "integer"],
+  ["chats", "auto_transcribe", "text"],
 ];
 
 const CHAT_SELECT = `select c.*,
@@ -333,6 +339,7 @@ function toChat(r: Row): Chat {
     archived: r.archived === 1,
     mutedUntil: r.muted_until == null ? null : Number(r.muted_until),
     snoozedUntil: r.snoozed_until == null ? null : Number(r.snoozed_until),
+    autoTranscribe: r.auto_transcribe === "on" || r.auto_transcribe === "off" ? r.auto_transcribe : null,
   };
 }
 
@@ -522,6 +529,7 @@ export class Store {
     if (patch.archived !== undefined) this.q("update chats set archived = ? where jid = ?").run(patch.archived ? 1 : 0, jid);
     if (patch.mutedUntil !== undefined) this.q("update chats set muted_until = ? where jid = ?").run(patch.mutedUntil, jid);
     if (patch.snoozedUntil !== undefined) this.q("update chats set snoozed_until = ? where jid = ?").run(patch.snoozedUntil, jid);
+    if (patch.autoTranscribe !== undefined) this.q("update chats set auto_transcribe = ? where jid = ?").run(patch.autoTranscribe, jid);
     if (patch.extraLabels) {
       const list = [...new Set(patch.extraLabels)];
       this.tx(() => {

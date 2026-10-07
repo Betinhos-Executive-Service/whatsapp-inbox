@@ -105,6 +105,9 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   const deepseek = new DeepSeekAI(fetch, deepseekModel, deepseekOptions);
   const deepseekKey = () => process.env.DEEPSEEK_API_KEY || store.getSetting("deepseek_api_key");
   const groqKey = () => process.env.GROQ_API_KEY || store.getSetting("groq_api_key");
+  const autoTranscribeAll = () => store.getSetting("auto_transcribe") === "1";
+  /** A escolha da conversa vale mais que a global. */
+  const shouldAutoTranscribe = (chat: Chat) => !!groqKey() && (chat.autoTranscribe ? chat.autoTranscribe === "on" : autoTranscribeAll());
   const claudeModel = (): ClaudeModel => {
     const saved = store.getSetting("claude_model");
     return isClaudeModel(saved) ? saved : DEFAULT_CLAUDE_MODEL;
@@ -257,7 +260,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       : (wa?.state ?? bootingState),
     jev: { configured: !!jevKey(), fromEnv: !!process.env.JEV_API_KEY, autoClassify: autoClassify() },
     classifier: { provider: classifier(), configured: !!classifierKey(), deepseekConfigured: !!deepseekKey() },
-    groq: { configured: !!groqKey(), fromEnv: !!process.env.GROQ_API_KEY },
+    groq: { configured: !!groqKey(), fromEnv: !!process.env.GROQ_API_KEY, autoTranscribe: autoTranscribeAll() },
     prefs: readPrefs(store),
     labels: store.listLabels(),
   });
@@ -274,6 +277,11 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       broadcast("message", { message, chat });
       if (live && !message.fromMe) {
         scheduleClassify(chat.jid);
+        if (message.media?.type === "audio" && shouldAutoTranscribe(chat)) {
+          transcribe(chat.jid, message.id)
+            .then((text) => broadcast("transcript", { chatJid: chat.jid, id: message.id, text }))
+            .catch((error: Error) => console.warn(`Transcrição automática falhou: ${error.message}`));
+        }
         // Silenciada: chega e conta como não lida, só não avisa.
         if (!chat.mutedUntil || chat.mutedUntil <= Date.now()) options.onIncoming?.(chat, message);
       }
@@ -401,6 +409,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       }
       if (s.jevApiKey !== undefined) store.setSetting("jev_api_key", s.jevApiKey);
       if (s.groqApiKey !== undefined) store.setSetting("groq_api_key", s.groqApiKey);
+      if (s.autoTranscribe !== undefined) store.setSetting("auto_transcribe", s.autoTranscribe ? "1" : "0");
       if (s.deepseekApiKey !== undefined) {
         store.setSetting("deepseek_api_key", s.deepseekApiKey);
         broadcast("ai", aiState());
@@ -473,6 +482,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     media: readMedia,
     transcribe,
+    cachedTranscript: (jid, id) => cachedTranscript(join(options.dataDir, "transcripts"), jid, id),
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
       store.db.prepare("vacuum into ?").run(file);
