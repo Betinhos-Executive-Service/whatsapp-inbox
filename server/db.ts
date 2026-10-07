@@ -83,14 +83,31 @@ export type Message = {
   kind: string;
   /** Mídia baixável (sem as chaves, que ficam só no banco). */
   media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
+  /** Mensagem respondida (citação). */
+  quoted: QuotedRef | null;
+  /** Apagada para todos (o texto vira "Mensagem apagada"). */
+  deleted: boolean;
+  /** Autor em grupo (JID bruto do participante), para abrir o perfil. */
+  sender: string | null;
 };
+
+export type QuotedRef = { id: string; text: string; fromMe: boolean; author: string | null };
+
+/** O que o servidor precisa para citar ou apagar uma mensagem no WhatsApp. */
+export type MessageKeyRef = { id: string; rawJid: string; fromMe: boolean; participant: string | null; text: string; at: number };
 
 /** Correção sua de etiqueta, usada como exemplo nas próximas classificações do Jev. */
 export type LabelExample = { label: string; snippet: string };
 
 export type Label = { name: string; description: string };
 
-export type IncomingMessage = Omit<Message, "media"> & { rawJid: string; participant?: string | null; media?: string | null };
+export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "sender"> & {
+  rawJid: string;
+  participant?: string | null;
+  media?: string | null;
+  /** QuotedRef em JSON. */
+  quoted?: string | null;
+};
 
 const DEFAULT_LABELS: Label[] = [
   { name: "Cotação", description: "Pedido de preço, orçamento ou proposta de serviço." },
@@ -185,6 +202,7 @@ create table if not exists ai_usage (
 );
 create index if not exists ai_usage_at on ai_usage(at desc);
 create index if not exists ai_usage_chat on ai_usage(chat_jid);
+create table if not exists photos (jid text primary key, file text, fetched_at integer not null);
 `;
 
 /** Colunas acrescentadas depois da primeira versão; SQLite não tem "add column if not exists". */
@@ -194,6 +212,8 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
   ["messages", "media", "text"],
   ["chats", "ai_priority", "text"],
   ["chats", "ai_reason", "text"],
+  ["messages", "quoted", "text"],
+  ["messages", "deleted_at", "integer"],
 ];
 
 const CHAT_SELECT = `select c.*,
@@ -264,6 +284,16 @@ function toMessage(r: Row): Message {
       media = null;
     }
   }
+  let quoted: QuotedRef | null = null;
+  if (typeof r.quoted === "string") {
+    try {
+      const q = JSON.parse(r.quoted);
+      quoted = { id: String(q.id), text: String(q.text ?? ""), fromMe: q.fromMe === true, author: q.author ?? null };
+    } catch {
+      quoted = null;
+    }
+  }
+  const deleted = r.deleted_at != null;
   return {
     chatJid: String(r.chat_jid),
     id: String(r.id),
@@ -271,9 +301,14 @@ function toMessage(r: Row): Message {
     at: Number(r.at),
     text: String(r.text),
     kind: String(r.kind),
-    media,
+    media: deleted ? null : media,
+    quoted: deleted ? null : quoted,
+    deleted,
+    sender: (r.participant as string) || null,
   };
 }
+
+export const DELETED_TEXT = "Mensagem apagada";
 
 export class Store {
   readonly db: DatabaseSync;
@@ -436,8 +471,8 @@ export class Store {
     return this.tx(() => {
       this.ensureChat(m.chatJid, { status: live ? "aberta" : "resolvida" });
       const inserted = this
-        .q("insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(m.chatJid, m.id, m.rawJid, m.participant ?? null, m.fromMe ? 1 : 0, m.at, m.text, m.kind, m.media ?? null);
+        .q("insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media, quoted) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(m.chatJid, m.id, m.rawJid, m.participant ?? null, m.fromMe ? 1 : 0, m.at, m.text, m.kind, m.media ?? null, m.quoted ?? null);
       if (inserted.changes === 0) return false;
       this
         .q("update chats set last_at = ?, last_text = ?, last_from_me = ? where jid = ? and last_at <= ?")
@@ -458,6 +493,46 @@ export class Store {
     if (!this.insertMessage(m, live)) return null;
     const message = toMessage(this.q("select * from messages where chat_jid = ? and id = ?").get(m.chatJid, m.id) as Row);
     return { message, chat: this.getChat(m.chatJid)! };
+  }
+
+  getMessage(jid: string, id: string): Message | null {
+    const r = this.q("select * from messages where chat_jid = ? and id = ?").get(jid, id) as Row | undefined;
+    return r ? toMessage(r) : null;
+  }
+
+  /** Chave da mensagem no WhatsApp: para citar (responder) ou apagar. */
+  messageKey(jid: string, id: string): MessageKeyRef | null {
+    const r = this.q("select id, raw_jid, from_me, participant, text, at from messages where chat_jid = ? and id = ?").get(jid, id) as Row | undefined;
+    if (!r) return null;
+    return { id: String(r.id), rawJid: String(r.raw_jid), fromMe: r.from_me === 1, participant: (r.participant as string) ?? null, text: String(r.text), at: Number(r.at) };
+  }
+
+  /** Apagada para todos: some o conteúdo, fica o aviso. Devolve a mensagem atualizada. */
+  markRevoked(jid: string, id: string): Message | null {
+    return this.tx(() => {
+      const changed = this
+        .q("update messages set text = ?, kind = 'deleted', media = null, quoted = null, deleted_at = ? where chat_jid = ? and id = ? and deleted_at is null")
+        .run(DELETED_TEXT, Date.now(), jid, id).changes;
+      if (!changed) return null;
+      this.refreshLast(jid);
+      return this.getMessage(jid, id);
+    });
+  }
+
+  /** Apagada para mim: sai deste computador. */
+  deleteMessage(jid: string, id: string): boolean {
+    return this.tx(() => {
+      const gone = this.q("delete from messages where chat_jid = ? and id = ?").run(jid, id).changes > 0;
+      if (gone) this.refreshLast(jid);
+      return gone;
+    });
+  }
+
+  /** Recalcula a prévia da conversa a partir da mensagem mais recente que sobrou. */
+  private refreshLast(jid: string) {
+    const r = this.q("select at, text, from_me from messages where chat_jid = ? order by at desc limit 1").get(jid) as Row | undefined;
+    if (r) this.q("update chats set last_at = ?, last_text = ?, last_from_me = ? where jid = ?").run(Number(r.at), String(r.text), Number(r.from_me), jid);
+    else this.q("update chats set last_text = null, last_from_me = 0 where jid = ?").run(jid);
   }
 
   listMessages(jid: string, before: number | null, limit = 80): Message[] {
@@ -530,6 +605,23 @@ export class Store {
       this.q("delete from chats where jid = ?").run(lid);
       return this.getChat(pn);
     });
+  }
+
+  // ---- fotos de perfil (cache em disco; file null = sem foto ou foto privada)
+
+  getPhoto(jid: string): { file: string | null; fetchedAt: number } | null {
+    const r = this.q("select file, fetched_at from photos where jid = ?").get(jid) as Row | undefined;
+    return r ? { file: (r.file as string) ?? null, fetchedAt: Number(r.fetched_at) } : null;
+  }
+
+  setPhoto(jid: string, file: string | null): void {
+    this.q("insert into photos (jid, file, fetched_at) values (?, ?, ?) on conflict(jid) do update set file = excluded.file, fetched_at = excluded.fetched_at")
+      .run(jid, file, Date.now());
+  }
+
+  /** Foto trocada no WhatsApp: a próxima consulta busca de novo. */
+  forgetPhoto(jid: string): void {
+    this.q("delete from photos where jid = ?").run(jid);
   }
 
   // ---- mídia
