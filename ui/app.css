@@ -179,6 +179,8 @@ ul, ol { margin: 0; padding: 0; }
 .search--active { border-color: var(--bt-focus-border); }
 .search--active > svg { color: var(--bt-color-action); }
 .search input::-webkit-search-cancel-button { display: none; }
+/* O anel de foco fica no contorno .search; o :focus-visible global não pode desenhar uma segunda caixa no input. */
+.search input:focus-visible { border: 0; box-shadow: none; }
 .search__clear {
   display: inline-grid; place-items: center; flex: 0 0 auto; width: 24px; height: 24px; margin-right: calc(-1 * var(--bt-space-1));
   border: 0; border-radius: var(--bt-radius-full); background: transparent; color: var(--bt-color-text-secondary); cursor: pointer;
@@ -414,6 +416,8 @@ ul, ol { margin: 0; padding: 0; }
 
 /* Diálogo de encaminhar. */
 .forward-dialog { display: flex; flex-direction: column; gap: var(--bt-space-3); padding: var(--bt-space-5); width: min(100%, 460px); max-height: min(640px, 90vh); }
+/* Só a lista encolhe; cabeçalho, prévia e busca mantêm a altura natural. */
+.forward-dialog > * { flex-shrink: 0; }
 .forward-dialog__head { display: flex; align-items: center; justify-content: space-between; gap: var(--bt-space-2); }
 .forward-dialog__preview {
   padding: var(--bt-space-2) var(--bt-space-2-5); border-left: var(--bt-border-width-severity) solid var(--bt-color-action); border-radius: var(--bt-radius-xs);
@@ -422,7 +426,7 @@ ul, ol { margin: 0; padding: 0; }
 }
 .forward-dialog__error { font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-semibold); color: var(--bt-color-danger); }
 .forward-dialog__empty { display: flex; align-items: center; gap: var(--bt-space-2); padding: var(--bt-space-3) 0; }
-.forward-dialog__list { list-style: none; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin: 0 calc(-1 * var(--bt-space-2)); }
+.forward-dialog__list { list-style: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin: 0 calc(-1 * var(--bt-space-2)); }
 .forward-dialog__item {
   display: flex; align-items: center; gap: var(--bt-space-2-5); width: 100%; min-height: 48px; padding: var(--bt-space-1-5) var(--bt-space-2);
   border: 0; border-radius: var(--bt-radius-md); background-color: transparent; color: var(--bt-color-text-primary);
