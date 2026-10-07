@@ -288,6 +288,13 @@ function ChatList(props: {
 
   useEffect(() => setLimit(PAGE), [tab, label, query]);
 
+  const searchInput = useRef<HTMLInputElement>(null);
+  const searching = query.trim() !== "";
+  const clearSearch = () => {
+    setQuery("");
+    searchInput.current?.focus();
+  };
+
   return (
     <section className="list-pane" aria-label="Conversas">
       <header className="list-pane__header">
@@ -298,10 +305,27 @@ function ChatList(props: {
           </button>
         </div>
         <ConnectionPill connection={props.connection} online={props.online} />
-        <label className="search">
+        <label className={`search${searching ? " search--active" : ""}`}>
           <Search size={16} aria-hidden />
           <span className="sr-only">Buscar conversa</span>
-          <input type="search" placeholder="Nome, número ou mensagem" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input
+            ref={searchInput}
+            type="search"
+            placeholder="Nome, número ou mensagem"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && searching) {
+                e.preventDefault();
+                setQuery("");
+              }
+            }}
+          />
+          {searching && (
+            <button type="button" className="search__clear" aria-label="Limpar busca" title="Limpar busca (Esc)" onClick={clearSearch}>
+              <X size={14} aria-hidden />
+            </button>
+          )}
         </label>
         <div className="segmented" role="tablist" aria-label="Status da conversa">
           {TABS.map((t) => (
@@ -331,6 +355,18 @@ function ChatList(props: {
           </select>
         </label>
         </div>
+        {searching && props.loaded && (
+          <div className="search-status" role="status">
+            <Search size={14} aria-hidden />
+            <p className="search-status__text">
+              <strong>{filtered.length}</strong> {filtered.length === 1 ? "resultado" : "resultados"} para <q>{query.trim()}</q>
+            </p>
+            <button type="button" className="button button--ghost button--compact" onClick={clearSearch}>
+              <X size={14} aria-hidden />
+              Limpar busca
+            </button>
+          </div>
+        )}
       </header>
       <div className="list-pane__scroll">
         {!props.loaded ? (
@@ -342,12 +378,22 @@ function ChatList(props: {
         ) : filtered.length === 0 ? (
           <div className="empty">
             <Inbox size={36} aria-hidden />
-            <p className="empty__title">{props.chats.length ? "Nenhuma conversa nestes filtros" : "Nenhuma conversa ainda"}</p>
-            <p className="hint">
-              {props.chats.length
-                ? "Troque a aba de status, a etiqueta ou a busca."
-                : "Conecte o WhatsApp. As conversas aparecem aqui conforme chegam."}
+            <p className="empty__title">
+              {!props.chats.length ? "Nenhuma conversa ainda" : searching ? `Nenhuma conversa para “${query.trim()}”` : "Nenhuma conversa nestes filtros"}
             </p>
+            <p className="hint">
+              {!props.chats.length
+                ? "Conecte o WhatsApp. As conversas aparecem aqui conforme chegam."
+                : searching
+                  ? "Confira a grafia ou limpe a busca para ver todas as conversas."
+                  : "Troque a aba de status ou a etiqueta."}
+            </p>
+            {searching && (
+              <button type="button" className="button button--secondary" onClick={clearSearch}>
+                <X size={16} aria-hidden />
+                Limpar busca
+              </button>
+            )}
           </div>
         ) : (
           <ul className="chat-list">
