@@ -236,6 +236,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     const client = new WhatsApp(store, join(options.dataDir, "auth"));
     client.on("connection", (s) => broadcast("connection", s));
     client.on("chat", (chat) => broadcast("chat", chat));
+    client.on("update", (u) => broadcast("message-update", u));
     client.on("reload", () => broadcast("reload", null));
     client.on("message", ({ message, chat, live }) => {
       broadcast("message", { message, chat });
@@ -262,9 +263,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     distDir: options.distDir,
     state: publicState,
-    send: (jid, text) => connected().send(jid, text),
-    sendMedia: async (jid, file) => {
-      const id = await connected().sendMedia(jid, file);
+    send: (jid, text, quotedId) => connected().send(jid, text, quotedId),
+    react: (jid, id, emoji) => connected().react(jid, id, emoji),
+    sendMedia: async (jid, file, quotedId) => {
+      const id = await connected().sendMedia(jid, file, quotedId);
       if (id) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
     },
     markRead: async (jid) => {

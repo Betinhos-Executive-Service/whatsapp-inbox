@@ -147,7 +147,7 @@ test("Jev: perguntas, estado e resposta validados", () => {
   assert.throws(() => buildQuestions(labels.slice(0, 1)));
   const q = buildQuestions(labels);
   assert.deepEqual(Object.keys(q), ["etiqueta", "responder", "urgente", "prioridade"]);
-  const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null }]));
+  const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null, ack: null, quoted: null, editedAt: null, deletedAt: null, reactions: [] }]));
   assert.equal(state.mensagens[0].de, "contato");
   assert.equal(state.mensagens[0].texto.length, 1000);
   assert.ok(!JSON.stringify(state).includes("whatsapp.net"));
@@ -178,6 +178,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       },
       state: () => ({}),
       send: async () => undefined,
+      react: async () => undefined,
       sendMedia: async (_jid, file) => void sentMedia.push(file),
       markRead: async () => undefined,
       classify: async () => null,

@@ -11,8 +11,11 @@ export type Api = {
   distDir: string;
   port: number;
   state: () => unknown;
-  send: (jid: string, text: string) => Promise<void>;
-  sendMedia: (jid: string, file: { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number }) => Promise<void>;
+  /** `quotedId`: responde citando essa mensagem. */
+  send: (jid: string, text: string, quotedId?: string) => Promise<void>;
+  sendMedia: (jid: string, file: { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number }, quotedId?: string) => Promise<void>;
+  /** Emoji vazio tira a reação. */
+  react: (jid: string, id: string, emoji: string) => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   classify: (jid: string) => Promise<unknown>;
   saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
@@ -107,6 +110,7 @@ const sendMediaSchema = z.object({
   caption: z.string().max(4096).optional(),
   ptt: z.boolean().optional(),
   seconds: z.number().positive().max(24 * 3600).optional(),
+  quotedId: z.string().min(1).max(128).optional(),
 });
 
 async function readJson(req: IncomingMessage, limit = 64 * 1024): Promise<unknown> {
@@ -193,17 +197,25 @@ export function createHandler(api: Api) {
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/send-media" && method === "POST") {
-        const { data, ...file } = parse(sendMediaSchema, await readJson(req, Math.ceil((MAX_MEDIA * 4) / 3) + 64 * 1024));
+        const { data, quotedId, ...file } = parse(sendMediaSchema, await readJson(req, Math.ceil((MAX_MEDIA * 4) / 3) + 64 * 1024));
         const body = Buffer.from(data, "base64");
         if (!body.length) throw new HttpError(400, "Arquivo vazio.");
         if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
-        await api.sendMedia(jid, { ...file, body });
+        await api.sendMedia(jid, { ...file, body }, quotedId);
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/send" && method === "POST") {
-        const { text } = parse(z.object({ text: z.string().trim().min(1).max(4096) }), await readJson(req));
-        await api.send(jid, text);
+        const { text, quotedId } = parse(
+          z.object({ text: z.string().trim().min(1).max(4096), quotedId: z.string().min(1).max(128).optional() }),
+          await readJson(req),
+        );
+        await api.send(jid, text, quotedId);
         return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/react" && method === "POST") {
+        const { id, emoji } = parse(z.object({ id: z.string().min(1).max(128), emoji: z.string().max(16) }), await readJson(req));
+        await api.react(jid, id, emoji);
+        return json(res, 200, store.getMessage(jid, id));
       }
       if (action === "/reminders" && method === "GET") return json(res, 200, store.listReminders(jid));
       if (action === "/reminders" && method === "POST") {

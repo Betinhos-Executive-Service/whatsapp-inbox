@@ -55,7 +55,7 @@ export function extractMedia(content: Content): MediaRef | null {
   };
 }
 
-/** Tipos que não são mensagem para o usuário: protocolo, reação, chaves, enquetes votadas. */
+/** Tipos que não são mensagem para o usuário. Apagar, editar e reagir saem por extractAction. */
 const IGNORED = new Set([
   "protocolMessage",
   "reactionMessage",
@@ -68,13 +68,50 @@ const IGNORED = new Set([
   "callLogMesssage",
   // Cabeçalho de álbum: as fotos chegam como mensagens próprias.
   "albumMessage",
-  // Edição chega como mensagem nova; o texto original já está salvo.
   "editedMessage",
   "associatedChildMessage",
   "placeholderMessage",
   "messageHistoryBundle",
   "secretEncryptedMessage",
 ]);
+
+/** Mensagem citada (resposta): id e texto curto da original. */
+export type Quote = { id: string; text: string };
+
+export function extractQuote(content: Content): Quote | null {
+  if (!content) return null;
+  for (const value of Object.values(content)) {
+    const ctx = value && typeof value === "object" ? (value as Record<string, any>).contextInfo : null;
+    if (!ctx?.stanzaId) continue;
+    const quoted = extractText(ctx.quotedMessage);
+    return { id: String(ctx.stanzaId), text: (quoted?.text ?? "Mensagem").slice(0, 300) };
+  }
+  return null;
+}
+
+/** Mensagem que muda outra: apagar para todos, editar ou reagir. */
+export type Action =
+  | { type: "revoke"; id: string }
+  | { type: "edit"; id: string; text: string }
+  | { type: "reaction"; id: string; emoji: string };
+
+/** Tipos do protocolo do WhatsApp (proto.Message.ProtocolMessage.Type). */
+const REVOKE = 0;
+const MESSAGE_EDIT = 14;
+
+export function extractAction(content: Content): Action | null {
+  if (!content) return null;
+  const reaction = content.reactionMessage;
+  if (reaction?.key?.id) return { type: "reaction", id: String(reaction.key.id), emoji: typeof reaction.text === "string" ? reaction.text : "" };
+  const p = content.protocolMessage;
+  if (!p?.key?.id) return null;
+  if (p.type === REVOKE) return { type: "revoke", id: String(p.key.id) };
+  if (p.type === MESSAGE_EDIT) {
+    const edited = extractText(p.editedMessage);
+    return edited ? { type: "edit", id: String(p.key.id), text: edited.text } : null;
+  }
+  return null;
+}
 
 function withCaption(label: string, caption: unknown): string {
   const c = typeof caption === "string" ? caption.trim() : "";
