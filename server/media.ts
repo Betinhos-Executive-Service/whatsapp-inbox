@@ -35,7 +35,20 @@ export async function cacheMedia(dir: string, chatJid: string, id: string, mimet
  * Baixa e decifra a mídia uma vez e guarda em data/media; as próximas aberturas vêm do disco.
  * Mídia muito antiga pode ter expirado no WhatsApp: aí o download falha com 404/410.
  */
-export async function loadMedia(dir: string, chatJid: string, id: string, refJson: string): Promise<{ body: Buffer; mimetype: string; fileName: string | null }> {
+type Loaded = { body: Buffer; mimetype: string; fileName: string | null };
+const inflight = new Map<string, Promise<Loaded>>();
+
+export function loadMedia(dir: string, chatJid: string, id: string, refJson: string): Promise<Loaded> {
+  const key = `${dir}|${chatJid}|${id}`;
+  let job = inflight.get(key);
+  if (!job) {
+    job = fetchMedia(dir, chatJid, id, refJson).finally(() => inflight.delete(key));
+    inflight.set(key, job);
+  }
+  return job;
+}
+
+async function fetchMedia(dir: string, chatJid: string, id: string, refJson: string): Promise<Loaded> {
   const ref = JSON.parse(refJson) as MediaRef;
   const file = mediaFile(dir, chatJid, id, ref.mimetype);
   try {

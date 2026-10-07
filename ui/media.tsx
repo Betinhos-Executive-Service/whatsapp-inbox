@@ -1,4 +1,4 @@
-import { Download, FileText, Mic, Pause, Play, Trash2, TriangleAlert, X } from "lucide-react";
+import { Download, FileText, LoaderCircle, Mic, Pause, Play, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, mediaUrl, type Message, type OutgoingMedia } from "./api.ts";
 import { webmToOgg } from "./ogg.ts";
@@ -41,6 +41,14 @@ export function AudioPlayer({ src, seconds, voice, onError }: { src: string; sec
     el.playbackRate = speed;
     void el.play().catch(() => setLoading(false));
   };
+  /** Intenção de tocar: já pede o arquivo, para o clique não esperar o download. */
+  const warm = () => {
+    const el = audio.current;
+    if (el && el.preload === "none") {
+      el.preload = "auto";
+      el.load();
+    }
+  };
   const cycle = () => {
     const next = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length];
     setSpeed(next);
@@ -64,7 +72,12 @@ export function AudioPlayer({ src, seconds, voice, onError }: { src: string; sec
         onLoadedMetadata={(e) => Number.isFinite(e.currentTarget.duration) && setDuration(e.currentTarget.duration)}
         onError={onError}
       />
-      <button type="button" className="audio__play" onClick={toggle} aria-label={isPlaying ? "Pausar áudio" : "Tocar áudio"} aria-busy={loading || undefined}>
+      <button
+        type="button"
+        className="audio__play"
+        onPointerEnter={warm}
+        onFocus={warm}
+        onClick={toggle} aria-label={isPlaying ? "Pausar áudio" : "Tocar áudio"} aria-busy={loading || undefined}>
         {isPlaying ? <Pause size={18} aria-hidden /> : <Play size={18} aria-hidden />}
       </button>
       <div className="audio__track">
@@ -314,7 +327,7 @@ type Rec = {
   base: number;
   since: number | null;
   quietSince: number | null;
-  timer: number;
+  buffer: Float32Array<ArrayBuffer>;
 };
 
 function micError(error: unknown): string {
@@ -346,9 +359,6 @@ async function openMic(deviceId: string): Promise<MediaStream> {
 export function useRecorder(onError: (text: string) => void) {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const [levels, setLevels] = useState<number[]>(() => Array(LEVEL_BARS).fill(0));
-  const [silent, setSilent] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState(savedMic);
   const [preview, setPreview] = useState<string | null>(null);
@@ -380,15 +390,11 @@ export function useRecorder(onError: (text: string) => void) {
     const r = rec.current;
     if (!r) return;
     rec.current = null;
-    window.clearInterval(r.timer);
     r.stream.getTracks().forEach((t) => t.stop());
     void r.ctx.close().catch(() => undefined);
     clearPreview();
     setRecording(false);
     setPaused(false);
-    setElapsed(0);
-    setSilent(false);
-    setLevels(Array(LEVEL_BARS).fill(0));
   };
   useEffect(
     () => () => {
@@ -400,30 +406,25 @@ export function useRecorder(onError: (text: string) => void) {
 
   const total = (r: Rec) => r.base + (r.since === null ? 0 : performance.now() - r.since);
 
-  /** Nível do microfone, tempo e aviso de silêncio (~15 atualizações/s; intervalo segue rodando com a janela em segundo plano). */
-  const loop = (r: Rec) => {
-    const data = new Float32Array(r.analyser.fftSize);
-    const tick = () => {
-      if (rec.current !== r) return;
-      const now = performance.now();
-      r.analyser.getFloatTimeDomainData(data);
-      let sum = 0;
-      for (const v of data) sum += v * v;
-      const rms = Math.sqrt(sum / data.length);
-      // Sem áudio do sistema (gravação direta) não há nível para medir.
-      const running = r.since !== null && r.ctx.state === "running";
-      if (running) {
-        if (rms < SILENCE_LEVEL) r.quietSince ??= now;
-        else r.quietSince = null;
-        setSilent(r.quietSince !== null && now - r.quietSince > SILENCE_MS);
-        // Escala perceptiva: fala normal fica no meio da barra.
-        const level = Math.min(1, Math.sqrt(rms) * 2.2);
-        setLevels((l) => [...l.slice(1), level]);
-      }
-      setElapsed(total(r) / 1000);
-    };
-    r.timer = window.setInterval(tick, 66);
-  };
+  /**
+   * Nível do microfone, tempo e aviso de silêncio, lidos pela barra de gravação.
+   * Fica fora do estado do React: medir 15x/s não re-renderiza a conversa inteira.
+   */
+  const sample = useCallback((): { level: number | null; elapsed: number; silent: boolean } => {
+    const r = rec.current;
+    if (!r) return { level: null, elapsed: 0, silent: false };
+    const now = performance.now();
+    // Sem áudio do sistema (gravação direta) não há nível para medir.
+    if (r.since === null || r.ctx.state !== "running") return { level: null, elapsed: total(r) / 1000, silent: false };
+    r.analyser.getFloatTimeDomainData(r.buffer);
+    let sum = 0;
+    for (const v of r.buffer) sum += v * v;
+    const rms = Math.sqrt(sum / r.buffer.length);
+    if (rms < SILENCE_LEVEL) r.quietSince ??= now;
+    else r.quietSince = null;
+    // Escala perceptiva: fala normal fica no meio da barra.
+    return { level: Math.min(1, Math.sqrt(rms) * 2.2), elapsed: total(r) / 1000, silent: r.quietSince !== null && now - r.quietSince > SILENCE_MS };
+  }, []);
 
   const start = async () => {
     if (rec.current) return;
@@ -447,13 +448,12 @@ export function useRecorder(onError: (text: string) => void) {
     // para nunca entregar uma gravação vazia.
     const live = ctx.state === "running";
     const recorder = new MediaRecorder(live ? dest.stream : stream, { mimeType: mime, audioBitsPerSecond: 32000 });
-    const r: Rec = { ctx, dest, analyser, source, stream, recorder, chunks: [], base: 0, since: performance.now(), quietSince: null, timer: 0 };
+    const r: Rec = { ctx, dest, analyser, source, stream, recorder, chunks: [], base: 0, since: performance.now(), quietSince: null, buffer: new Float32Array(analyser.fftSize) };
     recorder.ondataavailable = (e) => e.data.size && r.chunks.push(e.data);
     rec.current = r;
     recorder.start(250);
     setRecording(true);
     setPaused(false);
-    loop(r);
     // Com a permissão dada, os nomes dos microfones aparecem.
     void refreshDevices();
     const used = stream.getAudioTracks()[0]?.getSettings().deviceId;
@@ -467,7 +467,6 @@ export function useRecorder(onError: (text: string) => void) {
     r.base = total(r);
     r.since = null;
     r.quietSince = null;
-    setSilent(false);
     setPaused(true);
     // Prévia do que já foi gravado: pede os dados pendentes e monta o arquivo.
     r.recorder.addEventListener(
@@ -508,7 +507,6 @@ export function useRecorder(onError: (text: string) => void) {
       r.source = source;
       r.stream = stream;
       r.quietSince = null;
-      setSilent(false);
     } catch (error) {
       onErrorRef.current(micError(error));
     }
@@ -534,15 +532,58 @@ export function useRecorder(onError: (text: string) => void) {
     return { fileName: "voz.ogg", mimetype: "audio/ogg", data: base64(ogg), ptt: true, seconds };
   };
 
-  return { recording, paused, elapsed, levels, silent, devices, deviceId, preview, start, pause, resume, cancel, finish, chooseDevice };
+  /** O que já foi gravado (pausado), para transcrever sem parar a gravação. */
+  const snapshot = async (): Promise<{ data: string; mimetype: string } | null> => {
+    const r = rec.current;
+    if (!r || !r.chunks.length) return null;
+    return { data: base64(new Uint8Array(await new Blob(r.chunks).arrayBuffer())), mimetype: "audio/webm" };
+  };
+
+  return { recording, paused, devices, deviceId, preview, start, pause, resume, cancel, finish, chooseDevice, sample, snapshot };
 }
 
 export type Recorder = ReturnType<typeof useRecorder>;
 
-export function RecordingBar({ recorder }: { recorder: Recorder }) {
-  const { paused, elapsed, levels, silent, devices, deviceId, preview } = recorder;
+export function RecordingBar({ recorder, onTranscript, onError }: { recorder: Recorder; onTranscript: (text: string) => void; onError: (text: string) => void }) {
+  const { paused, devices, deviceId, preview, sample } = recorder;
   const toggle = useRef<HTMLButtonElement>(null);
+  const meter = useRef<HTMLDivElement>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [silent, setSilent] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   useEffect(() => toggle.current?.focus(), [paused]);
+  // Medidor desenhado direto no DOM (~15x/s); o React só re-renderiza quando muda o segundo ou o aviso.
+  useEffect(() => {
+    const levels: number[] = Array(LEVEL_BARS).fill(0);
+    const tick = () => {
+      const s = sample();
+      if (s.level !== null) {
+        levels.shift();
+        levels.push(s.level);
+        const bars = meter.current?.children;
+        if (bars) for (let i = 0; i < LEVEL_BARS; i++) (bars[i] as HTMLElement).style.transform = `scaleY(${Math.max(0.08, levels[i])})`;
+      }
+      setElapsed((prev) => (Math.floor(prev) === Math.floor(s.elapsed) ? prev : s.elapsed));
+      setSilent(s.silent);
+    };
+    tick();
+    const timer = window.setInterval(tick, 66);
+    return () => window.clearInterval(timer);
+  }, [sample]);
+  const transcribe = async () => {
+    setTranscribing(true);
+    try {
+      const audio = await recorder.snapshot();
+      if (!audio) return;
+      const { text } = await api.transcribeRecording(audio.data, audio.mimetype);
+      if (!text.trim()) throw new Error("Nenhuma fala reconhecida na gravação.");
+      onTranscript(text.trim());
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setTranscribing(false);
+    }
+  };
   const current = devices.find((d) => d.deviceId === deviceId);
   return (
     <div
@@ -569,9 +610,9 @@ export function RecordingBar({ recorder }: { recorder: Recorder }) {
           <AudioPlayer key={preview} src={preview} seconds={elapsed} voice onError={() => undefined} />
         </div>
       ) : (
-        <div className="recording__meter" aria-hidden>
-          {levels.map((l, i) => (
-            <span key={i} style={{ transform: `scaleY(${Math.max(0.08, l)})` }} />
+        <div className="recording__meter" aria-hidden ref={meter}>
+          {Array.from({ length: LEVEL_BARS }, (_, i) => (
+            <span key={i} style={{ transform: "scaleY(0.08)" }} />
           ))}
           {silent && <span className="recording__silent">Sem som. Confira o microfone.</span>}
         </div>
@@ -589,6 +630,19 @@ export function RecordingBar({ recorder }: { recorder: Recorder }) {
             ))}
           </select>
         </label>
+      )}
+      {paused && (
+        <button
+          type="button"
+          className="icon-button recording__ai"
+          aria-label="Transcrever com IA e escrever como texto"
+          title="Transcrever com IA (vira texto no campo da mensagem)"
+          disabled={transcribing || !preview}
+          aria-busy={transcribing || undefined}
+          onClick={() => void transcribe()}
+        >
+          {transcribing ? <LoaderCircle size={18} className="spin" aria-hidden /> : <Sparkles size={18} aria-hidden />}
+        </button>
       )}
       <button
         ref={toggle}

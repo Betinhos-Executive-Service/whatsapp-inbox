@@ -1474,7 +1474,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }}
         />
         {recorder.recording ? (
-          <RecordingBar recorder={recorder} />
+          <RecordingBar
+            recorder={recorder}
+            onError={(text) => notify("error", text)}
+            onTranscript={(text) => {
+              // A gravação vira texto: descarta o áudio e põe o texto no campo, para revisar e enviar.
+              recorder.cancel();
+              setDraft((d) => (d.trim() ? `${d.trimEnd()} ${text}` : text));
+            }}
+          />
         ) : (
           <>
         <button

@@ -673,6 +673,8 @@ ul, ol { margin: 0; padding: 0; }
 .recording__mic > svg { flex: 0 0 auto; color: var(--bt-color-action); }
 .recording__mic select { min-width: 0; width: 100%; border: 0; background: transparent; font: inherit; font-size: var(--bt-font-size-12); color: inherit; cursor: pointer; text-overflow: ellipsis; outline: none; }
 .recording__toggle { flex: 0 0 auto; }
+.recording__ai { flex: 0 0 auto; color: var(--bt-color-action); }
+.recording__ai:disabled { color: var(--bt-color-text-secondary); cursor: progress; }
 @media (max-width: 560px) { .recording__mic { max-width: 44px; } .recording__mic select { position: absolute; inset: 0; opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .recording__meter > span { transition: none; } }
 .recording__dot { width: 10px; height: 10px; border-radius: var(--bt-radius-full); background-color: var(--bt-color-danger); animation: pulse 1.2s var(--bt-ease-out) infinite; }

@@ -194,9 +194,10 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       logout: async () => undefined,
       reset: async () => undefined,
       backup: async () => "",
-      media: async () => ({ body: Buffer.from(""), mimetype: "image/jpeg", fileName: null }),
+      media: async () => ({ body: Buffer.from("0123456789"), mimetype: "audio/ogg", fileName: null }),
       transcribe: async () => "oi",
       cachedTranscript: async () => null,
+      transcribeRecording: async () => "texto",
       ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setDeepseekOptions: () => undefined, setClaudeOptions: () => undefined, setJevContext: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
       subscribe: (res) => res.end(),
       onChatChanged: () => undefined,
@@ -207,6 +208,11 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
   const base = `http://127.0.0.1:${port}`;
   try {
     assert.equal((await fetch(`${base}/api/chats`)).status, 200);
+    const part = await fetch(`${base}/api/media/${encodeURIComponent(PN)}/X1`, { headers: { range: "bytes=2-5" } });
+    assert.equal(part.status, 206);
+    assert.equal(part.headers.get("content-range"), "bytes 2-5/10");
+    assert.equal(await part.text(), "2345");
+    assert.equal((await fetch(`${base}/api/media/${encodeURIComponent(PN)}/X1`, { headers: { range: "bytes=50-" } })).status, 416);
     // fetch descarta o cabeçalho Host; node:http envia o que pedimos (simula DNS rebinding).
     const evilStatus = await new Promise<number>((resolve, reject) => {
       const req = request({ host: "127.0.0.1", port, path: "/api/chats", headers: { host: "evil.example" } }, (res) => {
