@@ -1,6 +1,6 @@
 // Atualização pelo GitHub Releases (Betinhos-Executive-Service/whatsapp-inbox).
 // Só consulta e baixa quando a pessoa pede: a janela mostra o aviso e o botão "Atualizar agora".
-import { app, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
+import { app, ipcMain, type IpcMainInvokeEvent } from "electron";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import updater from "electron-updater";
@@ -20,25 +20,23 @@ const REPO = "whatsapp-inbox";
 const VERSION = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 
 export function setupUpdates(options: {
-  window: () => BrowserWindow | null;
-  trustedOrigin: () => string | null;
+  /** Envia para a página de cada conta aberta. */
+  send: (channel: string, ...args: unknown[]) => void;
+  /** Só a página de uma conta (servidor local) pode pedir atualização. */
+  trusted: (event: IpcMainInvokeEvent) => boolean;
   beforeInstall: () => Promise<void>;
 }) {
   const { autoUpdater } = updater;
   let state: UpdateState = { status: "idle" };
   let latest: string | null = null;
 
-  const publish = () => options.window()?.webContents.send("update:state", state);
+  const publish = () => options.send("update:state", state);
   const set = (next: UpdateState) => {
     state = next;
     publish();
   };
 
-  /** Só a página do próprio app (servidor local) pode pedir atualização. */
-  const trusted = (event: IpcMainInvokeEvent) => {
-    const origin = options.trustedOrigin();
-    return !!origin && new URL(event.senderFrame?.url ?? "about:blank").origin === origin;
-  };
+  const trusted = options.trusted;
 
   // Log em %APPDATA%WhatsApp Inboxlogsatualizacao.log: mostra onde uma atualização parou.
   const logDir = join(app.getPath("userData"), "logs");
@@ -70,9 +68,10 @@ export function setupUpdates(options: {
     write("info")(`Baixada v${info.version}; encerrando o app para instalar.`);
     // Nunca deixa a instalação esperando o encerramento para sempre.
     await Promise.race([options.beforeInstall().catch(() => undefined), new Promise((r) => setTimeout(r, 5000))]);
-    // Silencioso e reabre o app sozinho depois de instalar.
+    // Não silencioso: o instalador one-click mostra a janela de progresso enquanto o app está fechado,
+    // para ninguém achar que travou. Reabre o app sozinho ao terminar.
     write("info")("Chamando quitAndInstall.");
-    autoUpdater.quitAndInstall(true, true);
+    autoUpdater.quitAndInstall(false, true);
   });
   autoUpdater.on("error", (error) => {
     // Falha de consulta sem aviso aberto não incomoda ninguém; falha no download aparece.
@@ -155,7 +154,7 @@ export function setupUpdates(options: {
     /** Ao reabrir a janela: consulta de novo e lembra a página de mostrar o aviso. */
     remind: () => {
       check();
-      options.window()?.webContents.send("update:remind");
+      options.send("update:remind");
     },
   };
 }

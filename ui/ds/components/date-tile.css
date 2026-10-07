@@ -1,0 +1,7 @@
+/* DateTile: navy com dia branco; atrasado vira danger. */
+.bt-date-tile { flex: 0 0 auto; display: grid; place-content: center; width: 48px; height: 55px; border-radius: var(--bt-radius-md); background-color: var(--bt-color-brand); color: var(--bt-color-surface); font-family: var(--bt-font-family-sans); text-align: center; line-height: 1; }
+.bt-date-tile__day { font-size: 18px; font-weight: var(--bt-font-weight-extrabold); }
+.bt-date-tile__month { margin-top: var(--bt-space-0-5); font-size: 10px; font-weight: var(--bt-font-weight-bold); text-transform: uppercase; opacity: .85; }
+.bt-date-tile--compact { width: 40px; height: 43px; border-radius: 9px; }
+.bt-date-tile--compact .bt-date-tile__day { font-size: 16px; }
+.bt-date-tile--overdue { background-color: var(--bt-color-danger); }

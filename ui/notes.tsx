@@ -1,12 +1,13 @@
-import { AlarmClock, Check, LoaderCircle, Trash2, WandSparkles, X } from "lucide-react";
+import { AlarmClock, Check, LoaderCircle, StickyNote, Trash2, WandSparkles, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, type Chat, type Reminder, type Summary } from "./api.ts";
 import { aiName, isAiReady, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { ResizeHandle } from "./resize.tsx";
+import { Button, Input, Textarea } from "./ds/index.ts";
 import { dayLabel, formatBrl, formatTime, formatTokens, formatUsd } from "./format.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
-/** Valor de <input type="datetime-local"> no horário deste computador. */
+/** Valor de <Input type="datetime-local"> no horário deste computador. */
 const toLocalInput = (ms: number) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -127,21 +128,112 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
     <aside className="notes" aria-label="Notas e lembretes">
       <ResizeHandle cssVar="--inbox-side-w" storageKey="inbox:side-w" initial={320} min={280} max={560} edge="start" reserve={360} label="Largura do painel lateral" />
       <header className="notes__header">
-        <h3 className="heading-card">Notas e lembretes</h3>
-        <button
-          className="icon-button icon-button--plain"
+        <h3 className="heading-card notes__heading">
+          <StickyNote size={18} aria-hidden /> Notas e lembretes
+        </h3>
+        <Button
+          variant="ghost"
+          size="compact"
+          icon={<X size={16} aria-hidden />}
           aria-label="Fechar notas e lembretes"
           onClick={() => {
             void saveNote(note);
             onClose();
           }}
-        >
-          <X size={16} aria-hidden />
-        </button>
+        />
       </header>
       <div className="notes__body">
-        <div className="stack">
-          <span className="field__label">Resumo ({aiName(ai)})</span>
+        <section className="notes__section" aria-labelledby="notes-note">
+          <div className="notes__section-head">
+            <h4 id="notes-note" className="notes__title">
+              <StickyNote size={15} aria-hidden /> Nota interna
+            </h4>
+            <span className={`notes__status${saveState === "saved" ? " is-saved" : ""}`} role="status">
+              {saveState === "saving" ? "Salvando…" : saveState === "saved" ? <><Check size={13} aria-hidden /> Salva</> : "Salva sozinha"}
+            </span>
+          </div>
+          <textarea
+            className="notes__note"
+            rows={5}
+            maxLength={5000}
+            value={note}
+            aria-labelledby="notes-note"
+            placeholder="Só você vê. Ex.: prefere áudio, empresa X, motorista preferido…"
+            onChange={(e) => onNoteChange(e.target.value)}
+            onBlur={() => void saveNote(note)}
+          />
+        </section>
+
+        <section className="notes__section" aria-labelledby="notes-reminders">
+          <div className="notes__section-head">
+            <h4 id="notes-reminders" className="notes__title">
+              <AlarmClock size={15} aria-hidden /> Lembretes
+            </h4>
+            {!!reminders?.length && <span className="badge">{reminders.length}</span>}
+          </div>
+          {reminders === null ? (
+            <p className="hint" aria-busy="true">
+              Carregando lembretes…
+            </p>
+          ) : reminders.length === 0 ? (
+            <p className="hint">Nenhum lembrete. Quando vencer, a conversa volta para Abertas e o app avisa.</p>
+          ) : (
+            <ul className="reminders">
+              {[...reminders].sort((a, b) => a.dueAt - b.dueAt).map((r) => {
+                const due = r.dueAt <= Date.now();
+                return (
+                  <li key={r.id} className={`reminder${due ? " reminder--due" : ""}`}>
+                    <AlarmClock size={16} aria-hidden />
+                    <span className="reminder__text">
+                      <span className="reminder__when">
+                        <strong>{reminderLabel(r.dueAt)}</strong>
+                        {due && <span className="badge badge--warning">Vencido</span>}
+                      </span>
+                      {r.text && <span className="reminder__note">{r.text}</span>}
+                    </span>
+                    <button className="icon-button icon-button--plain" title="Concluir" aria-label={`Concluir lembrete de ${reminderLabel(r.dueAt)}`} onClick={() => void finish(r, "done")}>
+                      <Check size={16} aria-hidden />
+                    </button>
+                    <button className="icon-button icon-button--plain" title="Apagar" aria-label={`Apagar lembrete de ${reminderLabel(r.dueAt)}`} onClick={() => void finish(r, "delete")}>
+                      <Trash2 size={16} aria-hidden />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="notes__new" role="group" aria-label="Novo lembrete">
+            <span className="field__label">Novo lembrete</span>
+            <label className="field">
+              <span className="sr-only">Texto do lembrete</span>
+              <input value={text} maxLength={300} placeholder="Sobre o quê? (opcional)" onChange={(e) => setText(e.target.value)} />
+            </label>
+            <div className="notes__presets">
+              {presets().map((p) => (
+                <button key={p.label} className="button button--secondary button--compact" disabled={adding} onClick={() => void add(p.at)}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="notes__custom">
+              <label className="field">
+                <span className="sr-only">Data e hora do lembrete</span>
+                <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+              </label>
+              <button className="button button--primary button--compact" disabled={adding || !when} aria-busy={adding || undefined} onClick={() => void add(new Date(when).getTime())}>
+                {adding ? <LoaderCircle className="spin" size={16} aria-hidden /> : <AlarmClock size={16} aria-hidden />}
+                Lembrar
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className="notes__section" aria-labelledby="notes-ai">
+          <div className="notes__section-head">
+            <h4 id="notes-ai" className="notes__title">
+              <WandSparkles size={15} aria-hidden /> Resumo ({aiName(ai)})
+            </h4>
+          </div>
           {summary ? (
             <dl className="summary">
               <dt>Resumo</dt>
@@ -163,98 +255,16 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
             <p className="hint">{isAiReady(ai) ? (ai?.provider === "deepseek" ? "Gera um resumo das últimas mensagens com a DeepSeek." : ai?.provider === "claude" ? "Gera um resumo com o Claude do seu plano. Pode levar mais de um minuto." : "Gera um resumo das últimas mensagens.") : "Ative a IA em Configurações › IA para usar."}</p>
           )}
           <div className="cluster">
-            <button className="button button--secondary button--compact" disabled={!isAiReady(ai) || summarizing} aria-busy={summarizing || undefined} onClick={() => void summarize()}>
-              {summarizing ? <LoaderCircle className="spin" size={16} aria-hidden /> : <WandSparkles size={16} aria-hidden />}
+            <Button variant="secondary" size="compact" disabled={!isAiReady(ai)} loading={summarizing} icon={<WandSparkles size={16} aria-hidden />} onClick={() => void summarize()}>
               {summary ? "Resumir de novo" : "Resumir conversa"}
-            </button>
+            </Button>
           </div>
-        </div>
-        <div className="stack">
-          <span className="field__label">IA nesta conversa</span>
-          {chat.aiUsage.calls === 0 ? (
-            <p className="hint">Nenhuma chamada de IA ainda. Classificação, rascunho e resumo entram aqui.</p>
-          ) : (
-            <dl className="summary">
-              <dt>Tokens</dt>
-              <dd>{formatTokens(chat.aiUsage.tokens)}</dd>
-              <dt>Valor estimado</dt>
-              <dd>
-                {formatBrl(chat.aiUsage.costUsd * usdBrl)} <span className="hint">({formatUsd(chat.aiUsage.costUsd)})</span>
-              </dd>
-              <dt>Chamadas</dt>
-              <dd>{chat.aiUsage.calls}</dd>
-            </dl>
-          )}
-        </div>
-        <label className="field">
-          <span className="field__label">Nota interna</span>
-          <textarea
-            className="notes__note"
-            rows={5}
-            maxLength={5000}
-            value={note}
-            placeholder="Só você vê. Ex.: prefere áudio, empresa X, motorista preferido…"
-            onChange={(e) => onNoteChange(e.target.value)}
-            onBlur={() => void saveNote(note)}
-          />
-          <span className="hint" role="status">
-            {saveState === "saving" ? "Salvando…" : saveState === "saved" ? "Nota salva." : "Salva sozinha enquanto você escreve."}
-          </span>
-        </label>
-
-        <div className="stack">
-          <span className="field__label">Lembretes</span>
-          {reminders === null ? (
-            <p className="hint" aria-busy="true">
-              Carregando lembretes…
-            </p>
-          ) : reminders.length === 0 ? (
-            <p className="hint">Nenhum lembrete. Quando vencer, a conversa volta para Abertas e o app avisa.</p>
-          ) : (
-            <ul className="reminders">
-              {reminders.map((r) => {
-                const due = r.dueAt <= Date.now();
-                return (
-                  <li key={r.id} className={`reminder${due ? " reminder--due" : ""}`}>
-                    <AlarmClock size={16} aria-hidden />
-                    <span className="reminder__text">
-                      <strong>{reminderLabel(r.dueAt)}</strong>
-                      {due && <span className="badge badge--warning">Vencido</span>}
-                      {r.text && <span className="hint">{r.text}</span>}
-                    </span>
-                    <button className="icon-button icon-button--plain" aria-label={`Concluir lembrete de ${reminderLabel(r.dueAt)}`} onClick={() => void finish(r, "done")}>
-                      <Check size={16} aria-hidden />
-                    </button>
-                    <button className="icon-button icon-button--plain" aria-label={`Apagar lembrete de ${reminderLabel(r.dueAt)}`} onClick={() => void finish(r, "delete")}>
-                      <Trash2 size={16} aria-hidden />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          <label className="field">
-            <span className="sr-only">Texto do lembrete</span>
-            <input value={text} maxLength={300} placeholder="Sobre o quê? (opcional)" onChange={(e) => setText(e.target.value)} />
-          </label>
-          <div className="cluster">
-            {presets().map((p) => (
-              <button key={p.label} className="button button--secondary button--compact" disabled={adding} onClick={() => void add(p.at)}>
-                {p.label}
-              </button>
-            ))}
-          </div>
-          <div className="notes__custom">
-            <label className="field">
-              <span className="sr-only">Data e hora do lembrete</span>
-              <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
-            </label>
-            <button className="button button--primary button--compact" disabled={adding || !when} aria-busy={adding || undefined} onClick={() => void add(new Date(when).getTime())}>
-              {adding && <LoaderCircle className="spin" size={16} aria-hidden />}
-              Lembrar
-            </button>
-          </div>
-        </div>
+          <p className="hint notes__usage">
+            {chat.aiUsage.calls === 0
+              ? "Nenhuma chamada de IA nesta conversa ainda."
+              : `IA nesta conversa: ${chat.aiUsage.calls} chamada${chat.aiUsage.calls > 1 ? "s" : ""} · ${formatTokens(chat.aiUsage.tokens)} tokens · ${formatBrl(chat.aiUsage.costUsd * usdBrl)} (${formatUsd(chat.aiUsage.costUsd)})`}
+          </p>
+        </section>
       </div>
     </aside>
   );

@@ -142,6 +142,12 @@ test("extractText cobre texto, mídia e ignora protocolo/reação", () => {
   assert.equal(extractText(null), null);
 });
 
+test("visualização única aparece como aviso, sem mídia", () => {
+  assert.deepEqual(extractText({ imageMessage: { viewOnce: true, caption: "x" } }), { text: "[Foto de visualização única] Abra no celular para ver.", kind: "view_once" });
+  assert.equal(extractText({ videoMessage: { viewOnce: true } })?.kind, "view_once");
+  assert.equal(extractText({ imageMessage: { caption: "oi" } })?.kind, "image");
+});
+
 test("Jev: perguntas, estado e resposta validados", () => {
   const labels = [{ name: "Cotação", description: "Preço" }, { name: "Outros", description: "" }];
   assert.throws(() => buildQuestions(labels.slice(0, 1)));
@@ -189,6 +195,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       profile: async () => ({}),
       photo: async () => null,
       markRead: async () => undefined,
+      syncArchive: () => undefined,
       classify: async () => null,
       saveSettings: () => undefined,
       logout: async () => undefined,
@@ -199,7 +206,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       cachedTranscript: async () => ({ text: null, summary: null }),
       summarizeAudio: async () => ({}),
       transcribeRecording: async () => "texto",
-      ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setDeepseekOptions: () => undefined, setClaudeOptions: () => undefined, setJevContext: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
+      ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setSummaryModel: () => undefined, setDeepseekOptions: () => undefined, setClaudeOptions: () => undefined, setJevContext: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
       subscribe: (res) => res.end(),
       onChatChanged: () => undefined,
     }),

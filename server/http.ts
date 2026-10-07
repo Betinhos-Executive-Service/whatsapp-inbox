@@ -7,6 +7,22 @@ import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
 import { STATUSES, type Store } from "./db.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
 
+/** Documento sem tipo (octet-stream): deduz pela extensão os formatos que a visualização abre. */
+const TYPE_BY_EXT: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".txt": "text/plain; charset=utf-8",
+  ".csv": "text/csv; charset=utf-8",
+};
+export function servedType(mimetype: string, fileName: string | null): string {
+  if (mimetype && mimetype !== "application/octet-stream") return mimetype;
+  return TYPE_BY_EXT[extname(fileName ?? "").toLowerCase()] ?? (mimetype || "application/octet-stream");
+}
+
 export type Api = {
   store: Store;
   distDir: string;
@@ -28,8 +44,10 @@ export type Api = {
   watch: (jid: string) => Promise<void>;
   typing: (jid: string, state: "composing" | "paused") => Promise<void>;
   markRead: (jid: string) => Promise<void>;
+  /** Leva ao celular o arquivar/desarquivar feito aqui (sem bloquear a tela). */
+  syncArchive: (jid: string, archived: boolean) => void;
   classify: (jid: string) => Promise<unknown>;
-  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
@@ -38,7 +56,7 @@ export type Api = {
   transcribeRecording: (body: Buffer, mimetype: string) => Promise<string>;
   /** Só o cache: não chama a Groq. */
   cachedTranscript: (jid: string, id: string) => Promise<{ text: string | null; summary: unknown }>;
-  summarizeAudio: (jid: string, id: string) => Promise<unknown>;
+  summarizeAudio: (jid: string, id: string, force?: boolean) => Promise<unknown>;
   ai: {
     status: () => unknown;
     draft: (jid: string) => Promise<string>;
@@ -47,6 +65,7 @@ export type Api = {
     setProvider: (provider: "deepseek" | "claude") => void;
     setDeepseekModel: (model: "deepseek-v4-pro" | "deepseek-flash") => void;
     setClaudeModel: (model: "sonnet" | "opus" | "fable" | "haiku") => void;
+    setSummaryModel: (choice: { provider?: "same" | "deepseek" | "claude"; deepseekModel?: "deepseek-v4-pro" | "deepseek-flash"; claudeModel?: "sonnet" | "opus" | "fable" | "haiku" }) => void;
     setClaudeOptions: (options: ClaudeOptions | null) => void;
     setJevContext: (n: number | null) => void;
     /** null volta tudo ao padrão. */
@@ -118,6 +137,7 @@ const settingsSchema = z.object({
   deepseekApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   groqApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   autoTranscribe: z.boolean().optional(),
+  autoSummarize: z.boolean().optional(),
   autoClassify: z.boolean().optional(),
   classifyProvider: z.enum(["jev", "deepseek"]).optional(),
 });
@@ -229,6 +249,7 @@ export function createHandler(api: Api) {
         if (patch.snoozedUntil && patch.snoozedUntil <= Date.now()) throw new HttpError(400, "Escolha um horário no futuro para adiar.");
         store.updateChat(jid, patch);
         if (patch.note !== undefined) store.setNote(jid, patch.note);
+        if (patch.archived !== undefined) api.syncArchive(jid, patch.archived);
         api.onChatChanged(jid);
         return json(res, 200, store.getChat(jid));
       }
@@ -353,6 +374,18 @@ export function createHandler(api: Api) {
       api.ai.setClaudeModel(model);
       return json(res, 200, api.ai.status());
     }
+    if (path === "/api/ai/summary-model" && method === "PUT") {
+      const choice = parse(
+        z.object({
+          provider: z.enum(["same", "deepseek", "claude"]).optional(),
+          deepseekModel: z.enum(["deepseek-v4-pro", "deepseek-flash"]).optional(),
+          claudeModel: z.enum(["sonnet", "opus", "fable", "haiku"]).optional(),
+        }),
+        await readJson(req),
+      );
+      api.ai.setSummaryModel(choice);
+      return json(res, 200, api.ai.status());
+    }
     if (path === "/api/ai/claude-options" && method === "PUT") {
       const { options } = parse(z.object({ options: claudeOptionsSchema.nullable() }), await readJson(req));
       api.ai.setClaudeOptions(options);
@@ -385,8 +418,8 @@ export function createHandler(api: Api) {
     }
     const audioSummaryMatch = path.match(/^\/api\/transcribe\/([^/]+)\/([^/]+)\/summary$/);
     if (audioSummaryMatch && method === "POST") {
-      await readJson(req);
-      const summary = await api.summarizeAudio(decodeURIComponent(audioSummaryMatch[1]), decodeURIComponent(audioSummaryMatch[2])).catch((error: Error) => {
+      const { force } = parse(z.object({ force: z.boolean().optional() }), await readJson(req));
+      const summary = await api.summarizeAudio(decodeURIComponent(audioSummaryMatch[1]), decodeURIComponent(audioSummaryMatch[2]), force).catch((error: Error) => {
         throw new HttpError(502, error.message);
       });
       return json(res, 200, { summary });
@@ -402,14 +435,16 @@ export function createHandler(api: Api) {
       });
       return json(res, 200, { text });
     }
-    const mediaMatch = path.match(/^\/api\/media\/([^/]+)\/([^/]+)$/);
+    // O último trecho opcional é só o nome do arquivo (título no visualizador de PDF); não muda o conteúdo.
+    const mediaMatch = path.match(/^\/api\/media\/([^/]+)\/([^/]+)(?:\/[^/]+)?$/);
     if (mediaMatch && method === "GET") {
       const file = await api.media(decodeURIComponent(mediaMatch[1]), decodeURIComponent(mediaMatch[2])).catch((error: Error) => {
         if (error instanceof HttpError) throw error;
         throw new HttpError(502, `Não foi possível baixar a mídia. Ela pode ter expirado no WhatsApp. (${error.message})`);
       });
       // A mídia de uma mensagem nunca muda: o navegador pode guardar sem revalidar.
-      const headers: Record<string, string> = { "content-type": file.mimetype, "cache-control": "private, max-age=31536000, immutable", "accept-ranges": "bytes" };
+      // nosniff: o arquivo abre na visualização só pelo tipo declarado (um "PDF" com HTML dentro não vira página).
+      const headers: Record<string, string> = { "content-type": servedType(file.mimetype, file.fileName), "cache-control": "private, max-age=31536000, immutable", "accept-ranges": "bytes", "x-content-type-options": "nosniff" };
       if (url.searchParams.has("download")) {
         headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName ?? "arquivo")}`;
       }

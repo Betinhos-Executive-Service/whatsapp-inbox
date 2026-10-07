@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, type Participant, type Profile } from "./api.ts";
 import { Avatar } from "./avatar.tsx";
 import { ResizeHandle } from "./resize.tsx";
+import { Button } from "./ds/index.ts";
 
 /** Quem está aberto no painel: a própria conversa ou um participante de grupo. */
 export type ProfileTarget = { jid: string; name: string; phone: string | null; isGroup: boolean };
@@ -15,9 +16,10 @@ const formatPhone = (phone: string) => {
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
   return (
-    <button
-      type="button"
-      className="icon-button icon-button--plain"
+    <Button
+      variant="ghost"
+      size="compact"
+      icon={done ? <Check size={16} aria-hidden /> : <Copy size={16} aria-hidden />}
       aria-label={done ? "Copiado" : label}
       title={done ? "Copiado" : label}
       onClick={() => {
@@ -26,9 +28,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
           setTimeout(() => setDone(false), 1500);
         });
       }}
-    >
-      {done ? <Check size={16} aria-hidden /> : <Copy size={16} aria-hidden />}
-    </button>
+    />
   );
 }
 
@@ -71,15 +71,11 @@ export function ProfilePanel({ target, connected, onClose }: { target: ProfileTa
       <header className="notes__header">
         <div className="cluster">
           {stack.length > 1 && (
-            <button type="button" className="icon-button icon-button--plain" aria-label="Voltar ao grupo" onClick={() => setStack((s) => s.slice(0, -1))}>
-              <ArrowLeft size={16} aria-hidden />
-            </button>
+            <Button variant="ghost" size="compact" icon={<ArrowLeft size={16} aria-hidden />} aria-label="Voltar ao grupo" onClick={() => setStack((s) => s.slice(0, -1))} />
           )}
           <h3 className="eyebrow">{current.isGroup ? "Dados do grupo" : "Dados do contato"}</h3>
         </div>
-        <button type="button" className="icon-button icon-button--plain" aria-label="Fechar perfil" onClick={onClose}>
-          <X size={16} aria-hidden />
-        </button>
+        <Button variant="ghost" size="compact" icon={<X size={16} aria-hidden />} aria-label="Fechar perfil" onClick={onClose} />
       </header>
       <div className="notes__body">
         <div className="profile__hero">

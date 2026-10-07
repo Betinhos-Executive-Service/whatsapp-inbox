@@ -397,6 +397,8 @@ const MESSAGE_COLUMNS = "chat_jid, id, participant, from_me, at, text, kind, med
 
 export class Store {
   readonly db: DatabaseSync;
+  /** Espelha "Manter conversas arquivadas" do celular: mensagem nova não tira do arquivo. */
+  keepArchived = true;
 
   constructor(path: string) {
     this.db = new DatabaseSync(path);
@@ -607,7 +609,9 @@ export class Store {
         .q("update chats set last_at = ?, last_text = ?, last_from_me = ? where jid = ? and last_at <= ?")
         .run(m.at, m.text, m.fromMe ? 1 : 0, m.chatJid, m.at);
       if (live && !m.fromMe) {
-        this.q("update chats set unread = unread + 1, status = 'aberta', archived = 0, snoozed_until = null where jid = ?").run(m.chatJid);
+        this
+          .q("update chats set unread = unread + 1, status = 'aberta', archived = archived * ?, snoozed_until = null where jid = ?")
+          .run(this.keepArchived ? 1 : 0, m.chatJid);
       } else if (live && m.fromMe) {
         this
           .q("update chats set unread = 0, status = case when status = 'aberta' then 'aguardando' else status end where jid = ?")
@@ -661,6 +665,12 @@ export class Store {
     const r = this.q("select id, raw_jid, from_me, participant, text, at from messages where chat_jid = ? and id = ?").get(jid, id) as Row | undefined;
     if (!r) return null;
     return { id: String(r.id), rawJid: String(r.raw_jid), fromMe: r.from_me === 1, participant: (r.participant as string) ?? null, text: String(r.text), at: Number(r.at) };
+  }
+
+  /** Última mensagem da conversa: o WhatsApp exige ao arquivar, para sincronizar com o celular. */
+  lastMessageKey(jid: string): MessageKeyRef | null {
+    const r = this.q("select id from messages where chat_jid = ? order by at desc limit 1").get(jid) as Row | undefined;
+    return r ? this.messageKey(jid, String(r.id)) : null;
   }
 
   /** Apagada para todos: some o conteúdo, fica o aviso. Devolve a mensagem atualizada. */
@@ -756,6 +766,18 @@ export class Store {
       this.refreshPreview(chatJid, id, next);
       return { message: this.getMessage(chatJid, id)!, chat: this.getChat(chatJid)! };
     });
+  }
+
+  /** Resumo do áudio como prévia, se ele ainda for a última mensagem da conversa. */
+  setAudioPreview(chatJid: string, id: string, text: string) {
+    this.refreshPreview(chatJid, id, text);
+  }
+
+  /** Sobe a prioridade da IA para "alta"; false quando a conversa ainda não foi classificada. */
+  raisePriority(jid: string, reason: string): boolean {
+    const r = this.q("update chats set ai_priority = 'alta', ai_reason = ? where jid = ? and ai_label is not null and coalesce(ai_priority, '') <> 'alta'").run(reason, jid);
+    if (r.changes > 0) return true;
+    return !!this.q("select 1 from chats where jid = ? and ai_label is not null").get(jid);
   }
 
   /** A prévia da conversa acompanha a mudança quando ela é a última mensagem. */
@@ -1110,6 +1132,10 @@ export class Store {
         };
       }),
     };
+  }
+
+  listSettings(): [key: string, value: string][] {
+    return (this.q("select key, value from settings order by key").all() as Row[]).map((r) => [String(r.key), String(r.value)]);
   }
 
   getSetting(key: string): string | null {

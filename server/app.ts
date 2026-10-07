@@ -3,7 +3,7 @@ import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, type Chat, type Message, type Reminder } from "./db.ts";
+import { Store, type Chat, type Label, type Message, type QuickReply, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { cacheMedia, loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
@@ -43,7 +43,12 @@ export type AppOptions = {
   onReminder?: (chat: Chat, reminder: Reminder) => void;
   /** Conversa marcada como lida (na página ou pelo toast): o app desktop zera a notificação. */
   onRead?: (jid: string) => void;
+  /** Conexão do WhatsApp mudou (QR, conectado…): o app desktop mostra no seletor de contas. */
+  onConnection?: (state: ConnectionState) => void;
 };
+
+/** Configurações copiáveis entre contas: nunca conversas, número conectado ou auth. */
+export type SettingsSnapshot = { settings: [key: string, value: string][]; labels: Label[]; quickReplies: QuickReply[] };
 
 export type RunningApp = {
   port: number;
@@ -51,8 +56,15 @@ export type RunningApp = {
   send: (jid: string, text: string) => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   avatar: (jid: string) => Promise<Buffer | null>;
+  connection: () => ConnectionState;
+  logout: () => Promise<void>;
+  exportSettings: () => SettingsSnapshot;
+  importSettings: (snapshot: SettingsSnapshot) => void;
   close: () => Promise<void>;
 };
+
+// Estado do número conectado: não vai junto ao copiar configurações para outra conta.
+const PER_NUMBER_SETTINGS = new Set(["account", "contacts_backfill", "wa_version"]);
 
 export async function startApp(options: AppOptions): Promise<RunningApp> {
   mkdirSync(options.dataDir, { recursive: true });
@@ -120,6 +132,30 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   // "local" salvo de versões antigas (IA offline removida) cai na DeepSeek.
   const provider = (): Provider => (store.getSetting("ai_provider") === "claude" ? "claude" : "deepseek");
 
+  /** IA do resumo (conversa e áudio): "same" segue a do rascunho. */
+  type SummaryChoice = { provider: "same" | Provider; deepseekModel: DeepSeekModel; claudeModel: ClaudeModel };
+  const summaryChoice = (): SummaryChoice => {
+    let raw: Partial<SummaryChoice> = {};
+    try {
+      raw = JSON.parse(store.getSetting("summary_ai") ?? "{}") as Partial<SummaryChoice>;
+    } catch {
+      raw = {};
+    }
+    return {
+      provider: raw.provider === "deepseek" || raw.provider === "claude" ? raw.provider : "same",
+      deepseekModel: isDeepSeekModel(raw.deepseekModel) ? raw.deepseekModel : deepseekModel(),
+      claudeModel: isClaudeModel(raw.claudeModel) ? raw.claudeModel : claudeModel(),
+    };
+  };
+  /** Quem resume de fato, e com qual modelo. */
+  const summaryTarget = (): { provider: Provider; model: string } => {
+    const c = summaryChoice();
+    if (c.provider === "same") return provider() === "claude" ? { provider: "claude", model: claudeModel() } : { provider: "deepseek", model: deepseekModel() };
+    return c.provider === "claude" ? { provider: "claude", model: c.claudeModel } : { provider: "deepseek", model: c.deepseekModel };
+  };
+  const summaryDeepseek = new DeepSeekAI(fetch, () => summaryTarget().model as DeepSeekModel, deepseekOptions);
+  const summaryClaude = new ClaudePlanAI(join(options.dataDir, "claude"), () => summaryTarget().model as ClaudeModel, findClaudeBin, runClaude, claudeOptions);
+
   const aiInstructions = () => store.getSetting("ai_instructions") || DEFAULT_INSTRUCTIONS;
   const aiState = () => ({
     provider: provider(),
@@ -140,17 +176,18 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       defaults: DEFAULT_CLAUDE_OPTIONS,
     },
     jev: { contextMessages: jevContext() },
+    summary: summaryChoice(),
     instructions: aiInstructions(),
     customInstructions: !!store.getSetting("ai_instructions"),
   });
   // ---- gastos com IA: cada chamada (inclusive falha) entra no painel de gastos
 
   const usdBrl = () => Number(store.getSetting("usd_brl")) || DEFAULT_USD_BRL;
-  type UsageExtra = { label?: string; confidence?: number; needsReply?: number; urgent?: number };
+  type UsageExtra = { label?: string; confidence?: number; needsReply?: number; urgent?: number; model?: string };
   function recordUsage(provider: UsageProvider, kind: UsageKind, jid: string | null, usage: TokenUsage | null, extra: UsageExtra = {}) {
     const at = Date.now();
     const u = usage ?? { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
-    const model = provider === "deepseek" ? deepseekModel() : provider === "claude" ? `claude-${claudeModel()}` : provider === "jev" ? JEV_MODEL : provider;
+    const model = extra.model ? (provider === "claude" ? `claude-${extra.model}` : extra.model) : provider === "deepseek" ? deepseekModel() : provider === "claude" ? `claude-${claudeModel()}` : provider === "jev" ? JEV_MODEL : provider;
     store.recordAiUsage({
       at, provider, kind, chatJid: jid, model,
       usage: u, costUsd: estimateCostUsd(provider, u, new Date(at), model),
@@ -161,13 +198,13 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     if (chat) broadcast("chat", chat);
   }
   /** Executa a geração e registra tokens; em falha registra a chamada sem tokens e repassa o erro. */
-  async function tracked<T>(provider: UsageProvider, kind: UsageKind, jid: string, fn: () => Promise<{ usage: TokenUsage } & T>): Promise<T> {
+  async function tracked<T>(provider: UsageProvider, kind: UsageKind, jid: string, fn: () => Promise<{ usage: TokenUsage } & T>, model?: string): Promise<T> {
     try {
       const out = await fn();
-      recordUsage(provider, kind, jid, out.usage);
+      recordUsage(provider, kind, jid, out.usage, { model });
       return out;
     } catch (error) {
-      recordUsage(provider, kind, jid, null);
+      recordUsage(provider, kind, jid, null, { model });
       throw error;
     }
   }
@@ -177,12 +214,23 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     if (!key) throw new Error("Cole a chave da DeepSeek em Configurações › IA.");
     return key;
   };
-  const chatOrThrow = (jid: string) => {
+  /** Áudio já transcrito entra no contexto da IA como texto ("[Áudio] ..."), não só como "[Áudio]". */
+  async function withTranscripts(jid: string, messages: Message[]): Promise<Message[]> {
+    const dir = join(options.dataDir, "transcripts");
+    return Promise.all(
+      messages.map(async (m) => {
+        if (m.media?.type !== "audio") return m;
+        const text = await cachedTranscript(dir, jid, m.id);
+        return text?.trim() ? { ...m, kind: "text", text: `[Áudio] ${text.trim()}` } : m;
+      }),
+    );
+  }
+  const chatOrThrow = async (jid: string, who: Provider = provider()) => {
     const chat = store.getChat(jid);
     if (!chat) throw new Error("Conversa não encontrada.");
     // Cada IA recebe a sua janela de mensagens (Configurações › IA).
-    const window = provider() === "claude" ? claudeOptions().contextMessages : deepseekOptions().contextMessages;
-    const messages = store.listMessages(jid, null, window);
+    const window = who === "claude" ? claudeOptions().contextMessages : deepseekOptions().contextMessages;
+    const messages = await withTranscripts(jid, store.listMessages(jid, null, window));
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto suficiente.");
     return { chat, messages };
   };
@@ -219,7 +267,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       const chat = store.getChat(jid);
       if (!chat) throw new Error("Conversa não encontrada.");
       try {
-        const messages = store.listMessages(jid, null, which === "deepseek" ? deepseekOptions().contextMessages : jevContext());
+        const messages = await withTranscripts(jid, store.listMessages(jid, null, which === "deepseek" ? deepseekOptions().contextMessages : jevContext()));
         const { result, usage } =
           which === "jev"
             ? await (await getJev()).classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid), jevContext())
@@ -261,7 +309,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       : (wa?.state ?? bootingState),
     jev: { configured: !!jevKey(), fromEnv: !!process.env.JEV_API_KEY, autoClassify: autoClassify() },
     classifier: { provider: classifier(), configured: !!classifierKey(), deepseekConfigured: !!deepseekKey() },
-    groq: { configured: !!groqKey(), fromEnv: !!process.env.GROQ_API_KEY, autoTranscribe: autoTranscribeAll() },
+    groq: { configured: !!groqKey(), fromEnv: !!process.env.GROQ_API_KEY, autoTranscribe: autoTranscribeAll(), autoSummarize: autoSummarize() },
     prefs: readPrefs(store),
     labels: store.listLabels(),
   });
@@ -269,7 +317,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   async function startWhatsApp() {
     const { WhatsApp } = await import("./whatsapp.ts");
     const client = new WhatsApp(store, join(options.dataDir, "auth"));
-    client.on("connection", (s) => broadcast("connection", s));
+    client.on("connection", (s) => {
+      broadcast("connection", s);
+      options.onConnection?.(s);
+    });
     client.on("chat", (chat) => broadcast("chat", chat));
     client.on("update", (u) => broadcast("update", u));
     client.on("presence", (p) => broadcast("presence", p));
@@ -280,12 +331,23 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         scheduleClassify(chat.jid);
         if (message.media?.type === "audio") readMedia(chat.jid, message.id).catch(() => undefined);
         if (message.media?.type === "audio" && shouldAutoTranscribe(chat)) {
+          const ref = { chatJid: chat.jid, id: message.id };
           transcribe(chat.jid, message.id)
-            .then((text) => broadcast("transcript", { chatJid: chat.jid, id: message.id, text }))
+            .then(async (text) => {
+              broadcast("transcript", { ...ref, text });
+              if (!text.trim() || !autoSummarize() || (message.media?.seconds ?? 0) < AUTO_SUMMARY_SECONDS) return;
+              broadcast("audio-status", { ...ref, state: "summarizing" });
+              try {
+                broadcast("audio-summary", { ...ref, summary: await summarizeAudio(chat.jid, message.id) });
+              } catch (error) {
+                broadcast("audio-status", { ...ref, state: "idle" });
+                console.warn(`Resumo automático falhou: ${(error as Error).message}`);
+              }
+            })
             .catch((error: Error) => console.warn(`Transcrição automática falhou: ${error.message}`));
         }
-        // Silenciada: chega e conta como não lida, só não avisa.
-        if (!chat.mutedUntil || chat.mutedUntil <= Date.now()) options.onIncoming?.(chat, message);
+        // Silenciada ou mantida no arquivo: chega e conta como não lida, só não avisa (como no WhatsApp).
+        if (!chat.archived && (!chat.mutedUntil || chat.mutedUntil <= Date.now())) options.onIncoming?.(chat, message);
       }
     });
     wa = client;
@@ -317,21 +379,38 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     return text;
   }
 
-  /** Resumo organizado do áudio (assunto, pontos, tratativa e prioridade), pela IA escolhida em Rascunho e resumo. */
-  async function summarizeAudio(jid: string, id: string): Promise<AudioSummary> {
+  /** Resumo organizado do áudio (assunto, pontos, tratativa e prioridade), pela IA escolhida para resumo. */
+  async function summarizeAudio(jid: string, id: string, force = false): Promise<AudioSummary> {
     const dir = join(options.dataDir, "transcripts");
-    const cached = await cachedAudioSummary<AudioSummary>(dir, jid, id);
+    const cached = force ? null : await cachedAudioSummary<AudioSummary>(dir, jid, id);
     if (cached) return cached;
     const transcript = await transcribe(jid, id);
     if (!transcript.trim()) throw new Error("O áudio não tem fala reconhecida para resumir.");
     const name = store.getChat(jid)?.name ?? "o contato";
-    const p = provider();
-    const { summary } = await tracked(p, "resumo", jid, () =>
-      p === "claude" ? claude.summarizeAudio(name, transcript) : deepseek.summarizeAudio(requireDeepseekKey(), name, transcript),
+    const target = summaryTarget();
+    const { summary } = await tracked(
+      target.provider,
+      "resumo",
+      jid,
+      () => (target.provider === "claude" ? summaryClaude.summarizeAudio(name, transcript) : summaryDeepseek.summarizeAudio(requireDeepseekKey(), name, transcript)),
+      target.model,
     );
     await saveAudioSummary(dir, jid, id, summary);
+    applyAudioSummary(jid, id, summary);
     return summary;
   }
+
+  /** O resumo vira prévia da conversa ("Áudio: assunto") e, se for alta, sobe a prioridade da conversa. */
+  function applyAudioSummary(jid: string, id: string, summary: AudioSummary) {
+    store.setAudioPreview(jid, id, `Áudio: ${summary.assunto}`);
+    if (summary.prioridade === "alta" && !store.raisePriority(jid, summary.motivo || `Áudio: ${summary.assunto}`)) scheduleClassify(jid);
+    const chat = store.getChat(jid);
+    if (chat) broadcast("chat", chat);
+  }
+
+  const autoSummarize = () => store.getSetting("auto_summarize") === "1";
+  /** Áudio curto não ganha resumo automático: a transcrição já basta. */
+  const AUTO_SUMMARY_SECONDS = 15;
 
   async function sendMedia(jid: string, file: OutgoingFile, quotedId?: string) {
     const id = await connected().sendMedia(jid, file, { quoted: quotedId ? store.messageKey(jid, quotedId) : null });
@@ -393,6 +472,9 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       if (readPrefs(store).sendTyping) await wa?.typing(jid, state);
     },
     markRead,
+    syncArchive: (jid, archived) => {
+      wa?.setArchived(jid, archived).catch((e: Error) => console.warn(`Arquivar no celular falhou: ${e.message}`));
+    },
     deleteMessage: async (jid, id, mode) => {
       const ref = store.messageKey(jid, id);
       if (!ref) throw new Error("Mensagem não encontrada.");
@@ -428,6 +510,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       if (s.jevApiKey !== undefined) store.setSetting("jev_api_key", s.jevApiKey);
       if (s.groqApiKey !== undefined) store.setSetting("groq_api_key", s.groqApiKey);
       if (s.autoTranscribe !== undefined) store.setSetting("auto_transcribe", s.autoTranscribe ? "1" : "0");
+      if (s.autoSummarize !== undefined) store.setSetting("auto_summarize", s.autoSummarize ? "1" : "0");
       if (s.deepseekApiKey !== undefined) {
         store.setSetting("deepseek_api_key", s.deepseekApiKey);
         broadcast("ai", aiState());
@@ -448,7 +531,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     ai: {
       status: aiState,
       draft: async (jid) => {
-        const { chat, messages } = chatOrThrow(jid);
+        const { chat, messages } = await chatOrThrow(jid);
         const p = provider();
         const { text } = await tracked(p, "rascunho", jid, () =>
           p === "claude"
@@ -458,12 +541,14 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         return text;
       },
       summarize: async (jid) => {
-        const { chat, messages } = chatOrThrow(jid);
-        const p = provider();
-        const { summary } = await tracked(p, "resumo", jid, () =>
-          p === "claude"
-            ? claude.summarize(chat.name, messages)
-            : deepseek.summarize(requireDeepseekKey(), chat.name, messages),
+        const target = summaryTarget();
+        const { chat, messages } = await chatOrThrow(jid, target.provider);
+        const { summary } = await tracked(
+          target.provider,
+          "resumo",
+          jid,
+          () => (target.provider === "claude" ? summaryClaude.summarize(chat.name, messages) : summaryDeepseek.summarize(requireDeepseekKey(), chat.name, messages)),
+          target.model,
         );
         return summary;
       },
@@ -479,6 +564,11 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       },
       setClaudeModel: (model) => {
         store.setSetting("claude_model", model);
+        broadcast("ai", aiState());
+      },
+      setSummaryModel: (choice) => {
+        const current = summaryChoice();
+        store.setSetting("summary_ai", JSON.stringify({ ...current, ...choice }));
         broadcast("ai", aiState());
       },
       setDeepseekOptions: (options) => {
@@ -550,6 +640,20 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     send,
     markRead,
     avatar,
+    connection: () => (wa?.state ?? bootingState),
+    logout: () => connected().logout(),
+    exportSettings: () => ({
+      settings: store.listSettings().filter(([key]) => !PER_NUMBER_SETTINGS.has(key)),
+      labels: store.listLabels(),
+      quickReplies: store.listQuickReplies(),
+    }),
+    importSettings: (snapshot) => {
+      for (const [key, value] of snapshot.settings) if (!PER_NUMBER_SETTINGS.has(key)) store.setSetting(key, value);
+      store.saveLabels(snapshot.labels);
+      store.saveQuickReplies(snapshot.quickReplies);
+      options.onPrefs?.(readPrefs(store));
+      broadcast("state", publicState());
+    },
     close: async () => {
       clearInterval(heartbeat);
       clearInterval(reminderTimer);
