@@ -70,7 +70,7 @@ import { AckIcon, canEdit, EditBar, ReactButton, ReactionList } from "./message-
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
 import { toggleWa } from "./wa-text.ts";
 import { desktop } from "./desktop.ts";
-import { badgeImage } from "./badge.ts";
+import { BADGE_FONT, badgeImage } from "./badge.ts";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
@@ -1830,7 +1830,25 @@ function App() {
   // Total de não lidas no ícone da barra de tarefas e na bandeja (só no app desktop).
   const unreadTotal = useMemo(() => [...chats.values()].reduce((sum, c) => sum + (c.unread > 0 ? c.unread : 0), 0), [chats]);
   useEffect(() => {
-    desktop()?.setUnread(unreadTotal, unreadTotal > 0 ? badgeImage(unreadTotal) : null);
+    const bridge = desktop();
+    if (!bridge) return;
+    let alive = true;
+    let media: MediaQueryList | null = null;
+    const send = () => {
+      if (!alive) return;
+      bridge.setUnread(unreadTotal, unreadTotal > 0 ? badgeImage(unreadTotal) : null);
+      // Redesenha no tamanho certo se a janela mudar para uma tela com outra escala.
+      media?.removeEventListener("change", send);
+      media = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      media.addEventListener("change", send);
+    };
+    send();
+    // A Manrope só carrega quando usada; sem ela o canvas cairia na fonte padrão.
+    if (unreadTotal > 0) void document.fonts.load(BADGE_FONT).then(send, () => {});
+    return () => {
+      alive = false;
+      media?.removeEventListener("change", send);
+    };
   }, [unreadTotal]);
 
   return (
