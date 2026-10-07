@@ -71,10 +71,16 @@ export type Message = {
   text: string;
   kind: string;
   media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
+  /** Só nas enviadas: 1 pendente, 2 enviada, 3 entregue, 4 lida, 5 ouvida. */
+  ack: number | null;
+  quoted: { id: string; text: string } | null;
+  editedAt: number | null;
+  deletedAt: number | null;
+  reactions: { emoji: string; fromMe: boolean }[];
 };
 
 /** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
-export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number };
+export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number; quotedId?: string };
 
 export const mediaUrl = (m: Message, download = false) =>
   `/api/media/${encodeURIComponent(m.chatJid)}/${encodeURIComponent(m.id)}${download ? "?download=1" : ""}`;
@@ -122,7 +128,9 @@ export const api = {
   messages: (jid: string, before?: number) =>
     request<Message[]>("GET", `${chatPath(jid)}/messages${before ? `?before=${before}` : ""}`),
   read: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/read`, {}),
-  send: (jid: string, text: string) => request<Chat>("POST", `${chatPath(jid)}/send`, { text }),
+  send: (jid: string, text: string, quotedId?: string) => request<Chat>("POST", `${chatPath(jid)}/send`, { text, quotedId }),
+  /** Emoji vazio tira a reação. */
+  react: (jid: string, id: string, emoji: string) => request<Message>("POST", `${chatPath(jid)}/react`, { id, emoji }),
   sendMedia: (jid: string, file: OutgoingMedia) => request<Chat>("POST", `${chatPath(jid)}/send-media`, file),
   update: (jid: string, patch: { status?: Status; label?: string | null; note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
   reminders: (jid: string) => request<Reminder[]>("GET", `${chatPath(jid)}/reminders`),

@@ -1,6 +1,9 @@
 import {
   AlarmClock,
   ArrowLeft,
+  Ban,
+  Check,
+  CheckCheck,
   CheckCircle2,
   CircleDot,
   Clock,
@@ -9,6 +12,8 @@ import {
   Mic,
   Paperclip,
   MessageSquareText,
+  Reply,
+  SmilePlus,
   Search,
   SendHorizontal,
   Settings,
@@ -421,8 +426,124 @@ function authorTone(name: string): number {
   return h % AUTHOR_TONES;
 }
 
+/** Reações rápidas, as mesmas do WhatsApp. São conteúdo da mensagem, não ícones da interface. */
+const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+const ACK_LABEL: Record<number, string> = { 1: "Enviando", 2: "Enviada", 3: "Entregue", 4: "Lida", 5: "Ouvida" };
+
+/** Tique de entrega das minhas mensagens: ícone + rótulo acessível, não só cor. */
+function AckIcon({ ack }: { ack: number | null }) {
+  if (ack === null || !ACK_LABEL[ack]) return null;
+  const label = ACK_LABEL[ack];
+  const Icon = ack === 1 ? Clock : ack === 2 ? Check : CheckCheck;
+  return (
+    <span className={`bubble__ack${ack >= 4 ? " bubble__ack--read" : ""}`} title={label}>
+      <Icon size={14} aria-hidden />
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
+
+/** Reações agrupadas por emoji; a minha fica destacada e sai com um clique. */
+function ReactionList({ m, onReact }: { m: Message; onReact: (m: Message, emoji: string) => void }) {
+  if (!m.reactions.length) return null;
+  const groups = new Map<string, { count: number; mine: boolean }>();
+  for (const r of m.reactions) {
+    const g = groups.get(r.emoji) ?? { count: 0, mine: false };
+    groups.set(r.emoji, { count: g.count + 1, mine: g.mine || r.fromMe });
+  }
+  return (
+    <ul className="reactions" aria-label="Reações">
+      {[...groups].map(([emoji, g]) => (
+        <li key={emoji}>
+          <button
+            type="button"
+            className={`reaction${g.mine ? " reaction--mine" : ""}`}
+            aria-label={g.mine ? `Tirar sua reação ${emoji}` : `${emoji}, ${g.count} ${g.count === 1 ? "reação" : "reações"}`}
+            title={g.mine ? "Tirar sua reação" : undefined}
+            disabled={!g.mine}
+            onClick={() => onReact(m, "")}
+          >
+            <span aria-hidden>{emoji}</span>
+            {g.count > 1 && <span className="reaction__count">{g.count}</span>}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Responder e reagir: aparecem ao passar o mouse ou com foco na mensagem. */
+function MessageActions({ m, onReply, onReact, disabled }: { m: Message; onReply: (m: Message) => void; onReact: (m: Message, emoji: string) => void; disabled: boolean }) {
+  const [open, setOpen] = useState(false);
+  const mine = m.reactions.find((r) => r.fromMe)?.emoji ?? null;
+  return (
+    <div className={`message-actions${open ? " is-open" : ""}`}>
+      <button type="button" className="message-actions__button" aria-label="Responder citando" title="Responder citando" disabled={disabled} onClick={() => onReply(m)}>
+        <Reply size={16} aria-hidden />
+      </button>
+      <button
+        type="button"
+        className="message-actions__button"
+        aria-label="Reagir"
+        title="Reagir"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <SmilePlus size={16} aria-hidden />
+      </button>
+      {open && (
+        <div
+          className="reaction-picker"
+          role="menu"
+          aria-label="Escolher reação"
+          onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+          onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}
+        >
+          {REACTIONS.map((emoji, i) => (
+            <button
+              key={emoji}
+              type="button"
+              role="menuitem"
+              className={`reaction-picker__item${mine === emoji ? " is-selected" : ""}`}
+              aria-label={mine === emoji ? `Tirar reação ${emoji}` : `Reagir com ${emoji}`}
+              autoFocus={i === 0}
+              onClick={() => {
+                setOpen(false);
+                onReact(m, mine === emoji ? "" : emoji);
+              }}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Rola até a mensagem citada, se ela já estiver carregada. */
+function jumpTo(id: string) {
+  const el = document.getElementById(`msg-${id}`);
+  if (!el) return;
+  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  el.classList.remove("is-flash");
+  void el.offsetWidth;
+  el.classList.add("is-flash");
+}
+
 /** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore }: { messages: Message[]; isGroup: boolean; hasMore: boolean; onMore: () => void; loadingMore: boolean }) {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, onReply, onReact, connected }: {
+  messages: Message[];
+  isGroup: boolean;
+  hasMore: boolean;
+  onMore: () => void;
+  loadingMore: boolean;
+  onReply: (m: Message) => void;
+  onReact: (m: Message, emoji: string) => void;
+  connected: boolean;
+}) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
   return (
     <>
@@ -442,8 +563,9 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         // Documento: o texto começa pelo nome do arquivo, que já aparece no cartão.
         const fileName = m.media?.fileName;
         if (fileName && caption.startsWith(fileName)) caption = caption.slice(fileName.length).trim();
+        const deleted = m.deletedAt !== null;
         return (
-          <div key={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}`}>
+          <div key={m.id} id={`msg-${m.id}`} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
             <div className="message-line">
               {isGroup && !m.fromMe && (
@@ -451,14 +573,41 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   {continues ? "" : initials(author ?? "?")}
                 </span>
               )}
-              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}`}>
-                {author && !continues && <span className={`bubble__author tone-${authorTone(author)}`}>{author}</span>}
-                {m.media && <MediaView m={m} caption={caption} />}
-                {(!m.media || caption) && <p className="bubble__text">{caption}</p>}
-                <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
-                  {formatTime(m.at)}
-                </time>
+              <div className="bubble-wrap">
+                <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" && !deleted ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" && !deleted ? " bubble--sticker" : ""}`}>
+                  {author && !continues && <span className={`bubble__author tone-${authorTone(author)}`}>{author}</span>}
+                  {m.quoted && !deleted && (
+                    <button type="button" className="bubble__quote" onClick={() => jumpTo(m.quoted!.id)} title="Ir para a mensagem citada">
+                      {m.quoted.text || "Mensagem"}
+                    </button>
+                  )}
+                  {deleted ? (
+                    <>
+                      <p className="bubble__text bubble__text--deleted">
+                        <Ban size={14} aria-hidden /> Mensagem apagada
+                      </p>
+                      <details className="bubble__original">
+                        <summary>Ver original</summary>
+                        <p className="bubble__text">{body}</p>
+                      </details>
+                    </>
+                  ) : (
+                    <>
+                      {m.media && <MediaView m={m} caption={caption} />}
+                      {(!m.media || caption) && <p className="bubble__text">{caption}</p>}
+                    </>
+                  )}
+                  <span className="bubble__meta">
+                    {m.editedAt !== null && !deleted && <span className="bubble__edited">Editada</span>}
+                    <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
+                      {formatTime(m.at)}
+                    </time>
+                    {m.fromMe && <AckIcon ack={m.ack} />}
+                  </span>
+                </div>
+                <ReactionList m={m} onReact={onReact} />
               </div>
+              {!deleted && <MessageActions m={m} onReply={onReply} onReact={onReact} disabled={!connected} />}
             </div>
           </div>
         );
@@ -491,6 +640,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const composer = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [dragging, setDragging] = useState(false);
   const recorder = useRecorder((text) => notify("error", text));
   const addFiles = (files: Iterable<File>) => {
@@ -514,6 +664,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       return [];
     });
     recorder.cancel();
+    setReplyTo(null);
   }, [chat.jid]);
   useEffect(() => {
     const id = requestAnimationFrame(() => composer.current?.focus());
@@ -571,6 +722,34 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     return () => window.removeEventListener("inbox:message", onMessage);
   }, [chat.jid]);
 
+  // Mensagem já mostrada mudou: entregue/lida, editada, apagada ou reação.
+  useEffect(() => {
+    const onUpdate = (e: Event) => {
+      const m = (e as CustomEvent<Message>).detail;
+      if (m.chatJid !== chat.jid) return;
+      setMessages((list) => (list?.some((x) => x.id === m.id) ? list.map((x) => (x.id === m.id ? m : x)) : list));
+      setReplyTo((r) => (r?.id === m.id && m.deletedAt !== null ? null : r));
+    };
+    window.addEventListener("inbox:message-update", onUpdate);
+    return () => window.removeEventListener("inbox:message-update", onUpdate);
+  }, [chat.jid]);
+
+  const reply = useCallback((m: Message) => {
+    setReplyTo(m);
+    requestAnimationFrame(() => composer.current?.focus());
+  }, []);
+  const react = useCallback(
+    async (m: Message, emoji: string) => {
+      try {
+        const updated = await api.react(chat.jid, m.id, emoji);
+        setMessages((list) => list?.map((x) => (x.id === updated.id ? updated : x)) ?? list);
+      } catch (e) {
+        notify("error", `Reação não enviada. ${(e as Error).message}`);
+      }
+    },
+    [chat.jid, notify],
+  );
+
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el || !messages) return;
@@ -611,13 +790,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setSending(true);
     stickToBottom.current = true;
     try {
-      // A legenda vai no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
+      const quotedId = replyTo?.id;
+      // A legenda e a citação vão no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
       for (const [i, a] of attachments.entries()) {
-        onChat(await api.sendMedia(chat.jid, await fileToOutgoing(a.file, i === 0 && text ? text : undefined)));
+        const file = await fileToOutgoing(a.file, i === 0 && text ? text : undefined);
+        onChat(await api.sendMedia(chat.jid, i === 0 && quotedId ? { ...file, quotedId } : file));
         removeAttachment(a.id);
       }
-      if (text && !attachments.length) onChat(await api.send(chat.jid, text));
+      if (text && !attachments.length) onChat(await api.send(chat.jid, text, quotedId));
       setDraft("");
+      setReplyTo(null);
     } catch (e) {
       notify("error", `Mensagem não enviada. ${(e as Error).message}`);
     } finally {
@@ -631,7 +813,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     try {
       const voice = await recorder.finish();
       if (!voice) return notify("error", "Gravação curta demais; segure por pelo menos meio segundo.");
-      onChat(await api.sendMedia(chat.jid, voice));
+      onChat(await api.sendMedia(chat.jid, replyTo ? { ...voice, quotedId: replyTo.id } : voice));
+      setReplyTo(null);
     } catch (e) {
       notify("error", `Áudio não enviado. ${(e as Error).message}`);
     } finally {
@@ -744,7 +927,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             <p className="hint">As próximas mensagens desta conversa aparecem aqui.</p>
           </div>
         ) : (
-          <Messages messages={messages} isGroup={chat.isGroup} hasMore={hasMore} onMore={loadMore} loadingMore={loadingMore} />
+          <Messages
+            messages={messages}
+            isGroup={chat.isGroup}
+            hasMore={hasMore}
+            onMore={loadMore}
+            loadingMore={loadingMore}
+            onReply={reply}
+            onReact={react}
+            connected={connected}
+          />
         )}
       </div>
       {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setNotesOpen(false)} />}
@@ -760,6 +952,18 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           Mensagem
         </label>
         {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
+        {replyTo && (
+          <div className="reply-bar">
+            <Reply size={16} aria-hidden />
+            <div className="reply-bar__body">
+              <span className="reply-bar__title">{replyTo.fromMe ? "Respondendo a você" : `Respondendo a ${splitAuthor(replyTo, chat.isGroup).author ?? chat.name}`}</span>
+              <span className="reply-bar__text">{splitAuthor(replyTo, chat.isGroup).body}</span>
+            </div>
+            <button type="button" className="icon-button icon-button--small" aria-label="Cancelar resposta" onClick={() => setReplyTo(null)}>
+              <X size={16} aria-hidden />
+            </button>
+          </div>
+        )}
         {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} disabled={sending} />}
         <input
           ref={fileInput}
@@ -845,6 +1049,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
                 if (query !== null) setDraft("");
                 return;
               }
+            }
+            if (e.key === "Escape" && replyTo) {
+              e.preventDefault();
+              setReplyTo(null);
+              return;
             }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
@@ -947,6 +1156,11 @@ function App() {
       const { chat } = JSON.parse((e as MessageEvent).data) as { chat: Chat };
       upsert(chat);
       push("success", `Lembrete: ${chat.name}. A conversa voltou para Abertas.`);
+    });
+    es.addEventListener("message-update", (e) => {
+      const { message, chat } = JSON.parse((e as MessageEvent).data) as { message: Message; chat: Chat | null };
+      if (chat) upsert(chat);
+      window.dispatchEvent(new CustomEvent("inbox:message-update", { detail: message }));
     });
     es.addEventListener("message", (e) => {
       const { message, chat } = JSON.parse((e as MessageEvent).data) as { message: Message; chat: Chat };
