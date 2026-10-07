@@ -55,7 +55,7 @@ export function extractMedia(content: Content): MediaRef | null {
   };
 }
 
-/** Tipos que não são mensagem para o usuário: protocolo, reação, chaves, enquetes votadas. */
+/** Tipos que não são mensagem para o usuário. Apagar sai por revokedId; editar e reagir por extractAction. */
 const IGNORED = new Set([
   "protocolMessage",
   "reactionMessage",
@@ -68,13 +68,51 @@ const IGNORED = new Set([
   "callLogMesssage",
   // Cabeçalho de álbum: as fotos chegam como mensagens próprias.
   "albumMessage",
-  // Edição chega como mensagem nova; o texto original já está salvo.
   "editedMessage",
   "associatedChildMessage",
   "placeholderMessage",
   "messageHistoryBundle",
   "secretEncryptedMessage",
 ]);
+
+/** Mensagem que muda outra: editar ou reagir (apagar para todos sai por revokedId). */
+export type Action =
+  | { type: "edit"; id: string; text: string }
+  | { type: "reaction"; id: string; emoji: string };
+
+/** Tipo de edição no protocolo do WhatsApp (proto.Message.ProtocolMessage.Type). */
+const MESSAGE_EDIT = 14;
+
+export function extractAction(content: Content): Action | null {
+  if (!content) return null;
+  const reaction = content.reactionMessage;
+  if (reaction?.key?.id) return { type: "reaction", id: String(reaction.key.id), emoji: typeof reaction.text === "string" ? reaction.text : "" };
+  const p = content.protocolMessage;
+  if (!p?.key?.id) return null;
+  if (p.type === MESSAGE_EDIT) {
+    const edited = extractText(p.editedMessage);
+    return edited ? { type: "edit", id: String(p.key.id), text: edited.text } : null;
+  }
+  return null;
+}
+
+/** Prazos do WhatsApp para mudar uma mensagem já enviada. */
+export const EDIT_WINDOW_MS = 15 * 60_000;
+export const REVOKE_WINDOW_MS = 60 * 3600_000;
+
+/** Motivo de não poder editar ou apagar a mensagem; null = pode. */
+export function sentChangeError(
+  m: { fromMe: boolean; kind: string; at: number; deletedAt: number | null },
+  change: "edit" | "revoke",
+  now = Date.now(),
+): string | null {
+  if (!m.fromMe) return "Só dá para mudar mensagens enviadas por você.";
+  if (m.deletedAt !== null) return "Esta mensagem já foi apagada.";
+  if (change === "edit" && m.kind !== "text") return "Só mensagens de texto podem ser editadas.";
+  if (change === "edit" && now - m.at > EDIT_WINDOW_MS) return "O WhatsApp só permite editar até 15 minutos depois do envio.";
+  if (change === "revoke" && now - m.at > REVOKE_WINDOW_MS) return "O WhatsApp só permite apagar para todos até 60 horas depois do envio.";
+  return null;
+}
 
 function withCaption(label: string, caption: unknown): string {
   const c = typeof caption === "string" ? caption.trim() : "";
@@ -137,4 +175,32 @@ export function extractText(content: Content): Extracted | null {
       // O tipo fica no `kind` para diagnóstico (ex.: other:fooMessage).
       return { text: "[Mensagem não suportada]", kind: `other:${type}` };
   }
+}
+
+/** Mensagem citada (resposta) e menções, tiradas do contextInfo da mensagem. */
+export type MessageContext = {
+  quoted: { id: string; participant: string | null; text: string } | null;
+  mentions: string[];
+};
+
+export function extractContext(content: Content): MessageContext {
+  const out: MessageContext = { quoted: null, mentions: [] };
+  if (!content) return out;
+  const type = Object.keys(content).find((k) => !IGNORED.has(k) && content[k] != null);
+  const m = type ? content[type] : null;
+  const info = m && typeof m === "object" ? m.contextInfo : null;
+  if (!info) return out;
+  if (Array.isArray(info.mentionedJid)) out.mentions = info.mentionedJid.filter((j: unknown): j is string => typeof j === "string");
+  if (info.stanzaId && info.quotedMessage) {
+    const quotedText = extractText(info.quotedMessage)?.text ?? "[Mensagem]";
+    out.quoted = { id: String(info.stanzaId), participant: typeof info.participant === "string" ? info.participant : null, text: quotedText.slice(0, 500) };
+  }
+  return out;
+}
+
+/** Apagada para todos: devolve o id da mensagem revogada. */
+export function revokedId(content: Content): string | null {
+  const p = content?.protocolMessage;
+  // type 0 = REVOKE no protocolo do WhatsApp.
+  return p && (p.type === 0 || p.type === "REVOKE") && p.key?.id ? String(p.key.id) : null;
 }

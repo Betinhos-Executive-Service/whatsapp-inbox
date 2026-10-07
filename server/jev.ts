@@ -95,12 +95,12 @@ export class Jev {
   }
 
   async classify(
-    apiKey: string, contactName: string, messages: Message[], labels: Label[], examples: LabelExample[] = [],
+    apiKey: string, contactName: string, messages: Message[], labels: Label[], examples: LabelExample[] = [], contextMessages = 30,
   ): Promise<{ result: Classification; usage: TokenUsage }> {
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto para classificar.");
     const response = await this.clientFor(apiKey).systemOne({
       model: JEV_MODEL,
-      state: buildState(contactName, messages, new Date(), examples),
+      state: buildState(contactName, messages, new Date(), examples, { messages: contextMessages, chars: 1000 }),
       questions: buildQuestions(labels),
     });
     return {

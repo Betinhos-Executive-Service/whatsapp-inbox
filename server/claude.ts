@@ -9,23 +9,48 @@ import { delimiter, join } from "node:path";
 import type { Message } from "./db.ts";
 import type { TokenUsage } from "./pricing.ts";
 import { draftPrompt, guardDraft, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
+import { z } from "zod";
 import { DEEPSEEK_CONTEXT_MESSAGES, DEEPSEEK_MESSAGE_CHARS } from "./deepseek.ts";
 
 /** Modelos do plano oferecidos no app (alias do Claude Code). */
 export const CLAUDE_MODELS = {
   sonnet: { name: "Sonnet", hint: "Equilíbrio entre qualidade e limite do plano." },
   opus: { name: "Opus", hint: "Mais forte e mais lento. Gasta mais do limite do plano." },
+  fable: { name: "Fable", hint: "O mais capaz. Mais lento e gasta mais do limite do plano." },
   haiku: { name: "Haiku", hint: "Mais rápido. Gasta menos do limite do plano." },
 } as const;
 export type ClaudeModel = keyof typeof CLAUDE_MODELS;
 export const isClaudeModel = (v: unknown): v is ClaudeModel => typeof v === "string" && v in CLAUDE_MODELS;
 export const DEFAULT_CLAUDE_MODEL: ClaudeModel = "sonnet";
 
+/** Esforço (`--effort` do Claude Code). "default" = o que estiver configurado no Claude Code. */
+export const CLAUDE_EFFORTS = ["default", "low", "medium", "high", "xhigh", "max"] as const;
+export type ClaudeEffort = (typeof CLAUDE_EFFORTS)[number];
+
+export const claudeOptionsSchema = z.object({
+  effort: z.enum(CLAUDE_EFFORTS).catch("default"),
+  /** Quantas mensagens recentes da conversa vão para o Claude. */
+  contextMessages: z.number().int().min(10).max(1000).catch(DEEPSEEK_CONTEXT_MESSAGES),
+  /** Limite de caracteres por mensagem enviada. */
+  messageChars: z.number().int().min(100).max(10000).catch(DEEPSEEK_MESSAGE_CHARS),
+});
+export type ClaudeOptions = z.infer<typeof claudeOptionsSchema>;
+export const DEFAULT_CLAUDE_OPTIONS: ClaudeOptions = claudeOptionsSchema.parse({});
+
+export function parseClaudeOptions(raw: string | null | undefined): ClaudeOptions {
+  try {
+    return claudeOptionsSchema.parse(raw ? JSON.parse(raw) : {});
+  } catch {
+    return DEFAULT_CLAUDE_OPTIONS;
+  }
+}
+
 /** Só leitura no Dataverse de PROD; qualquer outra ferramenta é negada no modo não interativo. */
 export const CLAUDE_ALLOWED_TOOLS = ["mcp__Dataverse_PROD__read_query", "mcp__Dataverse_PROD__search", "mcp__Dataverse_PROD__describe"];
 /** O Claude Code sobe todos os MCPs antes de responder: a primeira chamada passa de 1 minuto. */
 const TIMEOUT_MS = 180_000;
-const WINDOW = { messages: DEEPSEEK_CONTEXT_MESSAGES, chars: DEEPSEEK_MESSAGE_CHARS } as const;
+/** Esforço alto pensa mais antes de responder: mais tempo antes de desistir. */
+const EFFORT_TIMEOUT: Record<ClaudeEffort, number> = { default: TIMEOUT_MS, low: TIMEOUT_MS, medium: TIMEOUT_MS, high: 300_000, xhigh: 420_000, max: 600_000 };
 const DATAVERSE_HINT =
   "\n\nSe precisar confirmar dados de reservas, motoristas ou passageiros, consulte o Dataverse só para leitura. Responda apenas com o texto pedido, sem comentar as consultas.";
 
@@ -38,10 +63,10 @@ export function findClaudeBin(env: NodeJS.ProcessEnv = process.env): string | nu
   return null;
 }
 
-export type ClaudeRun = (bin: string, args: string[], input: string, cwd: string) => Promise<string>;
+export type ClaudeRun = (bin: string, args: string[], input: string, cwd: string, timeoutMs?: number) => Promise<string>;
 
 /** Executa o CLI sem shell; o texto da conversa vai pela entrada padrão, nunca pela linha de comando. */
-export const runClaude: ClaudeRun = (bin, args, input, cwd) =>
+export const runClaude: ClaudeRun = (bin, args, input, cwd, timeoutMs = TIMEOUT_MS) =>
   new Promise((resolve, reject) => {
     const child = spawn(bin, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
@@ -49,7 +74,7 @@ export const runClaude: ClaudeRun = (bin, args, input, cwd) =>
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error("O Claude demorou demais para responder. Tente de novo."));
-    }, TIMEOUT_MS);
+    }, timeoutMs);
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (err += d));
     child.on("error", (e) => {
@@ -75,26 +100,41 @@ export class ClaudePlanAI {
   private readonly model: () => ClaudeModel;
   private readonly bin: () => string | null;
   private readonly run: ClaudeRun;
+  private readonly options: () => ClaudeOptions;
 
-  constructor(cwd: string, model: () => ClaudeModel = () => DEFAULT_CLAUDE_MODEL, bin: () => string | null = findClaudeBin, run: ClaudeRun = runClaude) {
+  constructor(
+    cwd: string,
+    model: () => ClaudeModel = () => DEFAULT_CLAUDE_MODEL,
+    bin: () => string | null = findClaudeBin,
+    run: ClaudeRun = runClaude,
+    options: () => ClaudeOptions = () => DEFAULT_CLAUDE_OPTIONS,
+  ) {
     this.cwd = cwd;
     this.model = model;
     this.bin = bin;
     this.run = run;
+    this.options = options;
+  }
+
+  private get window() {
+    const o = this.options();
+    return { messages: o.contextMessages, chars: o.messageChars };
   }
 
   private async complete({ system, user }: Prompt): Promise<{ text: string; usage: TokenUsage }> {
     const bin = this.bin();
     if (!bin) throw new Error("Claude Code não encontrado neste PC. Instale e faça login com `claude` no terminal.");
     mkdirSync(this.cwd, { recursive: true });
+    const { effort } = this.options();
     const args = [
       "-p",
       "--output-format", "json",
       "--model", this.model(),
       "--append-system-prompt", system + DATAVERSE_HINT,
       "--allowedTools", CLAUDE_ALLOWED_TOOLS.join(","),
+      ...(effort === "default" ? [] : ["--effort", effort]),
     ];
-    const raw = await this.run(bin, args, user, this.cwd);
+    const raw = await this.run(bin, args, user, this.cwd, EFFORT_TIMEOUT[effort]);
     let data: ResultJson;
     try {
       data = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)) as ResultJson;
@@ -109,12 +149,13 @@ export class ClaudePlanAI {
   }
 
   async draft(contactName: string, messages: Message[], instructions: string): Promise<{ text: string; usage: TokenUsage }> {
-    const { text, usage } = await this.complete(draftPrompt(contactName, messages, instructions, true, WINDOW));
-    return { text: guardDraft(unquote(text), plainTranscript(contactName, messages, WINDOW)), usage };
+    const window = this.window;
+    const { text, usage } = await this.complete(draftPrompt(contactName, messages, instructions, true, window));
+    return { text: guardDraft(unquote(text), plainTranscript(contactName, messages, window)), usage };
   }
 
   async summarize(contactName: string, messages: Message[]): Promise<{ summary: Summary; usage: TokenUsage }> {
-    const { text, usage } = await this.complete(summaryPrompt(contactName, messages, true, WINDOW));
+    const { text, usage } = await this.complete(summaryPrompt(contactName, messages, true, this.window));
     return { summary: parseSummary(text), usage };
   }
 }

@@ -52,9 +52,8 @@ Funções puras, testáveis sem Electron:
 
 ### 6. Foto de perfil arredondada (adendo aprovado em 07/10/2026)
 
-- **Busca:** `WhatsApp.profilePhotoUrl(jid)` chama `sock.profilePictureUrl(jid, "preview")`; sem conexão ou sem foto (privacidade) → `null`.
-- **Cache:** `server/avatars.ts` grava a foto baixada em `<dataDir>/avatars/<hash do jid>.jpg` e a ausência em `<hash>.none`; ambos valem 24 h. `RunningApp.avatar(jid): Promise<string | null>` devolve o caminho do arquivo ou `null`. Falha de rede = `null`, sem lançar.
-- **Arredondar:** o Windows não recorta o `icon` sem `toastXml` (que quebraria `actions`/`hasReply`/`id`). Então o app recorta: `desktop/avatar.ts` redimensiona para 96×96 com `nativeImage`, aplica máscara circular com borda suavizada nos bytes BGRA (`toBitmap` → alfa → `createFromBitmap`) e grava um PNG transparente em `<userData>/avatars-round/`. O Windows exibe o PNG com transparência, então a foto aparece em círculo.
+- **Busca e cache:** reaproveita o `PhotoCache` da main (`server/photos.ts`, mesma miniatura da lista de conversas: foto revalidada em 3 dias, ausência em 1 dia, nova tentativa após falha em 10 min). `RunningApp.avatar(jid): Promise<Buffer | null>` = `photos.thumb(jid)`. (Substituiu o `server/avatars.ts` desta branch no merge com a main.)
+- **Arredondar:** o Windows não recorta o `icon` sem `toastXml` (que quebraria `actions`/`hasReply`/`id`). Então o app recorta: `desktop/avatar.ts` lê a miniatura com `nativeImage.createFromBuffer`, redimensiona para 96×96, aplica máscara circular com borda suavizada nos bytes BGRA (`toBitmap` → alfa → `createFromBitmap`) e grava um PNG transparente em `<userData>/avatars-round/<hash do conteúdo>.png`. O Windows exibe o PNG com transparência, então a foto aparece em círculo.
 - **Toast:** `notify` não espera mais que 1,5 s pela foto; sem foto a tempo usa o ícone do app. O contador sobe antes da espera; o toast usa a contagem atual ao ser criado. Lembretes também usam a foto.
 
 ## Fora do escopo

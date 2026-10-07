@@ -1,9 +1,10 @@
-import { Bell, ChartColumn, Download, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
+import { Bell, ChartColumn, Download, Monitor, Moon, Sun, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { api, type AiStatus, type AppState, type Classifier, type Label, type Prefs, type QuickReply } from "./api.ts";
+import { api, type AiStatus, type AppState, type Classifier, type Label, type Prefs, type QuickReply, type Theme } from "./api.ts";
 import { desktop, type ReleaseInfo, type UpdateState } from "./desktop.ts";
 import { publishAi, useAiStatus } from "./ai-state.ts";
-import { DeepSeekOptionsPanel } from "./ai-options.tsx";
+import { ClaudeOptionsPanel, DeepSeekOptionsPanel, JevContextField } from "./ai-options.tsx";
+import { applyTheme } from "./theme.ts";
 import { AiUsagePanel } from "./ai-usage.tsx";
 
 type Props = {
@@ -25,6 +26,12 @@ const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: "etiquetas", label: "Etiquetas", icon: <Tags size={16} aria-hidden /> },
   { id: "respostas", label: "Respostas rápidas", icon: <Zap size={16} aria-hidden /> },
   { id: "conta", label: "Conta e dados", icon: <Smartphone size={16} aria-hidden /> },
+];
+
+const THEMES: { id: Theme; label: string; icon: ReactNode }[] = [
+  { id: "system", label: "Sistema", icon: <Monitor size={16} aria-hidden /> },
+  { id: "light", label: "Claro", icon: <Sun size={16} aria-hidden /> },
+  { id: "dark", label: "Escuro", icon: <Moon size={16} aria-hidden /> },
 ];
 
 const sameLabels = (a: Label[], b: Label[]) =>
@@ -191,6 +198,10 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
               : "Claude Code não encontrado neste PC. Instale e faça login rodando claude no terminal."}
           </p>
           <p className="hint">Instruções só de atendimento: crie um CLAUDE.md em {ai.claude.folder}. Rascunho e resumo usam o Claude; a classificação continua no Jev ou na DeepSeek.</p>
+          <details className="ai-advanced" open={JSON.stringify(ai.claude.options) !== JSON.stringify(ai.claude.defaults) || undefined}>
+            <summary>Esforço, contexto e limites</summary>
+            <ClaudeOptionsPanel ai={ai} onChange={setLocal} />
+          </details>
         </>
       ) : null}
       <label className="field">
@@ -314,6 +325,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const panel = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<Element | null>(null);
   const isDesktop = !!desktop();
+  const liveAi = useAiStatus();
 
   // Abre sempre a partir do estado salvo.
   useEffect(() => {
@@ -341,6 +353,11 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
     requestAnimationFrame(() => panel.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus());
     return () => (returnFocus.current as HTMLElement | null)?.focus?.();
   }, [open]);
+
+  // Aparência muda na hora para conferir; fechar sem salvar volta ao tema salvo.
+  useEffect(() => {
+    applyTheme(open ? prefs.theme : state.prefs.theme);
+  }, [open, prefs.theme, state.prefs.theme]);
 
   const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => setPrefs((p) => ({ ...p, [k]: v }));
   const quietOn = !!(prefs.quietStart && prefs.quietEnd);
@@ -489,6 +506,18 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
           {tab === "geral" && (
             <>
               <section className="surface stack">
+                <h3 className="eyebrow">Aparência</h3>
+                <div className="segmented" role="radiogroup" aria-label="Tema">
+                  {THEMES.map((t) => (
+                    <button key={t.id} type="button" role="radio" aria-checked={prefs.theme === t.id} className="segmented__item" onClick={() => setPref("theme", t.id)}>
+                      {t.icon}
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="hint">{prefs.theme === "system" ? "Acompanha o modo claro ou escuro do Windows." : "Vale só para este computador."}</p>
+              </section>
+              <section className="surface stack">
                 <h3 className="eyebrow">Inicialização</h3>
                 <Toggle
                   checked={prefs.startWithWindows}
@@ -503,6 +532,15 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                   disabled={!isDesktop || !prefs.startWithWindows}
                   label="Começar minimizado na bandeja"
                   hint="Ao ligar o computador, o app fica perto do relógio sem abrir a janela."
+                />
+              </section>
+              <section className="surface stack">
+                <h3 className="eyebrow">Privacidade</h3>
+                <Toggle
+                  checked={prefs.sendTyping}
+                  onChange={(v) => setPref("sendTyping", v)}
+                  label="Mostrar “digitando…” ao contato"
+                  hint="Desligado, o contato não vê quando você escreve por aqui. O “digitando…” dele aparece de qualquer jeito."
                 />
               </section>
               <section className="surface stack">
@@ -605,7 +643,11 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 label="Classificar sozinho quando chegar mensagem nova"
                 hint="Espera 15 s sem mensagens novas na conversa e classifica uma vez."
               />
-              <p className="hint">A IA recebe o nome do contato e o texto das últimas 30 mensagens da conversa; nenhum identificador do WhatsApp sai do seu PC.</p>
+              {classifier === "jev" && liveAi && <JevContextField ai={liveAi} onChange={publishAi} />}
+              <p className="hint">
+                A IA recebe o nome do contato e o texto das últimas {classifier === "jev" ? (liveAi?.jev.contextMessages ?? 30) : (liveAi?.deepseek.options.contextMessages ?? 120)} mensagens da conversa; nenhum
+                identificador do WhatsApp sai do seu PC.
+              </p>
             </section>
           )}
           {tab === "ia" && (

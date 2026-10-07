@@ -1,21 +1,24 @@
 // Foto de perfil pronta para o toast: 96×96, recortada em círculo, PNG transparente.
-import { mkdir, stat, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+// A foto vem do PhotoCache do servidor (mesma miniatura da lista); o recorte fica em disco
+// com nome pelo conteúdo, então foto nova gera arquivo novo e a antiga é reaproveitada.
+import { createHash } from "node:crypto";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { nativeImage } from "electron";
 import { circleMask } from "./avatar-mask.ts";
 
 const SIZE = 96;
 
-export async function roundAvatar(photo: string, outDir: string): Promise<string | null> {
-  const out = join(outDir, basename(photo).replace(/\.jpg$/, ".png"));
+export async function roundAvatar(photo: Buffer, outDir: string): Promise<string | null> {
+  const out = join(outDir, `${createHash("sha1").update(photo).digest("hex").slice(0, 16)}.png`);
   try {
-    // Reaproveita o recorte enquanto a foto de origem não mudar.
-    if ((await stat(out)).mtimeMs >= (await stat(photo)).mtimeMs) return out;
+    await access(out);
+    return out;
   } catch {
     // ainda não recortada
   }
   try {
-    const image = nativeImage.createFromPath(photo);
+    const image = nativeImage.createFromBuffer(photo);
     if (image.isEmpty()) return null;
     const square = image.resize({ width: SIZE, height: SIZE, quality: "best" });
     const round = nativeImage.createFromBitmap(circleMask(square.toBitmap(), SIZE), { width: SIZE, height: SIZE });

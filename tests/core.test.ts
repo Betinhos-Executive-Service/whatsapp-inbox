@@ -147,7 +147,7 @@ test("Jev: perguntas, estado e resposta validados", () => {
   assert.throws(() => buildQuestions(labels.slice(0, 1)));
   const q = buildQuestions(labels);
   assert.deepEqual(Object.keys(q), ["etiqueta", "responder", "urgente", "prioridade"]);
-  const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null }]));
+  const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null, quoted: null, deleted: false, sender: null, ack: null, editedAt: null, reactions: [] }]));
   assert.equal(state.mensagens[0].de, "contato");
   assert.equal(state.mensagens[0].texto.length, 1000);
   assert.ok(!JSON.stringify(state).includes("whatsapp.net"));
@@ -178,7 +178,16 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       },
       state: () => ({}),
       send: async () => undefined,
+      react: async () => undefined,
+      editMessage: async () => undefined,
+      forward: async () => undefined,
+      watch: async () => undefined,
+      typing: async () => undefined,
       sendMedia: async (_jid, file) => void sentMedia.push(file),
+      deleteMessage: async () => ({ synced: true }),
+      participants: async () => [],
+      profile: async () => ({}),
+      photo: async () => null,
       markRead: async () => undefined,
       classify: async () => null,
       saveSettings: () => undefined,
@@ -186,7 +195,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       reset: async () => undefined,
       backup: async () => "",
       media: async () => ({ body: Buffer.from(""), mimetype: "image/jpeg", fileName: null }),
-      ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setDeepseekOptions: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
+      ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setDeepseekOptions: () => undefined, setClaudeOptions: () => undefined, setJevContext: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
       subscribe: (res) => res.end(),
       onChatChanged: () => undefined,
     }),
@@ -233,6 +242,12 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
     assert.equal(media.status, 200);
     assert.equal(sentMedia[0].body.toString(), "abc");
     assert.equal(sentMedia[0].ptt, true);
+    const post = (action: string, body: unknown) =>
+      fetch(`${base}/api/chats/${encodeURIComponent(PN)}/${action}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+    assert.equal((await post("forward", { id: "x", to: "nao-existe@s.whatsapp.net" })).status, 404, "destino precisa existir");
+    assert.equal((await post("forward", { id: "nao-existe", to: PN })).status, 404, "mensagem precisa existir");
+    assert.equal((await post("typing", { state: "gritando" })).status, 400);
+    assert.equal((await post("edit", { id: "x", text: "   " })).status, 400);
   } finally {
     server.close();
   }

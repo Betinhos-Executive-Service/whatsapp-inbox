@@ -6,14 +6,14 @@ import { join } from "node:path";
 import { Store, type Chat, type Message, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { cacheMedia, loadMedia } from "./media.ts";
-import { avatarCache } from "./avatars.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
-import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, findClaudeBin, isClaudeModel, type ClaudeModel } from "./claude.ts";
+import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPTIONS, findClaudeBin, isClaudeModel, parseClaudeOptions, runClaude, type ClaudeModel } from "./claude.ts";
+import { PhotoCache } from "./photos.ts";
 import { DeepSeekAI, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL, DEFAULT_DEEPSEEK_OPTIONS, isDeepSeekModel, parseDeepSeekOptions, type DeepSeekModel } from "./deepseek.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import { DEFAULT_USD_BRL, estimateCostUsd, type Provider as UsageProvider, type TokenUsage, type UsageKind } from "./pricing.ts";
 import { JEV_MODEL, type Jev } from "./jev.ts";
-import type { ConnectionState, WhatsApp } from "./whatsapp.ts";
+import type { ConnectionState, OutgoingFile, WhatsApp } from "./whatsapp.ts";
 
 // A libsignal (dependência do Baileys) escreve no console o conteúdo das sessões
 // criptográficas ("Closing session: SessionEntry {...}"). Isso não pode ir para log.
@@ -48,7 +48,7 @@ export type RunningApp = {
   prefs: () => Prefs;
   send: (jid: string, text: string) => Promise<void>;
   markRead: (jid: string) => Promise<void>;
-  avatar: (jid: string) => Promise<string | null>;
+  avatar: (jid: string) => Promise<Buffer | null>;
   close: () => Promise<void>;
 };
 
@@ -99,8 +99,9 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     const saved = store.getSetting("claude_model");
     return isClaudeModel(saved) ? saved : DEFAULT_CLAUDE_MODEL;
   };
+  const claudeOptions = () => parseClaudeOptions(store.getSetting("claude_options"));
   // Pasta própria: a pessoa pode pôr ali um CLAUDE.md só de atendimento.
-  const claude = new ClaudePlanAI(join(options.dataDir, "claude"), claudeModel);
+  const claude = new ClaudePlanAI(join(options.dataDir, "claude"), claudeModel, findClaudeBin, runClaude, claudeOptions);
   type Provider = "deepseek" | "claude";
   // "local" salvo de versões antigas (IA offline removida) cai na DeepSeek.
   const provider = (): Provider => (store.getSetting("ai_provider") === "claude" ? "claude" : "deepseek");
@@ -121,7 +122,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       model: claudeModel(),
       models: (Object.keys(CLAUDE_MODELS) as ClaudeModel[]).map((id) => ({ id, ...CLAUDE_MODELS[id] })),
       folder: join(options.dataDir, "claude"),
+      options: claudeOptions(),
+      defaults: DEFAULT_CLAUDE_OPTIONS,
     },
+    jev: { contextMessages: jevContext() },
     instructions: aiInstructions(),
     customInstructions: !!store.getSetting("ai_instructions"),
   });
@@ -162,8 +166,9 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   const chatOrThrow = (jid: string) => {
     const chat = store.getChat(jid);
     if (!chat) throw new Error("Conversa não encontrada.");
-    // A nuvem recebe mais histórico; o modelo local recorta as últimas 25 por conta própria.
-    const messages = store.listMessages(jid, null, deepseekOptions().contextMessages);
+    // Cada IA recebe a sua janela de mensagens (Configurações › IA).
+    const window = provider() === "claude" ? claudeOptions().contextMessages : deepseekOptions().contextMessages;
+    const messages = store.listMessages(jid, null, window);
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto suficiente.");
     return { chat, messages };
   };
@@ -171,6 +176,11 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   // ---- Jev
 
   const jevKey = () => process.env.JEV_API_KEY || store.getSetting("jev_api_key");
+  /** Mensagens enviadas ao Jev na classificação (10 a 100). */
+  const jevContext = () => {
+    const n = Number(store.getSetting("jev_context"));
+    return Number.isInteger(n) && n >= 10 && n <= 100 ? n : 30;
+  };
   const autoClassify = () => store.getSetting("auto_classify") !== "0";
   /** Quem classifica: Jev (padrão quando há chave) ou DeepSeek. Sem chave do escolhido, cai no outro. */
   type Classifier = "jev" | "deepseek";
@@ -195,10 +205,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       const chat = store.getChat(jid);
       if (!chat) throw new Error("Conversa não encontrada.");
       try {
-        const messages = store.listMessages(jid, null, which === "deepseek" ? deepseekOptions().contextMessages : 30);
+        const messages = store.listMessages(jid, null, which === "deepseek" ? deepseekOptions().contextMessages : jevContext());
         const { result, usage } =
           which === "jev"
-            ? await (await getJev()).classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid))
+            ? await (await getJev()).classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid), jevContext())
             : await deepseek.classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid));
         recordUsage(which, "classificar", jid, usage, result);
         return store.saveClassification(jid, result);
@@ -246,6 +256,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     const client = new WhatsApp(store, join(options.dataDir, "auth"));
     client.on("connection", (s) => broadcast("connection", s));
     client.on("chat", (chat) => broadcast("chat", chat));
+    client.on("update", (u) => broadcast("update", u));
+    client.on("presence", (p) => broadcast("presence", p));
     client.on("reload", () => broadcast("reload", null));
     client.on("message", ({ message, chat, live }) => {
       broadcast("message", { message, chat });
@@ -263,6 +275,24 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     return wa;
   }
 
+  async function readMedia(jid: string, id: string) {
+    const ref = store.getMediaRef(jid, id);
+    if (!ref) throw new Error("Esta mensagem não tem mídia salva. Mídias recebidas antes desta versão não podem ser abertas.");
+    return loadMedia(join(options.dataDir, "media"), jid, id, ref);
+  }
+
+  async function sendMedia(jid: string, file: OutgoingFile, quotedId?: string) {
+    const id = await connected().sendMedia(jid, file, { quoted: quotedId ? store.messageKey(jid, quotedId) : null });
+    if (id) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
+  }
+
+  const photos = new PhotoCache(join(options.dataDir, "photos"), store, {
+    url: (jid, full) => (wa?.state.status === "conectado" ? wa.photoUrl(jid, full) : null),
+  });
+
+  /** WhatsApp apaga para todos só até ~2 dias e meio depois do envio. */
+  const REVOKE_LIMIT_MS = 60 * 3_600_000;
+
   // ---- HTTP
 
   const send = async (jid: string, text: string) => {
@@ -274,7 +304,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     options.onRead?.(jid);
     await wa?.markRead(keys).catch(() => undefined); // recibo de leitura é cortesia, não bloqueia
   };
-  const avatar = avatarCache(join(options.dataDir, "avatars"), (jid) => connected().profilePhotoUrl(jid));
+  const avatar = (jid: string) => photos.thumb(jid);
 
   const handler = createHandler({
     store,
@@ -283,15 +313,66 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     distDir: options.distDir,
     state: publicState,
-    send,
-    sendMedia: async (jid, file) => {
-      const id = await connected().sendMedia(jid, file);
-      if (id) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
+    send: (jid, text, opts) =>
+      connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll }),
+    sendMedia,
+    react: (jid, id, emoji) => connected().react(jid, id, emoji),
+    editMessage: (jid, id, text) => connected().editSent(jid, id, text),
+    forward: async (from, id, to) => {
+      const m = store.getMessage(from, id);
+      if (!m || m.deleted) throw new Error("Esta mensagem não pode ser encaminhada.");
+      const text = store.messageText(from, id) ?? "";
+      if (!m.media) return connected().send(to, text);
+      // Mídia: baixa (ou lê do cache) e envia de novo, com a mesma legenda.
+      const file = await readMedia(from, id);
+      let caption = text.replace(/^\[[^\]]+\]\s*/, "");
+      if (m.media.fileName && caption.startsWith(m.media.fileName)) caption = caption.slice(m.media.fileName.length).trim();
+      await sendMedia(to, {
+        body: file.body,
+        mimetype: file.mimetype,
+        fileName: file.fileName ?? m.media.fileName ?? "arquivo",
+        caption: caption || undefined,
+        ptt: m.media.ptt,
+        seconds: m.media.seconds ?? undefined,
+      });
+    },
+    watch: async (jid) => wa?.watchPresence(jid),
+    typing: async (jid, state) => {
+      if (readPrefs(store).sendTyping) await wa?.typing(jid, state);
     },
     markRead,
+    deleteMessage: async (jid, id, mode) => {
+      const ref = store.messageKey(jid, id);
+      if (!ref) throw new Error("Mensagem não encontrada.");
+      if (mode === "everyone") {
+        if (!ref.fromMe) throw new Error("Só dá para apagar para todos as mensagens que você enviou.");
+        if (Date.now() - ref.at > REVOKE_LIMIT_MS) throw new Error("O WhatsApp só deixa apagar para todos até cerca de 2 dias depois do envio. Use Apagar para mim.");
+        await connected().deleteForEveryone(ref);
+        const message = store.markRevoked(jid, id);
+        if (message) broadcast("update", { message, chat: store.getChat(jid) });
+        return { synced: true };
+      }
+      // Para mim: tenta sincronizar com o celular; sai deste computador de qualquer forma.
+      let synced = true;
+      try {
+        await connected().deleteForMe(ref);
+      } catch {
+        synced = false;
+      }
+      store.deleteMessage(jid, id);
+      broadcast("remove", { chatJid: jid, id, chat: store.getChat(jid) });
+      return { synced };
+    },
+    participants: (jid) => connected().participants(jid),
+    profile: (jid) => connected().profile(jid),
+    photo: (jid, full) => (full ? photos.full(jid) : photos.thumb(jid)),
     classify,
     saveSettings: (s) => {
-      if (s.prefs) options.onPrefs?.(savePrefs(store, s.prefs));
+      // Grava antes de avisar: sem onPrefs (modo navegador), `onPrefs?.(savePrefs(...))` nem gravava.
+      if (s.prefs) {
+        const saved = savePrefs(store, s.prefs);
+        options.onPrefs?.(saved);
+      }
       if (s.jevApiKey !== undefined) store.setSetting("jev_api_key", s.jevApiKey);
       if (s.deepseekApiKey !== undefined) {
         store.setSetting("deepseek_api_key", s.deepseekApiKey);
@@ -350,16 +431,20 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         store.setSetting("deepseek_options", options ? JSON.stringify(options) : null);
         broadcast("ai", aiState());
       },
+      setClaudeOptions: (options) => {
+        store.setSetting("claude_options", options ? JSON.stringify(options) : null);
+        broadcast("ai", aiState());
+      },
+      setJevContext: (n) => {
+        store.setSetting("jev_context", n === null ? null : String(n));
+        broadcast("ai", aiState());
+      },
       setInstructions: (text) => {
         store.setSetting("ai_instructions", text?.trim() ? text.trim() : null);
         broadcast("ai", aiState());
       },
     },
-    media: async (jid, id) => {
-      const ref = store.getMediaRef(jid, id);
-      if (!ref) throw new Error("Esta mensagem não tem mídia salva. Mídias recebidas antes desta versão não podem ser abertas.");
-      return loadMedia(join(options.dataDir, "media"), jid, id, ref);
-    },
+    media: readMedia,
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
       store.db.prepare("vacuum into ?").run(file);

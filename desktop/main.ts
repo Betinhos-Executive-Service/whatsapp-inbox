@@ -1,6 +1,6 @@
 // Processo principal do app desktop: sobe o servidor local dentro do próprio Electron,
 // abre a janela nele e mantém tudo rodando na bandeja quando a janela é fechada.
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell, Tray } from "electron";
 import { join } from "node:path";
 import { startApp, type RunningApp } from "../server/app.ts";
 import type { Chat, Message, Reminder } from "../server/db.ts";
@@ -49,7 +49,13 @@ function sendToPage(channel: string, ...args: unknown[]) {
   window?.webContents.send(channel, ...args);
 }
 
+/** Fundo da janela antes da interface carregar: igual ao canvas do tema. */
+const windowBackground = () => (nativeTheme.shouldUseDarkColors ? "#0b1220" : "#f0f0f0");
+
 function applyPrefs(prefs: Prefs) {
+  // Barra de título e menus nativos seguem o tema escolhido no app.
+  nativeTheme.themeSource = prefs.theme;
+  window?.setBackgroundColor(windowBackground());
   // Empacotado só: em desenvolvimento registraria o electron.exe genérico.
   if (!app.isPackaged) return;
   app.setLoginItemSettings({ openAtLogin: prefs.startWithWindows, args: prefs.startMinimized ? ["--hidden"] : [] });
@@ -167,7 +173,7 @@ function createWindow(url: string) {
     minWidth: 360,
     minHeight: 480,
     show: false,
-    backgroundColor: "#f0f0f0",
+    backgroundColor: windowBackground(),
     icon: iconPath(),
     autoHideMenuBar: true,
     webPreferences: {
