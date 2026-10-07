@@ -3,6 +3,13 @@ export type Priority = "alta" | "media" | "baixa";
 export type Classifier = "jev" | "deepseek";
 export type DeepSeekModel = "deepseek-v4-pro" | "deepseek-flash";
 export type ClaudeModel = "sonnet" | "opus" | "haiku";
+export type Thinking = "off" | "low" | "high" | "max";
+export type DeepSeekTask = "draft" | "summary" | "classify";
+export type DeepSeekOptions = {
+  thinking: Thinking;
+  contextMessages: number;
+  messageChars: number;
+} & Record<DeepSeekTask, { maxTokens: number; temperature: number }>;
 
 export type Chat = {
   jid: string;
@@ -57,7 +64,7 @@ export type AiStatus = (
   instructions: string;
   customInstructions: boolean;
   provider: "deepseek" | "local" | "claude";
-  deepseek: { configured: boolean; fromEnv: boolean; model: DeepSeekModel; models: { id: DeepSeekModel; name: string; hint: string }[] };
+  deepseek: { configured: boolean; fromEnv: boolean; model: DeepSeekModel; models: { id: DeepSeekModel; name: string; hint: string }[]; options: DeepSeekOptions; defaults: DeepSeekOptions };
   claude: { configured: boolean; model: ClaudeModel; models: { id: ClaudeModel; name: string; hint: string }[]; folder: string };
 };
 export type Summary = { resumo: string; pedido: string; proximoPasso: string };
@@ -139,6 +146,8 @@ export const api = {
   setAiProvider: (provider: AiStatus["provider"]) => request<AiStatus>("PUT", "/api/ai/provider", { provider }),
   setDeepseekModel: (model: DeepSeekModel) => request<AiStatus>("PUT", "/api/ai/deepseek-model", { model }),
   setClaudeModel: (model: ClaudeModel) => request<AiStatus>("PUT", "/api/ai/claude-model", { model }),
+  /** null volta tudo ao padrão. */
+  setDeepseekOptions: (options: DeepSeekOptions | null) => request<AiStatus>("PUT", "/api/ai/deepseek-options", { options }),
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
   aiUsage: (days: number | null) => request<AiUsageSummary>("GET", `/api/ai/usage?days=${days ?? "all"}`),
   setAiUsageRate: (rate: number) => request<{ ok: true }>("PUT", "/api/ai/usage/rate", { rate }),

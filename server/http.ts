@@ -2,6 +2,7 @@ import { readFile, rm, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
+import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
 import { STATUSES, type Store } from "./db.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
 
@@ -31,6 +32,8 @@ export type Api = {
     setProvider: (provider: "deepseek" | "local" | "claude") => void;
     setDeepseekModel: (model: "deepseek-v4-pro" | "deepseek-flash") => void;
     setClaudeModel: (model: "sonnet" | "opus" | "haiku") => void;
+    /** null volta tudo ao padrão. */
+    setDeepseekOptions: (options: DeepSeekOptions | null) => void;
     /** Resumo de gastos; days = null: desde sempre. */
     usage: (days: number | null) => unknown;
     setUsdBrl: (rate: number | null) => void;
@@ -269,6 +272,11 @@ export function createHandler(api: Api) {
     if (path === "/api/ai/claude-model" && method === "PUT") {
       const { model } = parse(z.object({ model: z.enum(["sonnet", "opus", "haiku"]) }), await readJson(req));
       api.ai.setClaudeModel(model);
+      return json(res, 200, api.ai.status());
+    }
+    if (path === "/api/ai/deepseek-options" && method === "PUT") {
+      const { options } = parse(z.object({ options: deepseekOptionsSchema.nullable() }), await readJson(req));
+      api.ai.setDeepseekOptions(options);
       return json(res, 200, api.ai.status());
     }
     if (path === "/api/ai/instructions" && method === "PUT") {
