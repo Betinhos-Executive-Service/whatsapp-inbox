@@ -66,16 +66,18 @@ export function parseResponse(value: unknown, labels: Label[]): Classification {
 }
 
 /** Estado enviado ao Jev: só as últimas mensagens de texto, sem identificadores do WhatsApp. */
-export function buildState(contactName: string, messages: Message[], now = new Date(), examples: LabelExample[] = []): string {
+export function buildState(
+  contactName: string, messages: Message[], now = new Date(), examples: LabelExample[] = [], window = { messages: 30, chars: 1000 },
+): string {
   return JSON.stringify({
     agora: now.toISOString(),
     // Correções feitas pela pessoa em outras conversas: mostram como ela usa cada etiqueta.
     ...(examples.length ? { exemplos_de_etiquetas_corrigidas_pelo_usuario: examples.map((e) => ({ etiqueta: e.label, trecho: e.snippet })) } : {}),
     contato: contactName,
-    mensagens: messages.slice(-30).map((m) => ({
+    mensagens: messages.slice(-window.messages).map((m) => ({
       de: m.fromMe ? "eu" : "contato",
       em: new Date(m.at).toISOString(),
-      texto: m.text.slice(0, 1000),
+      texto: m.text.slice(0, window.chars),
     })),
   });
 }

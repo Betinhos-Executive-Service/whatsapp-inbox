@@ -76,6 +76,16 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
       setSwitching(false);
     }
   };
+  const chooseModel = async (model: AiStatus["deepseek"]["model"]) => {
+    if (model === ai.deepseek.model || switching) return;
+    setSwitching(true);
+    try {
+      setLocal(await api.setDeepseekModel(model));
+    } finally {
+      setSwitching(false);
+    }
+  };
+  const dsModel = ai.deepseek.models.find((m) => m.id === ai.deepseek.model);
   return (
     <div className="stack">
       <div className="segmented" role="radiogroup" aria-label="Onde a IA roda">
@@ -116,7 +126,26 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
             </label>
           )}
           {ai.deepseek.configured && !ai.deepseek.fromEnv && <Toggle checked={removeDsKey} onChange={setRemoveDsKey} label="Remover a chave salva" />}
-          <p className="hint">Rascunho e resumo em segundos. A DeepSeek recebe o nome do contato e o texto das últimas 40 mensagens da conversa.</p>
+          <div className="field">
+            <span className="field__label">Modelo</span>
+            <div className="segmented" role="radiogroup" aria-label="Modelo da DeepSeek">
+              {ai.deepseek.models.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={ai.deepseek.model === m.id}
+                  className="segmented__item"
+                  disabled={switching}
+                  onClick={() => void chooseModel(m.id)}
+                >
+                  {m.name}
+                </button>
+              ))}
+            </div>
+            {dsModel && <span className="hint">{dsModel.hint} Vale para rascunho, resumo e classificação pela DeepSeek.</span>}
+          </div>
+          <p className="hint">Rascunho e resumo em segundos, em modo rápido. A DeepSeek recebe o nome do contato e o texto das últimas 120 mensagens da conversa.</p>
         </>
       ) : (
         <AiModels ai={ai} onChange={setLocal} />

@@ -7,7 +7,7 @@ import { Store, type Chat, type Message, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS, LocalAI, MODELS, type ModelId } from "./ai.ts";
-import { DeepSeekAI, DEEPSEEK_MODEL } from "./deepseek.ts";
+import { DeepSeekAI, DEEPSEEK_CONTEXT_MESSAGES, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL, isDeepSeekModel, type DeepSeekModel } from "./deepseek.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import { DEFAULT_USD_BRL, estimateCostUsd, type Provider as UsageProvider, type TokenUsage, type UsageKind } from "./pricing.ts";
 import { JEV_MODEL, type Jev } from "./jev.ts";
@@ -77,7 +77,11 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
 
   // ---- IA: DeepSeek (nuvem, padrão quando há chave) ou local (modelo em data/models, offline)
 
-  const deepseek = new DeepSeekAI();
+  const deepseekModel = (): DeepSeekModel => {
+    const saved = store.getSetting("deepseek_model");
+    return isDeepSeekModel(saved) ? saved : DEFAULT_DEEPSEEK_MODEL;
+  };
+  const deepseek = new DeepSeekAI(fetch, deepseekModel);
   const deepseekKey = () => process.env.DEEPSEEK_API_KEY || store.getSetting("deepseek_api_key");
   type Provider = "deepseek" | "local";
   const provider = (): Provider => {
@@ -99,7 +103,12 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   const aiState = () => ({
     ...localAi.status(),
     provider: provider(),
-    deepseek: { configured: !!deepseekKey(), fromEnv: !!process.env.DEEPSEEK_API_KEY, model: DEEPSEEK_MODEL },
+    deepseek: {
+      configured: !!deepseekKey(),
+      fromEnv: !!process.env.DEEPSEEK_API_KEY,
+      model: deepseekModel(),
+      models: (Object.keys(DEEPSEEK_MODELS) as DeepSeekModel[]).map((id) => ({ id, ...DEEPSEEK_MODELS[id] })),
+    },
     modelId: localAi.model_,
     model: MODELS[localAi.model_].name,
     size: MODELS[localAi.model_].size,
@@ -120,10 +129,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   function recordUsage(provider: UsageProvider, kind: UsageKind, jid: string | null, usage: TokenUsage | null, extra: UsageExtra = {}) {
     const at = Date.now();
     const u = usage ?? { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+    const model = provider === "deepseek" ? deepseekModel() : provider === "jev" ? JEV_MODEL : MODELS[localAi.model_].file;
     store.recordAiUsage({
-      at, provider, kind, chatJid: jid,
-      model: provider === "deepseek" ? DEEPSEEK_MODEL : provider === "jev" ? JEV_MODEL : MODELS[localAi.model_].file,
-      usage: u, costUsd: estimateCostUsd(provider, u, new Date(at)),
+      at, provider, kind, chatJid: jid, model,
+      usage: u, costUsd: estimateCostUsd(provider, u, new Date(at), model),
       label: extra.label ?? null, confidence: extra.confidence ?? null, needsReply: extra.needsReply ?? null, urgent: extra.urgent ?? null,
       ok: usage !== null,
     });
@@ -150,7 +159,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   const chatOrThrow = (jid: string) => {
     const chat = store.getChat(jid);
     if (!chat) throw new Error("Conversa não encontrada.");
-    const messages = store.listMessages(jid, null, 40);
+    // A nuvem recebe mais histórico; o modelo local recorta as últimas 25 por conta própria.
+    const messages = store.listMessages(jid, null, provider() === "deepseek" ? DEEPSEEK_CONTEXT_MESSAGES : 40);
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto suficiente.");
     return { chat, messages };
   };
@@ -182,7 +192,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       const chat = store.getChat(jid);
       if (!chat) throw new Error("Conversa não encontrada.");
       try {
-        const messages = store.listMessages(jid, null, 30);
+        const messages = store.listMessages(jid, null, which === "deepseek" ? DEEPSEEK_CONTEXT_MESSAGES : 30);
         const { result, usage } =
           which === "jev"
             ? await (await getJev()).classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid))
@@ -311,6 +321,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       setUsdBrl: (rate) => store.setSetting("usd_brl", rate === null ? null : String(rate)),
       setProvider: (p) => {
         store.setSetting("ai_provider", p);
+        broadcast("ai", aiState());
+      },
+      setDeepseekModel: (model) => {
+        store.setSetting("deepseek_model", model);
         broadcast("ai", aiState());
       },
       select: async (id) => {

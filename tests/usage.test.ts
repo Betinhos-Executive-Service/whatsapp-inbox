@@ -15,8 +15,8 @@ test("preço: Jev só cobra entrada; DeepSeek cobra cache 50× mais barato e dob
   assert.ok(!isDeepseekPeak(offPeak));
   assert.ok(isDeepseekPeak(new Date("2026-10-05T07:00:00Z"))); // segunda 07h UTC
   // 1M frescos + 1M em cache + 1M de saída
-  assert.equal(Number(estimateCostUsd("deepseek", usage(2_000_000, 1_000_000, 1_000_000), offPeak).toFixed(6)), 0.753);
-  assert.equal(Number(estimateCostUsd("deepseek", usage(2_000_000, 1_000_000, 1_000_000), new Date("2026-10-05T07:00:00Z")).toFixed(6)), 1.506);
+  assert.equal(Number(estimateCostUsd("deepseek", usage(2_000_000, 1_000_000, 1_000_000), offPeak).toFixed(6)), 2.662);
+  assert.equal(Number(estimateCostUsd("deepseek", usage(2_000_000, 1_000_000, 1_000_000), new Date("2026-10-05T07:00:00Z")).toFixed(6)), 5.324);
   assert.equal(estimateCostUsd("local", usage(5000, 200)), 0);
 });
 
@@ -67,4 +67,12 @@ test("uso de IA acompanha a fusão LID → número", () => {
   s.mapLid(LID, PN);
   assert.equal(s.getChat(PN)?.aiUsage.calls, 1);
   assert.equal(s.getChat(LID), null);
+});
+
+test("preço DeepSeek por modelo: Flash mais barato, modelo desconhecido cai no V4 Pro", () => {
+  const offPeak = new Date("2026-10-03T15:00:00Z");
+  const u = usage(2_000_000, 1_000_000, 1_000_000);
+  assert.equal(Number(estimateCostUsd("deepseek", u, offPeak, "deepseek-flash").toFixed(6)), 0.753);
+  assert.equal(Number(estimateCostUsd("deepseek", u, offPeak, "deepseek-v4-pro").toFixed(6)), 2.662);
+  assert.equal(Number(estimateCostUsd("deepseek", u, offPeak, "outro").toFixed(6)), 2.662);
 });
