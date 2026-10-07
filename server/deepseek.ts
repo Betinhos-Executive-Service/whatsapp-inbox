@@ -1,22 +1,39 @@
 // IA na nuvem (DeepSeek): rascunho e resumo bem melhores e em segundos. O texto das últimas
 // mensagens da conversa vai para a API da DeepSeek; nada de identificador do WhatsApp.
+// Modelo escolhido em Configurações › IA, sempre em modo rápido (sem thinking) e com janela de conversa maior.
 import { z } from "zod";
 import type { Label, LabelExample, Message } from "./db.ts";
 import type { TokenUsage } from "./pricing.ts";
 import { draftPrompt, guardDraft, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
 import { buildState, PRIORITIES, PRIORITY_CRITERIA, type Classification } from "./jev.ts";
 
-export const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-flash";
+/** Modelos da DeepSeek que o app oferece. Os dois têm contexto de 1M tokens. */
+export const DEEPSEEK_MODELS = {
+  "deepseek-v4-pro": { name: "V4 Pro", hint: "Mais forte. Cerca de 4× o custo do Flash." },
+  "deepseek-flash": { name: "Flash", hint: "Mais barato. Bom para o dia a dia." },
+} as const;
+export type DeepSeekModel = keyof typeof DEEPSEEK_MODELS;
+export const isDeepSeekModel = (v: unknown): v is DeepSeekModel => typeof v === "string" && v in DEEPSEEK_MODELS;
+/** Padrão quando nada foi escolhido no app: DEEPSEEK_MODEL do .env.local, se for um modelo conhecido; senão o V4 Pro. */
+export const DEFAULT_DEEPSEEK_MODEL: DeepSeekModel = isDeepSeekModel(process.env.DEEPSEEK_MODEL) ? process.env.DEEPSEEK_MODEL : "deepseek-v4-pro";
+/** Quantas mensagens recentes da conversa vão para a DeepSeek (o contexto do modelo é de 1M tokens). */
+export const DEEPSEEK_CONTEXT_MESSAGES = 120;
+/** Limite de caracteres por mensagem enviada à DeepSeek. */
+export const DEEPSEEK_MESSAGE_CHARS = 1500;
 const ENDPOINT = "https://api.deepseek.com/chat/completions";
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 45_000;
 
 type Fetch = typeof fetch;
 
+const CLOUD_WINDOW = { messages: DEEPSEEK_CONTEXT_MESSAGES, chars: DEEPSEEK_MESSAGE_CHARS } as const;
+
 export class DeepSeekAI {
   private readonly fetchImpl: Fetch;
+  private readonly model: () => DeepSeekModel;
 
-  constructor(fetchImpl: Fetch = fetch) {
+  constructor(fetchImpl: Fetch = fetch, model: () => DeepSeekModel = () => DEFAULT_DEEPSEEK_MODEL) {
     this.fetchImpl = fetchImpl;
+    this.model = model;
   }
 
   private async complete(
@@ -28,12 +45,12 @@ export class DeepSeekAI {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: DEEPSEEK_MODEL,
+          model: this.model(),
           messages: [
             { role: "system", content: system },
             { role: "user", content: user },
           ],
-          // Sem "thinking": resposta direta em poucos segundos.
+          // Modo rápido: sem "thinking", resposta direta em poucos segundos mesmo no modelo pro.
           thinking: { type: "disabled" },
           max_tokens: maxTokens,
           temperature,
@@ -71,12 +88,12 @@ export class DeepSeekAI {
 
   /** Rascunho de resposta para a última mensagem do contato. Nunca envia sozinho. */
   async draft(apiKey: string, contactName: string, messages: Message[], instructions: string): Promise<{ text: string; usage: TokenUsage }> {
-    const { text, usage } = await this.complete(apiKey, draftPrompt(contactName, messages, instructions, true), 400, 0.5);
-    return { text: guardDraft(unquote(text), plainTranscript(contactName, messages)), usage };
+    const { text, usage } = await this.complete(apiKey, draftPrompt(contactName, messages, instructions, true, CLOUD_WINDOW), 400, 0.5);
+    return { text: guardDraft(unquote(text), plainTranscript(contactName, messages, CLOUD_WINDOW)), usage };
   }
 
   async summarize(apiKey: string, contactName: string, messages: Message[]): Promise<{ summary: Summary; usage: TokenUsage }> {
-    const { text, usage } = await this.complete(apiKey, summaryPrompt(contactName, messages, true), 400, 0.2);
+    const { text, usage } = await this.complete(apiKey, summaryPrompt(contactName, messages, true, CLOUD_WINDOW), 400, 0.2);
     return { summary: parseSummary(text), usage };
   }
 
@@ -105,7 +122,7 @@ ${prioridades}
 
 Formato da resposta:
 {"etiqueta": "<nome exato>", "confianca": <0 a 1>, "responder": <0 a 1: probabilidade de a última mensagem do contato esperar uma resposta minha ainda não dada>, "urgente": <0 a 1: probabilidade de urgência concreta e atual>, "prioridade": "alta" | "media" | "baixa", "motivo": "<uma frase curta, em português, dizendo por que esta prioridade>"}`,
-    user: buildState(contactName, messages, new Date(), examples),
+    user: buildState(contactName, messages, new Date(), examples, CLOUD_WINDOW),
   };
 }
 

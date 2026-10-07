@@ -60,3 +60,18 @@ test("DeepSeek: erros viram mensagem clara", async () => {
   await assert.rejects(new DeepSeekAI(fakeFetch(402, {})).draft("k", "Ana", conversa, ""), /Sem saldo/);
   await assert.rejects(new DeepSeekAI(fakeFetch(200, { choices: [] })).draft("k", "Ana", conversa, ""), /vazia/);
 });
+
+test("DeepSeek: usa o modelo escolhido no app", async () => {
+  let sent = "";
+  const spy = (async (_url: string, init: RequestInit) => {
+    sent = JSON.parse(String(init.body)).model;
+    return new Response(JSON.stringify({ choices: [{ message: { content: "Olá" } }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+  let model: "deepseek-v4-pro" | "deepseek-flash" = "deepseek-flash";
+  const ai = new DeepSeekAI(spy, () => model);
+  await ai.draft("k", "Ana", conversa, "");
+  assert.equal(sent, "deepseek-flash");
+  model = "deepseek-v4-pro";
+  await ai.draft("k", "Ana", conversa, "");
+  assert.equal(sent, "deepseek-v4-pro");
+});

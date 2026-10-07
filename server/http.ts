@@ -28,6 +28,7 @@ export type Api = {
     setInstructions: (text: string | null) => void;
     select: (id: "leve" | "melhor") => Promise<void>;
     setProvider: (provider: "deepseek" | "local") => void;
+    setDeepseekModel: (model: "deepseek-v4-pro" | "deepseek-flash") => void;
     /** Resumo de gastos; days = null: desde sempre. */
     usage: (days: number | null) => unknown;
     setUsdBrl: (rate: number | null) => void;
@@ -237,6 +238,11 @@ export function createHandler(api: Api) {
     if (path === "/api/ai/provider" && method === "PUT") {
       const { provider } = parse(z.object({ provider: z.enum(["deepseek", "local"]) }), await readJson(req));
       api.ai.setProvider(provider);
+      return json(res, 200, api.ai.status());
+    }
+    if (path === "/api/ai/deepseek-model" && method === "PUT") {
+      const { model } = parse(z.object({ model: z.enum(["deepseek-v4-pro", "deepseek-flash"]) }), await readJson(req));
+      api.ai.setDeepseekModel(model);
       return json(res, 200, api.ai.status());
     }
     if (path === "/api/ai/instructions" && method === "PUT") {

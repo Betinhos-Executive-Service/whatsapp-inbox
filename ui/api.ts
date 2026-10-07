@@ -1,6 +1,7 @@
 export type Status = "aberta" | "aguardando" | "resolvida";
 export type Priority = "alta" | "media" | "baixa";
 export type Classifier = "jev" | "deepseek";
+export type DeepSeekModel = "deepseek-v4-pro" | "deepseek-flash";
 
 export type Chat = {
   jid: string;
@@ -55,7 +56,7 @@ export type AiStatus = (
   instructions: string;
   customInstructions: boolean;
   provider: "deepseek" | "local";
-  deepseek: { configured: boolean; fromEnv: boolean; model: string };
+  deepseek: { configured: boolean; fromEnv: boolean; model: DeepSeekModel; models: { id: DeepSeekModel; name: string; hint: string }[] };
 };
 export type Summary = { resumo: string; pedido: string; proximoPasso: string };
 
@@ -130,6 +131,7 @@ export const api = {
   selectAi: (id: "leve" | "melhor") => request<AiStatus>("PUT", "/api/ai/model", { id }),
   removeAi: (id: "leve" | "melhor") => request<AiStatus>("POST", "/api/ai/remove", { id }),
   setAiProvider: (provider: "deepseek" | "local") => request<AiStatus>("PUT", "/api/ai/provider", { provider }),
+  setDeepseekModel: (model: DeepSeekModel) => request<AiStatus>("PUT", "/api/ai/deepseek-model", { model }),
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
   aiUsage: (days: number | null) => request<AiUsageSummary>("GET", `/api/ai/usage?days=${days ?? "all"}`),
   setAiUsageRate: (rate: number) => request<{ ok: true }>("PUT", "/api/ai/usage/rate", { rate }),
