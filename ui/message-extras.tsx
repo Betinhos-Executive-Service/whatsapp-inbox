@@ -1,5 +1,5 @@
-import { Check, CheckCheck, Clock, Pencil, SmilePlus, X } from "lucide-react";
-import { useState } from "react";
+import { Check, CheckCheck, Clock, Copy, Pencil, SmilePlus, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { Message } from "./api.ts";
 
 /** Reações rápidas, as mesmas do WhatsApp. São conteúdo da mensagem, não ícones da interface. */
@@ -49,6 +49,31 @@ export function ReactionList({ m, onReact }: { m: Message; onReact: (m: Message,
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Copiar com confirmação no próprio botão: o ícone vira um tique por um instante, sem toast. */
+export function CopyButton({ m, onCopy }: { m: Message; onCopy: (m: Message, quiet?: boolean) => Promise<boolean> }) {
+  const [done, setDone] = useState(false);
+  const timer = useRef(0);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return (
+    <button
+      type="button"
+      className={`icon-button icon-button--plain icon-button--small copy-button${done ? " is-done" : ""}`}
+      aria-label={done ? "Texto copiado" : "Copiar texto"}
+      title={done ? "Copiado" : "Copiar texto"}
+      onClick={async () => {
+        if (!(await onCopy(m, true))) return;
+        setDone(true);
+        clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => setDone(false), 1400);
+      }}
+    >
+      <Copy className="copy-button__icon copy-button__icon--copy" size={16} aria-hidden />
+      <Check className="copy-button__icon copy-button__icon--check" size={16} aria-hidden />
+      <span className="sr-only" aria-live="polite">{done ? "Texto copiado" : ""}</span>
+    </button>
   );
 }
 

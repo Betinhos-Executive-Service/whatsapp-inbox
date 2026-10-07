@@ -403,13 +403,22 @@ ul, ol { margin: 0; padding: 0; }
   position: absolute; bottom: calc(100% + var(--bt-space-1)); left: 0; z-index: var(--bt-z-index-floating-action);
   display: flex; gap: 2px; padding: var(--bt-space-1);
   background-color: var(--bt-color-surface); border: var(--bt-border-width-default) solid var(--bt-color-border); border-radius: var(--bt-radius-full);
-  box-shadow: var(--bt-shadow-popover); animation: fade var(--bt-duration-instant) var(--bt-ease-out);
+  box-shadow: var(--bt-shadow-popover); transform-origin: bottom left;
+  animation: picker-in var(--bt-duration-normal) var(--bt-ease-out);
 }
-.message-row--me .reaction-picker { left: auto; right: 0; }
+.message-row--me .reaction-picker { left: auto; right: 0; transform-origin: bottom right; }
+@keyframes picker-in { from { opacity: 0; transform: translateY(4px) scale(.95); } }
 .react-button { position: relative; display: inline-flex; }
 .reaction-picker__item { width: 32px; height: 32px; border: 0; border-radius: var(--bt-radius-full); background-color: transparent; font-size: var(--bt-font-size-17); cursor: pointer; transition: transform var(--bt-duration-fast) var(--bt-ease-out); }
 .reaction-picker__item.is-selected { background-color: var(--bt-color-action-soft); }
 .reaction-picker__item:active { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) {
+  .reaction-picker__item:hover { transform: scale(1.12); }
+  .reaction-picker__item:hover:active { transform: scale(1.04); }
+}
+/* minha reação acabou de entrar: confirma onde ela foi parar */
+.message-row--reacted .reaction--mine { animation: reaction-pop var(--bt-duration-slow) var(--bt-ease-out); }
+@keyframes reaction-pop { 0% { opacity: 0; transform: scale(.95); } 60% { opacity: 1; transform: scale(1.08); } }
 .reaction-picker__item:focus-visible { outline: 0; box-shadow: var(--bt-focus-ring); }
 
 .chat-pane__presence { color: var(--bt-color-success); font-weight: var(--bt-font-weight-semibold); }
@@ -869,6 +878,20 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 @media (pointer: coarse) {
   .message-actions { opacity: 1; }
 }
+/* mantém visível enquanto o botão confirma a ação ou a mensagem é o alvo da resposta/edição */
+.message-actions:has(.is-done), .message-row--target .message-actions { opacity: 1; }
+
+/* copiar: o ícone vira um tique no lugar, com blur cruzado para parecer uma peça só */
+.copy-button { transition: transform var(--bt-duration-fast) var(--bt-ease-out), background-color var(--bt-duration-fast) ease, color var(--bt-duration-fast) ease; }
+.copy-button__icon { grid-area: 1 / 1; transition: opacity var(--bt-duration-fast) ease, transform var(--bt-duration-normal) var(--bt-ease-out), filter var(--bt-duration-fast) ease; }
+.copy-button__icon--check { opacity: 0; transform: scale(.95); filter: blur(2px); }
+.copy-button.is-done .copy-button__icon--copy { opacity: 0; transform: scale(.95); filter: blur(2px); }
+.copy-button.is-done .copy-button__icon--check { opacity: 1; transform: none; filter: none; }
+.message-actions .icon-button.copy-button.is-done { color: var(--bt-color-success); }
+
+/* bolha sendo respondida ou editada: liga a barra do campo à mensagem de origem */
+.message-row .bubble { transition: box-shadow var(--bt-duration-fast) ease; }
+.message-row--target .bubble { box-shadow: 0 0 0 2px var(--bt-focus-border); }
 .message-row--flash .bubble { animation: message-flash 1.4s var(--bt-ease-out); }
 @keyframes message-flash { 0%, 40% { box-shadow: 0 0 0 3px var(--bt-focus-border); } 100% { box-shadow: 0 0 0 3px transparent; } }
 
@@ -894,7 +917,8 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 .quote--static { cursor: default; flex: 1; min-width: 0; margin: 0; }
 .quote__author { font-size: var(--bt-font-size-12); font-weight: var(--bt-font-weight-extrabold); color: var(--bt-color-action); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quote__text { font-size: var(--bt-font-size-12); color: var(--bt-color-text-secondary); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: pre-wrap; overflow-wrap: anywhere; }
-.reply-bar { order: -1; flex-basis: 100%; display: flex; align-items: center; gap: var(--bt-space-2); min-width: 0; color: var(--bt-color-action); }
+.reply-bar { order: -1; flex-basis: 100%; display: flex; align-items: center; gap: var(--bt-space-2); min-width: 0; color: var(--bt-color-action); animation: bar-in var(--bt-duration-normal) var(--bt-ease-out); }
+@keyframes bar-in { from { opacity: 0; transform: translateY(6px); } }
 
 /* ---- mensagem apagada */
 .bubble__text--deleted { display: inline-flex; align-items: center; gap: var(--bt-space-1-5); font-style: italic; color: var(--bt-color-text-secondary); }
