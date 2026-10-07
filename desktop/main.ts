@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { startApp, type RunningApp } from "../server/app.ts";
 import type { Chat, Message, Reminder } from "../server/db.ts";
 import { inQuietHours, type Prefs } from "../server/prefs.ts";
+import { roundAvatar } from "./avatar.ts";
 import { isUrgent, notificationBody, notificationTitle, UnreadCounter } from "./notifications.ts";
 import { setupUpdates } from "./updates.ts";
 
@@ -24,6 +25,15 @@ const reminders = new Set<Notification>();
 const counter = new UnreadCounter();
 
 const iconPath = () => join(app.getAppPath(), "dist", "icon.ico");
+
+// A foto não pode atrasar o aviso: sem ela em 1,5 s, vai o ícone do app.
+const AVATAR_WAIT = 1500;
+async function chatIcon(jid: string): Promise<string> {
+  if (!server) return iconPath();
+  const photo = server.avatar(jid).then((p) => (p ? roundAvatar(p, join(app.getPath("userData"), "avatars-round")) : null));
+  const late = new Promise<null>((resolve) => setTimeout(() => resolve(null), AVATAR_WAIT));
+  return (await Promise.race([photo, late]).catch(() => null)) ?? iconPath();
+}
 
 function showWindow() {
   if (!window) return;
@@ -74,54 +84,60 @@ function notify(chat: Chat, message: Message) {
   if (inQuietHours(prefs)) return;
   window?.flashFrame(true);
   const count = counter.bump(chat.jid);
-  byChat.get(chat.jid)?.close();
-  const n = new Notification({
-    id: chat.jid,
-    groupId: chat.jid,
-    groupTitle: chat.name,
-    title: notificationTitle(chat, count),
-    body: notificationBody(message, prefs.notifyPreview),
-    silent: !prefs.notifySound,
-    urgency: isUrgent(chat) ? "critical" : "normal",
-    icon: iconPath(),
-    hasReply: true,
-    replyPlaceholder: "Responder…",
-    actions: [{ type: "button", text: "Marcar como lida" }],
+  void chatIcon(chat.jid).then((icon) => {
+    // Mensagem mais nova, ou conversa lida durante a espera: este toast ficou obsoleto.
+    if (counter.get(chat.jid) !== count) return;
+    byChat.get(chat.jid)?.close();
+    const n = new Notification({
+      id: chat.jid,
+      groupId: chat.jid,
+      groupTitle: chat.name,
+      title: notificationTitle(chat, count),
+      body: notificationBody(message, prefs.notifyPreview),
+      silent: !prefs.notifySound,
+      urgency: isUrgent(chat) ? "critical" : "normal",
+      icon,
+      hasReply: true,
+      replyPlaceholder: "Responder…",
+      actions: [{ type: "button", text: "Marcar como lida" }],
+    });
+    byChat.set(chat.jid, n);
+    n.on("click", () => openChat(chat.jid));
+    n.on("action", () => {
+      server?.markRead(chat.jid).catch((e: Error) => failure(chat, `Não foi possível marcar ${chat.name} como lida`, e.message));
+    });
+    n.on("reply", (event) => {
+      const text = event.reply.trim();
+      if (!text || !server) return;
+      server
+        .send(chat.jid, text)
+        .then(() => server?.markRead(chat.jid))
+        .catch((e: Error) => failure(chat, `Mensagem não enviada para ${chat.name}`, `${e.message} Texto: ${text}`));
+    });
+    n.on("close", () => {
+      if (byChat.get(chat.jid) === n) byChat.delete(chat.jid);
+    });
+    n.show();
   });
-  byChat.set(chat.jid, n);
-  n.on("click", () => openChat(chat.jid));
-  n.on("action", () => {
-    server?.markRead(chat.jid).catch((e: Error) => failure(chat, `Não foi possível marcar ${chat.name} como lida`, e.message));
-  });
-  n.on("reply", (event) => {
-    const text = event.reply.trim();
-    if (!text || !server) return;
-    server
-      .send(chat.jid, text)
-      .then(() => server?.markRead(chat.jid))
-      .catch((e: Error) => failure(chat, `Mensagem não enviada para ${chat.name}`, `${e.message} Texto: ${text}`));
-  });
-  n.on("close", () => {
-    if (byChat.get(chat.jid) === n) byChat.delete(chat.jid);
-  });
-  n.show();
 }
 
 /** Lembrete é pedido explícito seu: avisa mesmo com o app na frente e no horário de silêncio. */
 function remind(chat: Chat, reminder: Reminder) {
   if (!Notification.isSupported()) return;
-  const n = new Notification({
-    title: `Lembrete: ${chat.name}`,
-    body: reminder.text || "Hora de retomar esta conversa.",
-    silent: server ? !server.prefs().notifySound : false,
-    icon: iconPath(),
-    groupId: chat.jid,
-    groupTitle: chat.name,
+  void chatIcon(chat.jid).then((icon) => {
+    const n = new Notification({
+      title: `Lembrete: ${chat.name}`,
+      body: reminder.text || "Hora de retomar esta conversa.",
+      silent: server ? !server.prefs().notifySound : false,
+      icon,
+      groupId: chat.jid,
+      groupTitle: chat.name,
+    });
+    reminders.add(n);
+    n.on("click", () => openChat(chat.jid));
+    n.on("close", () => reminders.delete(n));
+    n.show();
   });
-  reminders.add(n);
-  n.on("click", () => openChat(chat.jid));
-  n.on("close", () => reminders.delete(n));
-  n.show();
 }
 
 function createWindow(url: string) {
