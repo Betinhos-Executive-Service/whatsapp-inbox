@@ -1,7 +1,11 @@
 import {
   AlarmClock,
   ArrowLeft,
+  Ban,
   CheckCircle2,
+  Copy,
+  Reply,
+  Trash2,
   CircleDot,
   Clock,
   Inbox,
@@ -24,7 +28,25 @@ import {
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
-import { mediaUrl, api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
+import { api, type AppState, type Chat, type Connection, type Message, type Participant, type QuickReply, type Status } from "./api.ts";
+import { Avatar, refreshAvatars } from "./avatar.tsx";
+import { AiQuickPicker } from "./ai-quick.tsx";
+import {
+  applyMentions,
+  canRevoke,
+  DeleteDialog,
+  filterParticipants,
+  insertMention,
+  MentionMenu,
+  mentionLabel,
+  mentionQuery,
+  messageBody,
+  quoteAuthor,
+  ReplyBar,
+  type MentionPick,
+} from "./conversation.tsx";
+import { ProfilePanel, type ProfileTarget } from "./profile.tsx";
+import { applyTheme, storedTheme } from "./theme.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
 import { AttachmentTray, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
@@ -33,11 +55,16 @@ import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, l
 // Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
 import { UpdateDialog } from "./update.tsx";
+import { WaInline, WaLive, WaText } from "./wa-format.tsx";
+import { toggleWa } from "./wa-text.ts";
 import { desktop } from "./desktop.ts";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
 declare const __BUILD_DATE__: string;
+
+// O index.html já pintou o tema salvo; aqui passa a acompanhar o Windows quando for "Sistema".
+applyTheme(storedTheme());
 
 type Tab = Status | "todas";
 const TABS: { id: Tab; label: string }[] = [
@@ -147,9 +174,7 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
   return (
     <li>
       <button className="chat-item" aria-current={selected ? "true" : undefined} onClick={() => onOpen(chat.jid)}>
-        <span className="avatar" aria-hidden>
-          {initials(chat.name)}
-        </span>
+        <Avatar jid={chat.jid} name={chat.name} />
         <span className="chat-item__body">
           <span className="chat-item__row">
             <span className="chat-item__name">{chat.name}</span>
@@ -158,7 +183,7 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
           <span className="chat-item__row">
             <span className="chat-item__preview">
               {chat.lastFromMe && <span className="chat-item__me">Você: </span>}
-              {chat.lastText ?? "Sem mensagens"}
+              {chat.lastText ? <WaInline text={chat.lastText} /> : "Sem mensagens"}
             </span>
             {chat.unread > 0 && (
               <span className="count" aria-label={`${chat.unread} não lidas`}>
@@ -408,11 +433,7 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
 }
 
 /** Em grupo, mensagem recebida chega como "Autor: texto". */
-function splitAuthor(m: Message, isGroup: boolean): { author: string | null; body: string } {
-  if (!isGroup || m.fromMe) return { author: null, body: m.text };
-  const i = m.text.indexOf(": ");
-  return i > 0 && i <= 60 ? { author: m.text.slice(0, i), body: m.text.slice(i + 2) } : { author: null, body: m.text };
-}
+const splitAuthor = messageBody;
 
 const AUTHOR_TONES = 6;
 function authorTone(name: string): number {
@@ -422,7 +443,21 @@ function authorTone(name: string): number {
 }
 
 /** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore }: { messages: Message[]; isGroup: boolean; hasMore: boolean; onMore: () => void; loadingMore: boolean }) {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, onReply, onDelete, onCopy, onAuthor, onJump }: {
+  messages: Message[];
+  isGroup: boolean;
+  hasMore: boolean;
+  onMore: () => void;
+  loadingMore: boolean;
+  chatName: string;
+  /** WhatsApp conectado: responder e apagar dependem dele. */
+  canAct: boolean;
+  onReply: (m: Message) => void;
+  onDelete: (m: Message) => void;
+  onCopy: (m: Message) => void;
+  onAuthor: (jid: string, name: string) => void;
+  onJump: (id: string) => void;
+}) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
   return (
     <>
@@ -442,22 +477,64 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         // Documento: o texto começa pelo nome do arquivo, que já aparece no cartão.
         const fileName = m.media?.fileName;
         if (fileName && caption.startsWith(fileName)) caption = caption.slice(fileName.length).trim();
+        const sender = m.sender;
         return (
-          <div key={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}`}>
+          <div key={m.id} data-message-id={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
             <div className="message-line">
-              {isGroup && !m.fromMe && (
-                <span className={`avatar avatar--author tone-${authorTone(author ?? "?")}`} aria-hidden>
-                  {continues ? "" : initials(author ?? "?")}
-                </span>
-              )}
-              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}`}>
-                {author && !continues && <span className={`bubble__author tone-${authorTone(author)}`}>{author}</span>}
-                {m.media && <MediaView m={m} caption={caption} />}
-                {(!m.media || caption) && <p className="bubble__text">{caption}</p>}
+              {isGroup && !m.fromMe &&
+                (sender && !continues ? (
+                  <button type="button" className="author-button" aria-label={`Ver perfil de ${author ?? "participante"}`} onClick={() => onAuthor(sender, author ?? "Participante")}>
+                    <Avatar jid={sender} name={author ?? "?"} className={`avatar--author tone-${authorTone(author ?? "?")}`} />
+                  </button>
+                ) : (
+                  <span className={`avatar avatar--author tone-${authorTone(author ?? "?")}`} aria-hidden>
+                    {continues ? "" : initials(author ?? "?")}
+                  </span>
+                ))}
+              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}${m.deleted ? " bubble--deleted" : ""}`}>
+                {author && !continues &&
+                  (sender ? (
+                    <button type="button" className={`bubble__author bubble__author--link tone-${authorTone(author)}`} onClick={() => onAuthor(sender, author)}>
+                      {author}
+                    </button>
+                  ) : (
+                    <span className={`bubble__author tone-${authorTone(author)}`}>{author}</span>
+                  ))}
+                {m.quoted && (
+                  <button type="button" className="quote" onClick={() => onJump(m.quoted!.id)} title="Ir para a mensagem respondida">
+                    <span className="quote__author">{quoteAuthor(m.quoted, chatName)}</span>
+                    <span className="quote__text"><WaInline text={m.quoted.text} /></span>
+                  </button>
+                )}
+                {m.deleted ? (
+                  <p className="bubble__text bubble__text--deleted">
+                    <Ban size={14} aria-hidden /> {m.fromMe ? "Você apagou esta mensagem" : "Esta mensagem foi apagada"}
+                  </p>
+                ) : (
+                  <>
+                    {m.media && <MediaView m={m} caption={caption} />}
+                    {(!m.media || caption) && <p className="bubble__text"><WaText text={caption} /></p>}
+                  </>
+                )}
                 <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
                   {formatTime(m.at)}
                 </time>
+              </div>
+              <div className="message-actions" role="group" aria-label="Ações da mensagem">
+                {!m.deleted && (
+                  <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Responder" title="Responder" disabled={!canAct} onClick={() => onReply(m)}>
+                    <Reply size={16} aria-hidden />
+                  </button>
+                )}
+                {!m.deleted && (!m.media || caption) && (
+                  <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Copiar texto" title="Copiar texto" onClick={() => onCopy(m)}>
+                    <Copy size={16} aria-hidden />
+                  </button>
+                )}
+                <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Apagar mensagem" title="Apagar" onClick={() => onDelete(m)}>
+                  <Trash2 size={16} aria-hidden />
+                </button>
               </div>
             </div>
           </div>
@@ -485,10 +562,27 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [classifying, setClassifying] = useState(false);
-  const [notesOpen, setNotesOpen] = useState(false);
+  // Um painel lateral por vez: notas e lembretes ou perfil.
+  const [side, setSide] = useState<"notes" | "profile" | null>(null);
+  const notesOpen = side === "notes";
+  const [profileTarget, setProfileTarget] = useState<ProfileTarget | null>(null);
+  const openProfile = useCallback((target: ProfileTarget) => {
+    setProfileTarget(target);
+    setSide("profile");
+  }, []);
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [deleting, setDeleting] = useState<Message | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  // Menções: participantes carregados no primeiro "@"; escolhas valem até enviar.
+  const [participants, setParticipants] = useState<Participant[] | null>(null);
+  const [caret, setCaret] = useState(0);
+  const [mentionActive, setMentionActive] = useState(0);
+  const [mentionClosed, setMentionClosed] = useState(false);
+  const picks = useRef<MentionPick[]>([]);
   const [quickActive, setQuickActive] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const mirror = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -514,6 +608,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       return [];
     });
     recorder.cancel();
+    setReplyTo(null);
+    setParticipants(null);
+    picks.current = [];
   }, [chat.jid]);
   useEffect(() => {
     const id = requestAnimationFrame(() => composer.current?.focus());
@@ -567,8 +664,28 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       stickToBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
       setMessages((list) => (list && !list.some((x) => x.id === m.id) ? [...list, m] : list));
     };
+    // Apagada para todos (por mim ou pelo contato): troca no lugar.
+    const onUpdate = (e: Event) => {
+      const m = (e as CustomEvent<Message>).detail;
+      if (m.chatJid !== chat.jid) return;
+      setMessages((list) => list && list.map((x) => (x.id === m.id ? m : x)));
+      setReplyTo((r) => (r?.id === m.id ? null : r));
+    };
+    // Apagada para mim: sai da lista.
+    const onRemove = (e: Event) => {
+      const { chatJid, id } = (e as CustomEvent<{ chatJid: string; id: string }>).detail;
+      if (chatJid !== chat.jid) return;
+      setMessages((list) => list && list.filter((x) => x.id !== id));
+      setReplyTo((r) => (r?.id === id ? null : r));
+    };
     window.addEventListener("inbox:message", onMessage);
-    return () => window.removeEventListener("inbox:message", onMessage);
+    window.addEventListener("inbox:update", onUpdate);
+    window.addEventListener("inbox:remove", onRemove);
+    return () => {
+      window.removeEventListener("inbox:message", onMessage);
+      window.removeEventListener("inbox:update", onUpdate);
+      window.removeEventListener("inbox:remove", onRemove);
+    };
   }, [chat.jid]);
 
   useLayoutEffect(() => {
@@ -610,14 +727,22 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     if ((!text && !attachments.length) || sending) return;
     setSending(true);
     stickToBottom.current = true;
+    const quotedId = replyTo?.id;
     try {
       // A legenda vai no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
+      // A resposta (citação) vai só no primeiro.
       for (const [i, a] of attachments.entries()) {
-        onChat(await api.sendMedia(chat.jid, await fileToOutgoing(a.file, i === 0 && text ? text : undefined)));
+        const file = await fileToOutgoing(a.file, i === 0 && text ? text : undefined);
+        onChat(await api.sendMedia(chat.jid, i === 0 && quotedId ? { ...file, quotedId } : file));
         removeAttachment(a.id);
       }
-      if (text && !attachments.length) onChat(await api.send(chat.jid, text));
+      if (text && !attachments.length) {
+        const withMentions = applyMentions(text, picks.current);
+        onChat(await api.send(chat.jid, withMentions.text, { quotedId, mentions: withMentions.mentions.length ? withMentions.mentions : undefined }));
+      }
       setDraft("");
+      setReplyTo(null);
+      picks.current = [];
     } catch (e) {
       notify("error", `Mensagem não enviada. ${(e as Error).message}`);
     } finally {
@@ -631,7 +756,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     try {
       const voice = await recorder.finish();
       if (!voice) return notify("error", "Gravação curta demais; segure por pelo menos meio segundo.");
-      onChat(await api.sendMedia(chat.jid, voice));
+      onChat(await api.sendMedia(chat.jid, replyTo ? { ...voice, quotedId: replyTo.id } : voice));
+      setReplyTo(null);
     } catch (e) {
       notify("error", `Áudio não enviado. ${(e as Error).message}`);
     } finally {
@@ -650,6 +776,100 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setDraft(fillQuickReply(q.text, chat.name));
     setQuickOpen(false);
     requestAnimationFrame(() => composer.current?.focus());
+  };
+
+  // "@" abre a lista de quem mencionar: participantes do grupo ou o próprio contato.
+  const mention = showQuick ? null : mentionQuery(draft, caret);
+  useEffect(() => {
+    if (mention === null || participants !== null) return;
+    if (!chat.isGroup) {
+      setParticipants([{ jid: chat.jid, name: chat.name, phone: chat.phone, admin: false, me: false }]);
+      return;
+    }
+    if (!connected) return;
+    let alive = true;
+    api
+      .participants(chat.jid)
+      .then((list) => alive && setParticipants(list))
+      .catch((e: Error) => {
+        if (!alive) return;
+        setParticipants([]);
+        notify("error", `Não foi possível carregar os participantes. ${e.message}`);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [mention !== null, participants, chat, connected, notify]);
+  const mentionItems = mention !== null && participants && !mentionClosed ? filterParticipants(participants, mention) : [];
+  const showMention = mentionItems.length > 0;
+  useEffect(() => {
+    setMentionActive(0);
+    setMentionClosed(false);
+  }, [mention]);
+  const pickMention = (p: Participant) => {
+    const label = mentionLabel(p);
+    const next = insertMention(draft, caret, label);
+    if (!picks.current.some((x) => x.jid === p.jid)) picks.current.push({ label, jid: p.jid });
+    setDraft(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => {
+      composer.current?.focus();
+      composer.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+
+  // ---- ações da mensagem (callbacks estáveis para o memo de <Messages>)
+
+  const reply = useCallback((m: Message) => {
+    setReplyTo(m);
+    requestAnimationFrame(() => composer.current?.focus());
+  }, []);
+  const copy = useCallback(
+    (m: Message) => {
+      const { body } = splitAuthor(m, chat.isGroup);
+      // Mídia: copia só a legenda, sem o "[Imagem]" do começo.
+      const text = m.media ? body.replace(/^\[[^\]]+\]\s*/, "") : body;
+      navigator.clipboard.writeText(text).then(
+        () => notify("success", "Texto copiado."),
+        () => notify("error", "Não foi possível copiar."),
+      );
+    },
+    [chat.isGroup, notify],
+  );
+  const askDelete = useCallback((m: Message) => setDeleting(m), []);
+  const showAuthor = useCallback(
+    (jid: string, name: string) => openProfile({ jid, name, phone: jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : null, isGroup: false }),
+    [openProfile],
+  );
+  const jump = useCallback(
+    (id: string) => {
+      const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
+      if (!row) return notify("error", "A mensagem respondida é mais antiga. Use Carregar mensagens anteriores.");
+      row.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      row.classList.remove("message-row--flash");
+      void row.offsetWidth;
+      row.classList.add("message-row--flash");
+    },
+    [notify],
+  );
+  const confirmDelete = async (mode: "everyone" | "me") => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    try {
+      const { chat: updated, synced } = await api.deleteMessage(chat.jid, deleting.id, mode);
+      onChat(updated);
+      if (mode === "me") setMessages((list) => list && list.filter((x) => x.id !== deleting.id));
+      if (replyTo?.id === deleting.id) setReplyTo(null);
+      notify(
+        synced ? "success" : "error",
+        mode === "everyone" ? "Mensagem apagada para todos." : synced ? "Mensagem apagada para você." : "Mensagem apagada neste computador. O celular não confirmou; apague lá também se precisar.",
+      );
+      setDeleting(null);
+    } catch (e) {
+      notify("error", `Mensagem não apagada. ${(e as Error).message}`);
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   const change = async (patch: { status?: Status; label?: string | null }) => {
@@ -703,23 +923,38 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           <button className="icon-button chat-pane__back" aria-label="Voltar para a lista" onClick={onBack}>
             <ArrowLeft size={18} aria-hidden />
           </button>
-          <span className="avatar" aria-hidden>
-            {initials(chat.name)}
-          </span>
-          <div className="chat-pane__name">
-            <h2 className="heading-card">{chat.name}</h2>
-            {chat.phone && <span className="hint">+{chat.phone}</span>}
-            {chat.isGroup && <span className="hint">Grupo</span>}
-          </div>
+          <button
+            type="button"
+            className="chat-pane__who"
+            aria-pressed={side === "profile" && profileTarget?.jid === chat.jid}
+            title={chat.isGroup ? "Ver dados do grupo" : "Ver perfil do contato"}
+            onClick={() =>
+              side === "profile" && profileTarget?.jid === chat.jid
+                ? setSide(null)
+                : openProfile({ jid: chat.jid, name: chat.name, phone: chat.phone, isGroup: chat.isGroup })
+            }
+          >
+            <Avatar jid={chat.jid} name={chat.name} />
+            <span className="chat-pane__name">
+              <span className="heading-card" role="heading" aria-level={2}>
+                {chat.name}
+              </span>
+              {chat.phone && <span className="hint">+{chat.phone}</span>}
+              {chat.isGroup && <span className="hint">Grupo · ver participantes</span>}
+            </span>
+          </button>
         </div>
-        <button
-          className={`button button--secondary button--compact chat-pane__notes-toggle${chat.note || chat.reminderAt !== null ? " has-content" : ""}`}
-          aria-pressed={notesOpen}
-          onClick={() => setNotesOpen((v) => !v)}
-        >
-          <StickyNote size={16} aria-hidden /> Notas e lembretes
-          {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
-        </button>
+        <div className="cluster chat-pane__tools">
+          <button
+            className={`button button--secondary button--compact chat-pane__notes-toggle${chat.note || chat.reminderAt !== null ? " has-content" : ""}`}
+            aria-pressed={notesOpen}
+            onClick={() => setSide((v) => (v === "notes" ? null : "notes"))}
+          >
+            <StickyNote size={16} aria-hidden /> Notas e lembretes
+            {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
+          </button>
+          <AiQuickPicker onMore={onSetupAi} />
+        </div>
         <ClassificationBar
           chat={chat}
           labels={labels}
@@ -744,11 +979,26 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             <p className="hint">As próximas mensagens desta conversa aparecem aqui.</p>
           </div>
         ) : (
-          <Messages messages={messages} isGroup={chat.isGroup} hasMore={hasMore} onMore={loadMore} loadingMore={loadingMore} />
+          <Messages
+            messages={messages}
+            isGroup={chat.isGroup}
+            hasMore={hasMore}
+            onMore={loadMore}
+            loadingMore={loadingMore}
+            chatName={chat.name}
+            canAct={connected}
+            onReply={reply}
+            onDelete={askDelete}
+            onCopy={copy}
+            onAuthor={showAuthor}
+            onJump={jump}
+          />
         )}
       </div>
-      {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setNotesOpen(false)} />}
+      {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
+      {side === "profile" && profileTarget && <ProfilePanel target={profileTarget} connected={connected} onClose={() => setSide(null)} />}
       </div>
+      {deleting && <DeleteDialog message={deleting} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
       <form
         className="composer"
         onSubmit={(e) => {
@@ -760,6 +1010,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           Mensagem
         </label>
         {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
+        {showMention && <MentionMenu items={mentionItems} active={mentionActive} onPick={pickMention} onHover={setMentionActive} />}
+        {replyTo && <ReplyBar message={replyTo} isGroup={chat.isGroup} chatName={chat.name} onCancel={() => setReplyTo(null)} />}
         {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} disabled={sending} />}
         <input
           ref={fileInput}
@@ -807,19 +1059,38 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         >
           {drafting ? <LoaderCircle className="spin" size={18} aria-hidden /> : <WandSparkles size={18} aria-hidden />}
         </button>
+        <div className="composer__field">
+        <div className="composer__mirror" ref={mirror} aria-hidden>
+          <WaLive text={draft} />
+        </div>
         <textarea
           ref={composer}
           id="composer-text"
           rows={1}
           role="combobox"
-          aria-expanded={showQuick}
-          aria-controls={showQuick ? "quick-menu" : undefined}
-          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : undefined}
+          aria-expanded={showQuick || showMention}
+          aria-controls={showQuick ? "quick-menu" : showMention ? "mention-menu" : undefined}
+          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : showMention ? `mention-${mentionActive}` : undefined}
           aria-autocomplete="list"
           value={draft}
           disabled={!connected}
-          placeholder={!connected ? "Conecte o WhatsApp para responder." : attachments.length ? "Legenda (opcional). Enter envia." : "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha."}
-          onChange={(e) => setDraft(e.target.value)}
+          placeholder={
+            !connected
+              ? "Conecte o WhatsApp para responder."
+              : attachments.length
+                ? "Legenda (opcional). Enter envia."
+                : chat.isGroup
+                  ? "Escreva uma mensagem. @ menciona, / respostas rápidas."
+                  : "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha."
+          }
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setCaret(e.target.selectionStart ?? e.target.value.length);
+          }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+          onScroll={(e) => {
+            if (mirror.current) mirror.current.scrollTop = e.currentTarget.scrollTop;
+          }}
           onPaste={(e) => {
             const files = [...e.clipboardData.files];
             if (!files.length) return;
@@ -827,6 +1098,38 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             addFiles(files);
           }}
           onKeyDown={(e) => {
+            const marker = formatShortcut(e);
+            if (marker) {
+              e.preventDefault();
+              const el = e.currentTarget;
+              const next = toggleWa(draft, el.selectionStart, el.selectionEnd, marker);
+              setDraft(next.text);
+              requestAnimationFrame(() => el.setSelectionRange(next.start, next.end));
+              return;
+            }
+            if (showMention) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                setMentionActive((i) => (i + step + mentionItems.length) % mentionItems.length);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                pickMention(mentionItems[mentionActive] ?? mentionItems[0]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setMentionClosed(true);
+                return;
+              }
+            }
+            if (e.key === "Escape" && replyTo && !showQuick) {
+              e.preventDefault();
+              setReplyTo(null);
+              return;
+            }
             if (showQuick) {
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
@@ -852,6 +1155,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             }
           }}
         />
+        </div>
           </>
         )}
         {recorder.recording || draft.trim() || attachments.length || sending ? (
@@ -878,6 +1182,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       )}
     </section>
   );
+}
+
+/** Atalhos do WhatsApp Desktop: Ctrl+B negrito, Ctrl+I itálico, Ctrl+Shift+X tachado, Ctrl+Shift+M monoespaçado. */
+function formatShortcut(e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean; key: string }): string | null {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  const k = e.key.toLowerCase();
+  if (!e.shiftKey) return k === "b" ? "*" : k === "i" ? "_" : null;
+  return k === "x" ? "~" : k === "m" ? "```" : null;
 }
 
 function App() {
@@ -953,6 +1265,16 @@ function App() {
       upsert(chat);
       window.dispatchEvent(new CustomEvent("inbox:message", { detail: message }));
     });
+    es.addEventListener("update", (e) => {
+      const { message, chat } = JSON.parse((e as MessageEvent).data) as { message: Message; chat: Chat | null };
+      upsert(chat);
+      window.dispatchEvent(new CustomEvent("inbox:update", { detail: message }));
+    });
+    es.addEventListener("remove", (e) => {
+      const { chatJid, id, chat } = JSON.parse((e as MessageEvent).data) as { chatJid: string; id: string; chat: Chat | null };
+      upsert(chat);
+      window.dispatchEvent(new CustomEvent("inbox:remove", { detail: { chatJid, id } }));
+    });
     return () => es.close();
   }, [reload, upsert]);
 
@@ -973,8 +1295,16 @@ function App() {
   const showConnect = connection.status === "qr" && !skipConnect;
 
   useEffect(() => {
-    if (connection.status === "conectado") setSkipConnect(false);
+    if (connection.status !== "conectado") return;
+    setSkipConnect(false);
+    // Fotos que falharam offline são buscadas de novo.
+    refreshAvatars();
   }, [connection.status]);
+
+  const theme = state?.prefs.theme;
+  useEffect(() => {
+    if (theme) applyTheme(theme);
+  }, [theme]);
 
   // Clique na notificação abre a conversa; "Configurações" na bandeja abre o painel.
   useEffect(() => {
