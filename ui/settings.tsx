@@ -1,10 +1,11 @@
-import { Bell, ChartColumn, Download, Monitor, Moon, Sun, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
+import { Bell, ChartColumn, Download, Monitor, Moon, Sun, Zap, KeyRound, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type AiStatus, type AppState, type Classifier, type Label, type Prefs, type QuickReply, type Theme } from "./api.ts";
 import { desktop, useAccount, type ReleaseInfo, type UpdateState } from "./desktop.ts";
 import { publishAi, useAiStatus } from "./ai-state.ts";
 import { ClaudeOptionsPanel, DeepSeekOptionsPanel, JevContextField } from "./ai-options.tsx";
 import { applyTheme } from "./theme.ts";
+import { Button, buttonClassName, Checkbox, Field, Input, Radio, SegmentedControl, Textarea } from "./ds/index.ts";
 import { AiUsagePanel } from "./ai-usage.tsx";
 
 type Props = {
@@ -44,13 +45,7 @@ const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), select:not(:disa
 
 function Toggle({ checked, onChange, label, hint, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string; disabled?: boolean }) {
   return (
-    <label className={`check${disabled ? " check--disabled" : ""}`}>
-      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-      <span className="check__text">
-        <span>{label}</span>
-        {hint && <span className="hint">{hint}</span>}
-      </span>
-    </label>
+    <Checkbox checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} label={label} description={hint || undefined} />
   );
 }
 
@@ -84,30 +79,27 @@ function SummaryModelPanel() {
   ] as const;
   return (
     <div className="stack">
-      <div className="segmented" role="radiogroup" aria-label="IA do resumo">
-        {providers.map(([id, label]) => (
-          <button key={id} type="button" role="radio" aria-checked={s.provider === id} className="segmented__item" disabled={saving} onClick={() => s.provider !== id && void save({ provider: id })}>
-            {label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        aria-label="IA do resumo"
+        options={providers.map(([id, label]) => ({ value: id, label, disabled: saving }))}
+        value={s.provider}
+        onChange={(id) => s.provider !== id && void save({ provider: id })}
+      />
       {s.provider === "deepseek" && (
-        <div className="segmented" role="radiogroup" aria-label="Modelo da DeepSeek para resumo">
-          {live.deepseek.models.map((m) => (
-            <button key={m.id} type="button" role="radio" aria-checked={s.deepseekModel === m.id} className="segmented__item" disabled={saving} onClick={() => void save({ deepseekModel: m.id })}>
-              {m.name}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          aria-label="Modelo da DeepSeek para resumo"
+          options={live.deepseek.models.map((m) => ({ value: m.id, label: m.name, disabled: saving }))}
+          value={s.deepseekModel}
+          onChange={(id) => void save({ deepseekModel: id })}
+        />
       )}
       {s.provider === "claude" && (
-        <div className="segmented" role="radiogroup" aria-label="Modelo do Claude para resumo">
-          {live.claude.models.map((m) => (
-            <button key={m.id} type="button" role="radio" aria-checked={s.claudeModel === m.id} className="segmented__item" disabled={saving} onClick={() => void save({ claudeModel: m.id })}>
-              {m.name}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          aria-label="Modelo do Claude para resumo"
+          options={live.claude.models.map((m) => ({ value: m.id, label: m.name, disabled: saving }))}
+          value={s.claudeModel}
+          onChange={(id) => void save({ claudeModel: id })}
+        />
       )}
       <p className="hint">
         {s.provider === "claude"
@@ -160,26 +152,31 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
   const clModel = ai.claude.models.find((m) => m.id === ai.claude.model);
   return (
     <div className="stack">
-      <div className="segmented" role="radiogroup" aria-label="Onde a IA roda">
-        {(
+      <SegmentedControl
+        aria-label="Onde a IA roda"
+        options={(
           [
             ["deepseek", "DeepSeek (nuvem)"],
             ["claude", "Claude (plano)"],
           ] as const
-        ).map(([id, label]) => (
-          <button key={id} type="button" role="radio" aria-checked={ai.provider === id} className="segmented__item" disabled={switching} onClick={() => void choose(id)}>
-            {label}
-          </button>
-        ))}
-      </div>
+        ).map(([id, label]) => ({ value: id, label, disabled: switching }))}
+        value={ai.provider}
+        onChange={(id) => void choose(id)}
+      />
       {ai.provider === "deepseek" ? (
         <>
           {ai.deepseek.fromEnv ? (
             <p className="hint">A chave da DeepSeek está definida no arquivo .env.local deste computador.</p>
           ) : (
-            <label className="field">
-              <span className="field__label">Chave de API da DeepSeek</span>
-              <input
+            <Field
+              label="Chave de API da DeepSeek"
+              hint={
+                ai.deepseek.configured
+                  ? "A chave fica salva só neste computador e nunca volta para a tela."
+                  : "Crie a chave em platform.deepseek.com › API keys e salve aqui."
+              }
+            >
+              <Input
                 type="password"
                 autoComplete="off"
                 placeholder={ai.deepseek.configured ? "Chave salva. Cole outra para trocar." : "Cole a chave (sk-…)"}
@@ -188,35 +185,18 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
                   setDsKey(e.target.value);
                   setRemoveDsKey(false);
                 }}
-                aria-describedby="ds-key-help"
               />
-              <span id="ds-key-help" className="hint">
-                {ai.deepseek.configured
-                  ? "A chave fica salva só neste computador e nunca volta para a tela."
-                  : "Crie a chave em platform.deepseek.com › API keys e salve aqui."}
-              </span>
-            </label>
+            </Field>
           )}
           {ai.deepseek.configured && !ai.deepseek.fromEnv && <Toggle checked={removeDsKey} onChange={setRemoveDsKey} label="Remover a chave salva" />}
-          <div className="field">
-            <span className="field__label">Modelo</span>
-            <div className="segmented" role="radiogroup" aria-label="Modelo da DeepSeek">
-              {ai.deepseek.models.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={ai.deepseek.model === m.id}
-                  className="segmented__item"
-                  disabled={switching}
-                  onClick={() => void chooseModel(m.id)}
-                >
-                  {m.name}
-                </button>
-              ))}
-            </div>
-            {dsModel && <span className="hint">{dsModel.hint}</span>}
-          </div>
+          <Field label="Modelo" hint={dsModel?.hint}>
+            <SegmentedControl
+              aria-label="Modelo da DeepSeek"
+              options={ai.deepseek.models.map((m) => ({ value: m.id, label: m.name, disabled: switching }))}
+              value={ai.deepseek.model}
+              onChange={(id) => void chooseModel(id)}
+            />
+          </Field>
           <p className="hint">
             A DeepSeek recebe o nome do contato e o texto das últimas {ai.deepseek.options.contextMessages} mensagens da conversa. Modelo e opções valem para o rascunho e
             a classificação pela DeepSeek (e para o resumo, se ele seguir o rascunho) e são salvos na hora.
@@ -228,25 +208,14 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
         </>
       ) : ai.provider === "claude" ? (
         <>
-          <div className="field">
-            <span className="field__label">Modelo</span>
-            <div className="segmented" role="radiogroup" aria-label="Modelo do Claude">
-              {ai.claude.models.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={ai.claude.model === m.id}
-                  className="segmented__item"
-                  disabled={switching}
-                  onClick={() => void chooseClaudeModel(m.id)}
-                >
-                  {m.name}
-                </button>
-              ))}
-            </div>
-            {clModel && <span className="hint">{clModel.hint}</span>}
-          </div>
+          <Field label="Modelo" hint={clModel?.hint}>
+            <SegmentedControl
+              aria-label="Modelo do Claude"
+              options={ai.claude.models.map((m) => ({ value: m.id, label: m.name, disabled: switching }))}
+              value={ai.claude.model}
+              onChange={(id) => void chooseClaudeModel(id)}
+            />
+          </Field>
           <p className="hint">
             {ai.claude.configured
               ? "Usa o Claude Code deste PC, logado na sua conta: sem chave de API, consome o limite do seu plano e leva cerca de 1 minuto por resposta. Herda suas instruções e MCPs; só a leitura do Dataverse fica liberada."
@@ -259,11 +228,9 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
           </details>
         </>
       ) : null}
-      <label className="field">
-        <span className="field__label">Como a IA deve escrever</span>
-        <textarea className="notes__note" rows={4} maxLength={2000} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
-        <span className="hint">Tom, regras e o que nunca prometer. Vale para os rascunhos de resposta.</span>
-      </label>
+      <Field label="Como a IA deve escrever" hint="Tom, regras e o que nunca prometer. Vale para os rascunhos de resposta.">
+        <Textarea rows={4} maxLength={2000} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
+      </Field>
     </div>
   );
 }
@@ -362,18 +329,17 @@ function UpdatePanel() {
       <p className="hint">Versão instalada: {info ? `v${info.version}` : "…"}</p>
       <p className="hint" role="status">{message}</p>
       <div className="cluster">
-        <button className="button button--secondary" onClick={() => void bridge.checkUpdate().then(setState)} disabled={checking || state.status === "downloading" || state.status === "installing"} aria-busy={checking || undefined}>
-          {checking ? <LoaderCircle className="spin" size={16} aria-hidden /> : <RefreshCw size={16} aria-hidden />}
+        <Button variant="secondary" icon={<RefreshCw size={16} aria-hidden />} loading={checking} onClick={() => void bridge.checkUpdate().then(setState)} disabled={state.status === "downloading" || state.status === "installing"}>
           Verificar atualização
-        </button>
+        </Button>
         {state.status === "available" && (
-          <button className="button button--primary" onClick={() => void bridge.installUpdate().then(setState)}>
+          <Button variant="primary" onClick={() => void bridge.installUpdate().then(setState)}>
             Atualizar agora
-          </button>
+          </Button>
         )}
-        <button className="button button--ghost" onClick={loadVersions} disabled={busy}>
+        <Button variant="ghost" onClick={loadVersions} disabled={busy}>
           Ver todas as versões
-        </button>
+        </Button>
       </div>
       {listError && <p className="hint hint--warning">{listError}</p>}
       {versions && (
@@ -381,24 +347,27 @@ function UpdatePanel() {
           <ul className="versions" role="radiogroup" aria-label="Versões publicadas">
             {versions.map((v) => (
               <li key={v.version}>
-                <label className="version">
-                  <input type="radio" name="version" value={v.version} checked={chosen === v.version} disabled={v.current} onChange={() => setChosen(v.version)} />
-                  <span className="version__info">
-                    <strong>
-                      v{v.version} {v.current ? "· instalada" : newer(v.version) ? "· mais nova" : "· anterior"}
-                    </strong>
-                    <span className="hint">Publicada em {new Date(v.date).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}</span>
-                    {v.notes && <span className="hint version__notes">{v.notes}</span>}
-                  </span>
-                </label>
+                <Radio
+                  name="version"
+                  value={v.version}
+                  checked={chosen === v.version}
+                  disabled={v.current}
+                  onChange={() => setChosen(v.version)}
+                  label={<strong>v{v.version} {v.current ? "· instalada" : newer(v.version) ? "· mais nova" : "· anterior"}</strong>}
+                  description={
+                    <>
+                      Publicada em {new Date(v.date).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}
+                      {v.notes && <span className="version__notes">{v.notes}</span>}
+                    </>
+                  }
+                />
               </li>
             ))}
           </ul>
           <div className="cluster">
-            <button className="button button--primary" disabled={!chosen || busy} aria-busy={busy || undefined} onClick={() => chosen && void bridge.installVersion(chosen).then(setState)}>
-              {busy && <LoaderCircle className="spin" size={16} aria-hidden />}
+            <Button variant="primary" disabled={!chosen} loading={busy} onClick={() => chosen && void bridge.installVersion(chosen).then(setState)}>
               {chosen && !newer(chosen) ? `Voltar para v${chosen}` : chosen ? `Instalar v${chosen}` : "Escolha uma versão"}
-            </button>
+            </Button>
           </div>
           {chosen && !newer(chosen) && <p className="hint">Voltar para uma versão anterior mantém conversas e configurações.</p>}
         </div>
@@ -589,9 +558,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
           <h2 id="settings-title" className="heading-detail">
             Configurações
           </h2>
-          <button className="icon-button" aria-label="Fechar configurações" onClick={requestClose} disabled={saving}>
-            <X size={18} aria-hidden />
-          </button>
+          <Button variant="ghost" icon={<X size={18} aria-hidden />} aria-label="Fechar configurações" onClick={requestClose} disabled={saving} />
         </header>
 
         <div className="settings-tabs" role="tablist" aria-label="Seções das configurações">
@@ -622,14 +589,20 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
             <>
               <section className="surface stack">
                 <h3 className="eyebrow">Aparência</h3>
-                <div className="segmented" role="radiogroup" aria-label="Tema">
-                  {THEMES.map((t) => (
-                    <button key={t.id} type="button" role="radio" aria-checked={prefs.theme === t.id} className="segmented__item" onClick={() => setPref("theme", t.id)}>
-                      {t.icon}
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
+                <SegmentedControl
+                  aria-label="Tema"
+                  options={THEMES.map((t) => ({
+                    value: t.id,
+                    label: (
+                      <>
+                        {t.icon}
+                        {t.label}
+                      </>
+                    ),
+                  }))}
+                  value={prefs.theme}
+                  onChange={(id) => setPref("theme", id)}
+                />
                 <p className="hint">{prefs.theme === "system" ? "Acompanha o modo claro ou escuro do Windows." : "Vale só para este computador."}</p>
               </section>
               <section className="surface stack">
@@ -692,14 +665,12 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
               />
               {quietOn && (
                 <div className="cluster">
-                  <label className="field field--time">
-                    <span className="field__label">Das</span>
-                    <input type="time" value={prefs.quietStart ?? ""} onChange={(e) => setPref("quietStart", e.target.value || null)} />
-                  </label>
-                  <label className="field field--time">
-                    <span className="field__label">Até</span>
-                    <input type="time" value={prefs.quietEnd ?? ""} onChange={(e) => setPref("quietEnd", e.target.value || null)} />
-                  </label>
+                  <Field label="Das" className="field--time">
+                    <Input type="time" value={prefs.quietStart ?? ""} onChange={(e) => setPref("quietStart", e.target.value || null)} />
+                  </Field>
+                  <Field label="Até" className="field--time">
+                    <Input type="time" value={prefs.quietEnd ?? ""} onChange={(e) => setPref("quietEnd", e.target.value || null)} />
+                  </Field>
                 </div>
               )}
             </section>
@@ -708,18 +679,17 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
           {tab === "ia" && (
             <section className="surface stack">
               <h3 className="eyebrow">Classificação</h3>
-              <div className="segmented" role="radiogroup" aria-label="Quem classifica as conversas">
-                {(
+              <SegmentedControl
+                aria-label="Quem classifica as conversas"
+                options={(
                   [
                     ["jev", "Jev"],
                     ["deepseek", "DeepSeek"],
                   ] as const
-                ).map(([id, label]) => (
-                  <button key={id} type="button" role="radio" aria-checked={classifier === id} className="segmented__item" onClick={() => setClassifier(id)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
+                ).map(([id, label]) => ({ value: id, label }))}
+                value={classifier}
+                onChange={(id) => setClassifier(id)}
+              />
               <p className="hint">
                 {classifier === "jev"
                   ? "O Jev devolve etiqueta, se espera resposta, urgência e prioridade (alta, média ou baixa)."
@@ -729,9 +699,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
               {state.jev.fromEnv ? (
                 <p className="hint">A chave do Jev está definida no arquivo .env.local deste computador.</p>
               ) : (
-                <label className="field">
-                  <span className="field__label">Chave de API do Jev</span>
-                  <input
+                <Field label="Chave de API do Jev" hint={state.jev.configured ? "A chave fica salva só neste computador e nunca volta para a tela." : "Sem chave, a classificação automática fica desligada."}>
+                  <Input
                     type="password"
                     autoComplete="off"
                     placeholder={state.jev.configured ? "Chave salva. Cole outra para trocar." : "Cole a chave do Jev"}
@@ -740,14 +709,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                       setKey(e.target.value);
                       setRemoveKey(false);
                     }}
-                    aria-describedby="jev-key-help"
                   />
-                  <span id="jev-key-help" className="hint">
-                    {state.jev.configured
-                      ? "A chave fica salva só neste computador e nunca volta para a tela."
-                      : "Sem chave, a classificação automática fica desligada."}
-                  </span>
-                </label>
+                </Field>
               )}
               {state.jev.configured && !state.jev.fromEnv && (
                 <Toggle checked={removeKey} onChange={setRemoveKey} label="Remover a chave salva" />
@@ -790,9 +753,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
               {state.groq.fromEnv ? (
                 <p className="hint">A chave da Groq está definida no arquivo .env.local deste computador.</p>
               ) : (
-                <label className="field">
-                  <span className="field__label">Chave de API da Groq</span>
-                  <input
+                <Field label="Chave de API da Groq" hint={state.groq.configured ? "A chave fica salva só neste computador e nunca volta para a tela." : "Crie a chave em console.groq.com › API Keys. Usa Whisper Large v3 Turbo (cerca de US$ 0,04 por hora de áudio)."}>
+                  <Input
                     type="password"
                     autoComplete="off"
                     placeholder={state.groq.configured ? "Chave salva. Cole outra para trocar." : "Cole a chave (gsk_…)"}
@@ -801,14 +763,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                       setGroqKey(e.target.value);
                       setRemoveGroqKey(false);
                     }}
-                    aria-describedby="groq-key-help"
                   />
-                  <span id="groq-key-help" className="hint">
-                    {state.groq.configured
-                      ? "A chave fica salva só neste computador e nunca volta para a tela."
-                      : "Crie a chave em console.groq.com › API Keys. Usa Whisper Large v3 Turbo (cerca de US$ 0,04 por hora de áudio)."}
-                  </span>
-                </label>
+                </Field>
               )}
               {state.groq.configured && !state.groq.fromEnv && <Toggle checked={removeGroqKey} onChange={setRemoveGroqKey} label="Remover a chave salva" />}
               <Toggle
@@ -841,42 +797,39 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
               <ul className="labels-editor">
                 {labels.map((l, i) => (
                   <li key={i} className="labels-editor__row">
-                    <label className="field">
-                      <span className="sr-only">Nome da etiqueta {i + 1}</span>
-                      <input
+                    <Input
+                        aria-label={`Nome da etiqueta ${i + 1}`}
                         value={l.name}
                         maxLength={40}
                         placeholder="Nome"
                         onChange={(e) => setLabels((ls) => ls.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
                       />
-                    </label>
-                    <label className="field">
-                      <span className="sr-only">Descrição da etiqueta {i + 1}</span>
-                      <input
+                    <Input
+                        aria-label={`Descrição da etiqueta ${i + 1}`}
                         value={l.description}
                         maxLength={300}
                         placeholder="O que entra nesta etiqueta"
                         onChange={(e) => setLabels((ls) => ls.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))}
                       />
-                    </label>
-                    <button
-                      className="icon-button"
+                    <Button
+                      variant="ghost"
+                      icon={<Trash2 size={16} aria-hidden />}
                       aria-label={`Remover etiqueta ${l.name || i + 1}`}
                       disabled={labels.length <= 2}
                       onClick={() => setLabels((ls) => ls.filter((_, j) => j !== i))}
-                    >
-                      <Trash2 size={16} aria-hidden />
-                    </button>
+                    />
                   </li>
                 ))}
               </ul>
-              <button
-                className="button button--ghost button--compact"
+              <Button
+                variant="ghost"
+                size="compact"
+                icon={<Plus size={16} aria-hidden />}
                 disabled={labels.length >= 30}
                 onClick={() => setLabels((ls) => [...ls, { name: "", description: "" }])}
               >
-                <Plus size={16} aria-hidden /> Adicionar etiqueta
-              </button>
+                Adicionar etiqueta
+              </Button>
             </section>
           )}
 
@@ -887,23 +840,15 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
               <ul className="labels-editor">
                 {quick.map((q, i) => (
                   <li key={i} className="labels-editor__row">
-                    <label className="field">
-                      <span className="sr-only">Atalho {i + 1}</span>
-                      <input value={q.shortcut} maxLength={30} placeholder="atalho" onChange={(e) => setQuick((l) => l.map((x, j) => (j === i ? { ...x, shortcut: e.target.value } : x)))} />
-                    </label>
-                    <label className="field">
-                      <span className="sr-only">Texto {i + 1}</span>
-                      <textarea className="quick-editor__text" rows={2} value={q.text} placeholder="Texto da mensagem" onChange={(e) => setQuick((l) => l.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} />
-                    </label>
-                    <button className="icon-button" aria-label={`Remover resposta /${q.shortcut || i + 1}`} onClick={() => setQuick((l) => l.filter((_, j) => j !== i))}>
-                      <Trash2 size={16} aria-hidden />
-                    </button>
+                    <Input aria-label={`Atalho ${i + 1}`} value={q.shortcut} maxLength={30} placeholder="atalho" onChange={(e) => setQuick((l) => l.map((x, j) => (j === i ? { ...x, shortcut: e.target.value } : x)))} />
+                    <Textarea aria-label={`Texto ${i + 1}`} className="quick-editor__text" rows={2} value={q.text} placeholder="Texto da mensagem" onChange={(e) => setQuick((l) => l.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} />
+                    <Button variant="ghost" icon={<Trash2 size={16} aria-hidden />} aria-label={`Remover resposta /${q.shortcut || i + 1}`} onClick={() => setQuick((l) => l.filter((_, j) => j !== i))} />
                   </li>
                 ))}
               </ul>
-              <button className="button button--ghost button--compact" disabled={quick.length >= 100} onClick={() => setQuick((l) => [...l, { shortcut: "", text: "" }])}>
-                <Plus size={16} aria-hidden /> Adicionar resposta rápida
-              </button>
+              <Button variant="ghost" size="compact" icon={<Plus size={16} aria-hidden />} disabled={quick.length >= 100} onClick={() => setQuick((l) => [...l, { shortcut: "", text: "" }])}>
+                Adicionar resposta rápida
+              </Button>
             </section>
           )}
 
@@ -926,25 +871,24 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                       : "Apagar todas as conversas deste computador e ler o QR de novo? O histórico do número conectado volta pelo WhatsApp. Etiquetas e configurações ficam."}
                   </p>
                   <div className="cluster">
-                    <button className="button button--secondary" onClick={() => setConfirm(null)} disabled={loggingOut}>
+                    <Button variant="secondary" onClick={() => setConfirm(null)} disabled={loggingOut}>
                       Cancelar
-                    </button>
-                    <button className="button button--danger" onClick={() => accountAction(confirm)} disabled={loggingOut} aria-busy={loggingOut || undefined}>
-                      {loggingOut && <LoaderCircle className="spin" size={16} aria-hidden />}
+                    </Button>
+                    <Button variant="danger" onClick={() => accountAction(confirm)} loading={loggingOut}>
                       {confirm === "logout" ? "Desconectar" : "Apagar e reconectar"}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ) : (
                 <div className="cluster">
-                  <button className="button button--secondary" disabled={!connected} onClick={() => setConfirm("logout")}>
+                  <Button variant="secondary" disabled={!connected} onClick={() => setConfirm("logout")}>
                     Trocar de número
-                  </button>
-                  <button className="button button--secondary" onClick={() => setConfirm("reset")}>
-                    <Trash2 size={16} aria-hidden /> Apagar conversas e reconectar
-                  </button>
-                  <a className="button button--ghost" href="/api/backup" download>
-                    <Download size={16} aria-hidden /> Baixar backup
+                  </Button>
+                  <Button variant="secondary" icon={<Trash2 size={16} aria-hidden />} onClick={() => setConfirm("reset")}>
+                    Apagar conversas e reconectar
+                  </Button>
+                  <a className={buttonClassName({ variant: "ghost" })} href="/api/backup" download>
+                    <Download size={16} aria-hidden /> <span className="bt-button__label">Baixar backup</span>
                   </a>
                 </div>
               )}
@@ -957,23 +901,22 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
             <div className="drawer__confirm" role="alertdialog" aria-label="Descartar alterações?">
               <p className="drawer__confirm-text">Descartar alterações?</p>
               <div className="cluster">
-                <button className="button button--secondary" onClick={() => setConfirm(null)} autoFocus>
+                <Button variant="secondary" onClick={() => setConfirm(null)} autoFocus>
                   Continuar editando
-                </button>
-                <button className="button button--danger" onClick={onClose}>
+                </Button>
+                <Button variant="danger" onClick={onClose}>
                   Descartar
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
             <div className="cluster drawer__actions">
-              <button className="button button--secondary" onClick={requestClose} disabled={saving}>
+              <Button variant="secondary" onClick={requestClose} disabled={saving}>
                 Cancelar
-              </button>
-              <button className="button button--primary" onClick={save} disabled={!dirty || saving} aria-busy={saving || undefined}>
-                {saving && <LoaderCircle className="spin" size={16} aria-hidden />}
+              </Button>
+              <Button variant="primary" onClick={save} disabled={!dirty} loading={saving}>
                 Salvar alterações
-              </button>
+              </Button>
             </div>
           )}
         </footer>

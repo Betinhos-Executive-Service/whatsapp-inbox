@@ -1,7 +1,8 @@
-import { LoaderCircle, Reply, Trash2, Users, X } from "lucide-react";
+import { Reply, Users, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { Message, Participant } from "./api.ts";
 import { Avatar } from "./avatar.tsx";
+import { Button, Dialog } from "./ds/index.ts";
 import { normalize } from "./format.ts";
 
 import { MENTION_ALL, MENTION_ALL_LABEL } from "./mentions.ts";
@@ -83,9 +84,7 @@ export function ReplyBar({ message, isGroup, chatName, onCancel }: { message: Me
         <span className="quote__author">Respondendo a {message.fromMe ? "você" : (author ?? chatName)}</span>
         <span className="quote__text">{body}</span>
       </div>
-      <button type="button" className="icon-button icon-button--plain" aria-label="Cancelar resposta" onClick={onCancel}>
-        <X size={16} aria-hidden />
-      </button>
+      <Button variant="ghost" size="compact" icon={<X size={16} aria-hidden />} aria-label="Cancelar resposta" onClick={onCancel} />
     </div>
   );
 }
@@ -106,41 +105,33 @@ export function DeleteDialog({ message, busy, onCancel, onConfirm }: {
   useEffect(() => {
     requestAnimationFrame(() => cancel.current?.focus());
   }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && onCancel();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [busy, onCancel]);
   return (
-    <div className="modal">
-      <div className="modal__overlay" onClick={() => !busy && onCancel()} aria-hidden />
-      <div className="modal__panel surface update-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-text">
-        <div className="update-dialog__icon update-dialog__icon--danger">
-          <Trash2 size={20} aria-hidden />
-        </div>
-        <h2 id="delete-title" className="heading-detail">Apagar mensagem?</h2>
-        <p id="delete-text" className="update-dialog__text">
-          {everyone
-            ? "Para todos: some do WhatsApp de quem recebeu e fica o aviso de mensagem apagada. Para mim: sai só do seu WhatsApp."
-            : message.fromMe && !message.deleted
-              ? "Já passou o prazo do WhatsApp para apagar para todos. Dá para apagar só para você."
-              : "A mensagem sai só do seu WhatsApp; quem enviou continua vendo."}
-        </p>
-        <div className="cluster update-dialog__actions">
-          <button ref={cancel} type="button" className="button button--secondary" onClick={onCancel} disabled={busy}>
+    <Dialog
+      open
+      tone="danger"
+      title="Apagar mensagem?"
+      onClose={() => !busy && onCancel()}
+      actions={
+        <>
+          <Button ref={cancel} variant="secondary" onClick={onCancel} disabled={busy}>
             Cancelar
-          </button>
-          <button type="button" className={`button ${everyone ? "button--secondary" : "button--danger"}`} onClick={() => onConfirm("me")} disabled={busy} aria-busy={busy || undefined}>
+          </Button>
+          <Button variant={everyone ? "secondary" : "danger"} onClick={() => onConfirm("me")} disabled={busy}>
             Apagar para mim
-          </button>
+          </Button>
           {everyone && (
-            <button type="button" className="button button--danger" onClick={() => onConfirm("everyone")} disabled={busy} aria-busy={busy || undefined}>
-              {busy && <LoaderCircle className="spin" size={16} aria-hidden />}
+            <Button variant="danger" onClick={() => onConfirm("everyone")} loading={busy}>
               Apagar para todos
-            </button>
+            </Button>
           )}
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {everyone
+        ? "Para todos: some do WhatsApp de quem recebeu e fica o aviso de mensagem apagada. Para mim: sai só do seu WhatsApp."
+        : message.fromMe && !message.deleted
+          ? "Já passou o prazo do WhatsApp para apagar para todos. Dá para apagar só para você."
+          : "A mensagem sai só do seu WhatsApp; quem enviou continua vendo."}
+    </Dialog>
   );
 }
