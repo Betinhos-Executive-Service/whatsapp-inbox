@@ -52,6 +52,7 @@ import {
 import { ProfilePanel, type ProfileTarget } from "./profile.tsx";
 import { applyTheme, storedTheme } from "./theme.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
+import { ResizeHandle } from "./resize.tsx";
 import { AttachmentTray, clock, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
@@ -300,6 +301,7 @@ function ChatList(props: {
 
   return (
     <section className="list-pane" aria-label="Conversas">
+      <ResizeHandle cssVar="--inbox-list-w" storageKey="inbox:list-w" initial={360} min={280} max={520} edge="end" reserve={360} label="Largura da lista de conversas" />
       <header className="list-pane__header">
         <div className="split">
           <h1 className="heading-page">Conversas</h1>
@@ -439,6 +441,7 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
             role="radio"
             aria-checked={chat.status === s}
             className="segmented__item"
+            title={STATUS_META[s].label}
             onClick={() => chat.status !== s && onChange({ status: s })}
           >
             {STATUS_META[s].icon}
@@ -463,24 +466,36 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
         disabled={classifying || !jevReady}
         aria-busy={classifying || undefined}
         title={jevReady ? `Pedir ao ${classifierName} para classificar esta conversa` : "Configure a chave do Jev ou da DeepSeek em Configurações › IA"}
+        aria-label={`Classificar com ${classifierName}`}
       >
         {classifying ? <LoaderCircle className="spin" size={16} aria-hidden /> : <Sparkles size={16} aria-hidden />}
-        Classificar com {classifierName}
       </button>
-      {chat.ai && (
-        <p className="classify__ai">
-          <Sparkles size={14} aria-hidden />
-          <span>
-            IA: <strong>{chat.ai.label}</strong> ({percent(chat.ai.confidence)})
-            {chat.ai.priority && ` · ${PRIORITY_META[chat.ai.priority].text.toLowerCase()}`}
-            {chat.ai.needsReply >= 0.5 && " · espera resposta"}
-            {chat.ai.urgent >= 0.5 && " · urgente"}
-            {chat.labelSource === "manual" && chat.label !== chat.ai.label && " · etiqueta escolhida por você"}
-            {chat.ai.reason && <> · {chat.ai.reason}</>}
-          </span>
+      {chat.ai && (() => {
+        const ai = chat.ai;
+        const detail = [
+          `IA: ${ai.label} (${percent(ai.confidence)})`,
+          ai.priority && PRIORITY_META[ai.priority].text.toLowerCase(),
+          ai.needsReply >= 0.5 && "espera resposta",
+          ai.urgent >= 0.5 && "urgente",
+          chat.labelSource === "manual" && chat.label !== ai.label && "etiqueta escolhida por você",
+          ai.reason,
+        ].filter(Boolean).join(" · ");
+        return (
+          <p className="classify__ai" title={detail}>
+            <Sparkles size={14} aria-hidden />
+            <span className="sr-only">{detail}</span>
+            <span aria-hidden>
+              <strong>{ai.label}</strong> {percent(ai.confidence)}
+            </span>
+          </p>
+        );
+      })()}
+      {chat.aiError && (
+        <p className="classify__ai classify__ai--error" title={chat.aiError}>
+          <TriangleAlert size={14} aria-hidden />
+          <span>{chat.aiError}</span>
         </p>
       )}
-      {chat.aiError && <p className="classify__ai classify__ai--error">{chat.aiError}</p>}
     </div>
   );
 }
@@ -1242,26 +1257,29 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             </span>
           </button>
         </div>
-        <div className="cluster chat-pane__tools">
+        <div className="chat-pane__tools">
+          <ClassificationBar
+            chat={chat}
+            labels={labels}
+            onChange={change}
+            onClassify={classify}
+            classifying={classifying}
+            jevReady={jevReady}
+            classifierName={classifierName}
+          />
+          <span className="chat-pane__divider" aria-hidden />
           <button
             className={`button button--secondary button--compact chat-pane__notes-toggle${chat.note || chat.reminderAt !== null ? " has-content" : ""}`}
             aria-pressed={notesOpen}
+            aria-label={chat.note || chat.reminderAt !== null ? "Notas e lembretes (com conteúdo)" : "Notas e lembretes"}
+            title="Notas e lembretes"
             onClick={() => setSide((v) => (v === "notes" ? null : "notes"))}
           >
-            <StickyNote size={16} aria-hidden /> Notas e lembretes
+            <StickyNote size={16} aria-hidden />
             {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
           </button>
           <AiQuickPicker onMore={onSetupAi} />
         </div>
-        <ClassificationBar
-          chat={chat}
-          labels={labels}
-          onChange={change}
-          onClassify={classify}
-          classifying={classifying}
-          jevReady={jevReady}
-          classifierName={classifierName}
-        />
       </header>
       <div className="chat-pane__body">
       <div className="messages" ref={scroller} aria-live="polite" aria-busy={messages === null}>

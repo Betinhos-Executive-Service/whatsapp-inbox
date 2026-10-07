@@ -2,6 +2,7 @@ import { ArrowLeft, Check, Copy, LoaderCircle, Shield, Users, X } from "lucide-r
 import { useEffect, useState } from "react";
 import { api, type Participant, type Profile } from "./api.ts";
 import { Avatar } from "./avatar.tsx";
+import { ResizeHandle } from "./resize.tsx";
 
 /** Quem está aberto no painel: a própria conversa ou um participante de grupo. */
 export type ProfileTarget = { jid: string; name: string; phone: string | null; isGroup: boolean };
@@ -66,6 +67,7 @@ export function ProfilePanel({ target, connected, onClose }: { target: ProfileTa
 
   return (
     <aside className="notes profile" aria-label={`Perfil de ${current.name}`}>
+      <ResizeHandle cssVar="--inbox-side-w" storageKey="inbox:side-w" initial={320} min={280} max={560} edge="start" reserve={360} label="Largura do painel lateral" />
       <header className="notes__header">
         <div className="cluster">
           {stack.length > 1 && (
@@ -82,14 +84,16 @@ export function ProfilePanel({ target, connected, onClose }: { target: ProfileTa
       <div className="notes__body">
         <div className="profile__hero">
           <Avatar jid={current.jid} name={current.name} className="avatar--xl" full />
-          <h4 className="heading-card profile__name">{group?.subject ?? current.name}</h4>
-          {current.phone && (
-            <div className="profile__phone">
-              <span>{formatPhone(current.phone)}</span>
-              <CopyButton text={`+${current.phone}`} label="Copiar número" />
-            </div>
-          )}
-          {current.isGroup && group && <span className="hint">Grupo · {group.size} participantes</span>}
+          <div className="profile__id">
+            <h4 className="heading-card profile__name">{group?.subject ?? current.name}</h4>
+            {current.phone && (
+              <div className="profile__phone">
+                <span>{formatPhone(current.phone)}</span>
+                <CopyButton text={`+${current.phone}`} label="Copiar número" />
+              </div>
+            )}
+            {current.isGroup && group && <span className="hint">Grupo · {group.size} participantes</span>}
+          </div>
         </div>
 
         {loading && (
