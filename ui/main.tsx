@@ -558,6 +558,7 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
           </button>
         ))}
       </div>
+      <span className="chat-pane__divider" aria-hidden />
       <Select
         aria-label="Etiqueta"
         size="compact"
@@ -569,34 +570,42 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
         options={labels.map((l) => ({ value: l, label: l }))}
       />
       <ExtraLabelsPicker chat={chat} labels={labels} onChange={onChange} />
-      <Button
-        variant="secondary"
-        size="compact"
-        onClick={onClassify}
-        disabled={classifying || !jevReady}
-        aria-busy={classifying || undefined}
-        title={jevReady ? `Pedir ao ${classifierName} para classificar esta conversa` : "Configure a chave do Jev ou da DeepSeek em Configurações › IA"}
-        aria-label={`Classificar com ${classifierName}`}
-        icon={classifying ? <LoaderCircle className="spin" size={16} aria-hidden /> : <Sparkles size={16} aria-hidden />}
-      />
-      {chat.ai && (() => {
+      {(() => {
+        // Classificar e o palpite da IA são um controle só: o botão mostra o resultado e refaz ao clicar.
         const ai = chat.ai;
-        const detail = [
-          `IA: ${ai.label} (${percent(ai.confidence)})`,
-          ai.priority && PRIORITY_META[ai.priority].text.toLowerCase(),
-          ai.needsReply >= 0.5 && "espera resposta",
-          ai.urgent >= 0.5 && "urgente",
-          chat.labelSource === "manual" && chat.label !== ai.label && "etiqueta escolhida por você",
-          ai.reason,
-        ].filter(Boolean).join(" · ");
+        const detail = ai
+          ? [
+              `IA: ${ai.label} (${percent(ai.confidence)})`,
+              ai.priority && PRIORITY_META[ai.priority].text.toLowerCase(),
+              ai.needsReply >= 0.5 && "espera resposta",
+              ai.urgent >= 0.5 && "urgente",
+              chat.labelSource === "manual" && chat.label !== ai.label && "etiqueta escolhida por você",
+              ai.reason,
+            ].filter(Boolean).join(" · ")
+          : "";
+        const title = !jevReady
+          ? "Configure a chave do Jev ou da DeepSeek em Configurações › IA"
+          : ai
+            ? `${detail}\nClique para classificar de novo com ${classifierName}.`
+            : `Pedir ao ${classifierName} para classificar esta conversa`;
         return (
-          <p className="classify__ai" title={detail}>
-            <Sparkles size={14} aria-hidden />
-            <span className="sr-only">{detail}</span>
-            <span aria-hidden>
-              <strong>{ai.label}</strong> {percent(ai.confidence)}
-            </span>
-          </p>
+          <Button
+            variant="secondary"
+            size="compact"
+            className="classify__ai-button"
+            onClick={onClassify}
+            disabled={classifying || !jevReady}
+            aria-busy={classifying || undefined}
+            title={title}
+            aria-label={ai ? `Classificado pela IA: ${detail}. Classificar de novo com ${classifierName}` : `Classificar com ${classifierName}`}
+            icon={classifying ? <LoaderCircle className="spin" size={16} aria-hidden /> : <Sparkles size={16} aria-hidden />}
+          >
+            {ai && (
+              <span className="classify__ai-text" aria-hidden>
+                {ai.label} <span className="classify__ai-pct">{percent(ai.confidence)}</span>
+              </span>
+            )}
+          </Button>
         );
       })()}
       {chat.aiError && (

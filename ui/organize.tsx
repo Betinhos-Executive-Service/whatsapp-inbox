@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, Clock, Keyboard, MessageSquareText, Pin, PinOff, Tags, X } from "lucide-react";
+import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, ChevronLeft, ChevronRight, Clock, Keyboard, MessageSquareText, Pin, PinOff, Tags, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Chat, ChatPatch, SearchHit } from "./api.ts";
 import { dayLabel, formatTime, listTime } from "./format.ts";
@@ -54,121 +54,192 @@ export const isMuted = (c: Chat, now = Date.now()) => c.mutedUntil !== null && c
 export const isSnoozed = (c: Chat, now = Date.now()) => c.snoozedUntil !== null && c.snoozedUntil > now;
 export const untilLabel = (ms: number) => `${dayLabel(ms)} ${formatTime(ms)}`;
 
-type Entry = { key: string; label: string; icon: ReactNode; patch: ChatPatch; checked?: boolean };
-type Section = { title: string | null; entries: Entry[] };
+type View = "main" | "mute" | "transcribe" | "snooze";
 
-/** Fixar, arquivar, silenciar, transcrição e adiar: opções do clique direito na conversa. */
-function chatSections(chat: Chat): Section[] {
-  const muted = isMuted(chat);
-  const snoozed = isSnoozed(chat);
-  const icon = (I: typeof Pin) => <I size={16} aria-hidden />;
-  return [
-    {
-      title: null,
-      entries: [
-        chat.pinnedAt
-          ? { key: "pin", label: "Desafixar conversa", icon: icon(PinOff), patch: { pinned: false } }
-          : { key: "pin", label: "Fixar no topo", icon: icon(Pin), patch: { pinned: true } },
-        chat.archived
-          ? { key: "arc", label: "Desarquivar conversa", icon: icon(ArchiveRestore), patch: { archived: false } }
-          : { key: "arc", label: "Arquivar conversa", icon: icon(Archive), patch: { archived: true } },
-      ],
-    },
-    {
-      title: muted ? `Silenciada ${chat.mutedUntil! >= FOREVER ? "sempre" : `até ${untilLabel(chat.mutedUntil!)}`}` : "Silenciar notificações",
-      entries: muted
-        ? [{ key: "unmute", label: "Reativar notificações", icon: icon(Bell), patch: { mutedUntil: null } }]
-        : MUTES.map((m) => ({ key: m.label, label: m.label, icon: icon(BellOff), patch: { mutedUntil: m.ms === null ? FOREVER : Date.now() + m.ms } })),
-    },
-    {
-      title: "Transcrever áudios recebidos",
-      entries: (
-        [
-          [null, "Seguir a configuração geral"],
-          ["on", "Sempre nesta conversa"],
-          ["off", "Nunca nesta conversa"],
-        ] as const
-      ).map(([value, label]) => ({
-        key: label,
-        label,
-        checked: chat.autoTranscribe === value,
-        icon: chat.autoTranscribe === value ? icon(Check) : icon(AudioLines),
-        patch: { autoTranscribe: value },
-      })),
-    },
-    {
-      title: snoozed ? `Adiada até ${untilLabel(chat.snoozedUntil!)}` : "Adiar (some das abertas e volta sozinha)",
-      entries: snoozed
-        ? [{ key: "unsnooze", label: "Cancelar adiamento", icon: icon(X), patch: { snoozedUntil: null } }]
-        : snoozePresets().map((p) => ({ key: p.label, label: p.label, icon: icon(Clock), patch: { snoozedUntil: p.at } })),
-    },
-  ];
+function MenuItem({ icon, children, onClick, hint, checked }: { icon: ReactNode; children: ReactNode; onClick: () => void; hint?: string; checked?: boolean }) {
+  return (
+    <button type="button" role={checked === undefined ? "menuitem" : "menuitemradio"} aria-checked={checked} className="message-menu__item" onClick={onClick}>
+      {icon}
+      <span className="message-menu__text">{children}</span>
+      {hint && <span className="message-menu__hint">{hint}</span>}
+    </button>
+  );
 }
 
-/** Clique direito numa conversa da lista: todas as opções de organização, sem abrir a conversa. */
+/** Abre um submenu no lugar do menu principal: rótulo, estado atual à direita e seta. */
+function SubmenuItem({ icon, children, hint, onOpen }: { icon: ReactNode; children: ReactNode; hint?: string; onOpen: () => void }) {
+  return (
+    <button type="button" role="menuitem" aria-haspopup="menu" className="message-menu__item" data-sub onClick={onOpen}>
+      {icon}
+      <span className="message-menu__text">{children}</span>
+      {hint && <span className="message-menu__hint">{hint}</span>}
+      <ChevronRight size={14} aria-hidden className="message-menu__chevron" />
+    </button>
+  );
+}
+
+const TRANSCRIBE = [
+  [null, "Seguir a configuração geral"],
+  ["on", "Sempre nesta conversa"],
+  ["off", "Nunca nesta conversa"],
+] as const;
+
+/** Clique direito numa conversa da lista: fixar, arquivar, silenciar, adiar e transcrever, sem abrir a conversa. Fecha com Esc, clique fora ou rolagem. */
 export function ChatItemMenu({ chat, x, y, onChange, onClose }: { chat: Chat; x: number; y: number; onChange: (patch: ChatPatch) => void; onClose: () => void }) {
   const panel = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<View>("main");
   const [pos, setPos] = useState({ left: x, top: y });
+  const muted = isMuted(chat);
+  const snoozed = isSnoozed(chat);
 
-  // Cabe na tela: abre para cima/esquerda quando falta espaço.
+  // Cabe na tela: encosta na borda quando falta espaço. Refaz ao trocar de submenu.
   useLayoutEffect(() => {
     const el = panel.current;
     if (!el) return;
     const { width, height } = el.getBoundingClientRect();
     const gap = 8;
-    setPos({ left: Math.max(gap, Math.min(x, window.innerWidth - width - gap)), top: Math.max(gap, y + height + gap > window.innerHeight ? y - height : y) });
+    setPos({
+      left: Math.max(gap, Math.min(x, window.innerWidth - width - gap)),
+      top: Math.max(gap, Math.min(y, window.innerHeight - height - gap)),
+    });
     el.querySelector<HTMLElement>("[role^=menuitem]")?.focus();
-  }, [x, y]);
+  }, [x, y, view]);
 
   useEffect(() => {
-    const outside = (e: Event) => !panel.current?.contains(e.target as Node) && onClose();
-    window.addEventListener("pointerdown", outside, true);
-    window.addEventListener("scroll", outside, true);
+    const onDown = (e: PointerEvent) => !panel.current?.contains(e.target as Node) && onClose();
+    const onScroll = (e: Event) => !panel.current?.contains(e.target as Node) && onClose();
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onClose);
     window.addEventListener("blur", onClose);
     return () => {
-      window.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("scroll", outside, true);
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onClose);
       window.removeEventListener("blur", onClose);
     };
   }, [onClose]);
 
+  const pick = (patch: ChatPatch) => {
+    onClose();
+    onChange(patch);
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     const list = [...(panel.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
     const i = list.indexOf(document.activeElement as HTMLElement);
-    if (e.key === "Escape" || e.key === "Tab") {
+    const go = (n: number) => list[(n + list.length) % list.length]?.focus();
+    if (e.key === "Escape" || (e.key === "ArrowLeft" && view !== "main")) {
+      e.preventDefault();
+      if (view !== "main") setView("main");
+      else onClose();
+    } else if (e.key === "Tab") {
       e.preventDefault();
       onClose();
+    } else if (e.key === "ArrowRight" && list[i]?.dataset.sub !== undefined) {
+      e.preventDefault();
+      list[i].click();
     } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      list[(i + (e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length]?.focus();
+      go(i + (e.key === "ArrowDown" ? 1 : -1));
+    } else if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      go(e.key === "Home" ? 0 : list.length - 1);
     }
   };
 
+  const back = (title: string) => (
+    <button type="button" role="menuitem" className="message-menu__item chat-menu__back" onClick={() => setView("main")}>
+      <ChevronLeft size={16} aria-hidden />
+      <span className="message-menu__text">{title}</span>
+    </button>
+  );
+
   return (
-    <div ref={panel} className="message-menu message-menu--chat" role="menu" aria-label={`Opções de ${chat.name}`} style={pos} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}>
-      {chatSections(chat).map((section, i) => (
-        <div key={section.title ?? i} role="group" aria-label={section.title ?? undefined} className="message-menu__group">
-          {section.title && <p className="org-menu__label" aria-hidden>{section.title}</p>}
-          {section.entries.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              role={item.checked === undefined ? "menuitem" : "menuitemradio"}
-              aria-checked={item.checked}
-              className="message-menu__item"
-              onClick={() => {
-                onClose();
-                onChange(item.patch);
-              }}
-            >
-              {item.icon}
-              {item.label}
-            </button>
+    <div
+      ref={panel}
+      className="message-menu message-menu--chat chat-menu"
+      role="menu"
+      aria-label={`Organizar ${chat.name}`}
+      style={pos}
+      onKeyDown={onKeyDown}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {view === "main" && (
+        <>
+          <p className="chat-menu__title" aria-hidden>
+            {chat.name}
+          </p>
+          <MenuItem icon={chat.pinnedAt ? <PinOff size={16} aria-hidden /> : <Pin size={16} aria-hidden />} onClick={() => pick({ pinned: !chat.pinnedAt })}>
+            {chat.pinnedAt ? "Desafixar" : "Fixar no topo"}
+          </MenuItem>
+          <MenuItem icon={chat.archived ? <ArchiveRestore size={16} aria-hidden /> : <Archive size={16} aria-hidden />} onClick={() => pick({ archived: !chat.archived })}>
+            {chat.archived ? "Desarquivar" : "Arquivar"}
+          </MenuItem>
+          <span className="chat-menu__sep" role="separator" />
+          {muted ? (
+            <MenuItem icon={<Bell size={16} aria-hidden />} hint={chat.mutedUntil! >= FOREVER ? "sempre" : `até ${untilLabel(chat.mutedUntil!)}`} onClick={() => pick({ mutedUntil: null })}>
+              Reativar notificações
+            </MenuItem>
+          ) : (
+            <SubmenuItem icon={<BellOff size={16} aria-hidden />} onOpen={() => setView("mute")}>
+              Silenciar
+            </SubmenuItem>
+          )}
+          {snoozed ? (
+            <MenuItem icon={<X size={16} aria-hidden />} hint={`até ${untilLabel(chat.snoozedUntil!)}`} onClick={() => pick({ snoozedUntil: null })}>
+              Cancelar adiamento
+            </MenuItem>
+          ) : (
+            <SubmenuItem icon={<Clock size={16} aria-hidden />} onOpen={() => setView("snooze")}>
+              Adiar
+            </SubmenuItem>
+          )}
+          <SubmenuItem
+            icon={<AudioLines size={16} aria-hidden />}
+            hint={chat.autoTranscribe === "on" ? "sempre" : chat.autoTranscribe === "off" ? "nunca" : "padrão"}
+            onOpen={() => setView("transcribe")}
+          >
+            Transcrever áudios
+          </SubmenuItem>
+        </>
+      )}
+      {view === "mute" && (
+        <>
+          {back("Silenciar notificações")}
+          {MUTES.map((m) => (
+            <MenuItem key={m.label} icon={<BellOff size={16} aria-hidden />} onClick={() => pick({ mutedUntil: m.ms === null ? FOREVER : Date.now() + m.ms })}>
+              {m.label}
+            </MenuItem>
           ))}
-        </div>
-      ))}
+        </>
+      )}
+      {view === "snooze" && (
+        <>
+          {back("Adiar conversa")}
+          <p className="chat-menu__note">Sai das abertas e volta sozinha.</p>
+          {snoozePresets().map((p) => (
+            <MenuItem key={p.label} icon={<Clock size={16} aria-hidden />} onClick={() => pick({ snoozedUntil: p.at })}>
+              {p.label}
+            </MenuItem>
+          ))}
+        </>
+      )}
+      {view === "transcribe" && (
+        <>
+          {back("Transcrever áudios recebidos")}
+          {TRANSCRIBE.map(([value, label]) => (
+            <MenuItem
+              key={label}
+              checked={chat.autoTranscribe === value}
+              icon={chat.autoTranscribe === value ? <Check size={16} aria-hidden /> : <span className="chat-menu__blank" aria-hidden />}
+              onClick={() => pick({ autoTranscribe: value })}
+            >
+              {label}
+            </MenuItem>
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -246,6 +317,7 @@ const SHORTCUTS: [string, string][] = [
   ["Ctrl + Enter", "Marcar como resolvida (fora do campo de mensagem)"],
   ["Ctrl + E", "Arquivar ou desarquivar a conversa aberta"],
   ["Esc", "Fechar painel, cancelar resposta ou edição"],
+  ["Botão direito / Shift + F10", "Organizar a conversa da lista: fixar, arquivar, silenciar, adiar"],
   ["/", "Respostas rápidas (no começo do campo)"],
   ["@", "Mencionar em grupo"],
   ["Ctrl + B / I", "Negrito / itálico no texto"],
