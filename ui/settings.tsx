@@ -1,7 +1,7 @@
 import { Bell, ChartColumn, Download, Monitor, Moon, Sun, Zap, KeyRound, LoaderCircle, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type AiStatus, type AppState, type Classifier, type Label, type Prefs, type QuickReply, type Theme } from "./api.ts";
-import { desktop, type ReleaseInfo, type UpdateState } from "./desktop.ts";
+import { desktop, useAccount, type ReleaseInfo, type UpdateState } from "./desktop.ts";
 import { publishAi, useAiStatus } from "./ai-state.ts";
 import { ClaudeOptionsPanel, DeepSeekOptionsPanel, JevContextField } from "./ai-options.tsx";
 import { applyTheme } from "./theme.ts";
@@ -265,6 +265,54 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
         <span className="hint">Tom, regras e o que nunca prometer. Vale para os rascunhos de resposta.</span>
       </label>
     </div>
+  );
+}
+
+/** Contas do WhatsApp neste app: cada uma é separada (conversas, número e configurações). */
+function AccountsPanel() {
+  const bridge = desktop();
+  const account = useAccount();
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (account) setName(account.name);
+  }, [account?.name]);
+  if (!bridge || !account) return null;
+  const changed = name.trim() !== "" && name.trim() !== account.name;
+  const rename = () => {
+    setBusy(true);
+    void bridge.renameAccount(name).finally(() => setBusy(false));
+  };
+  return (
+    <section className="surface stack">
+      <h3 className="eyebrow">Contas do WhatsApp</h3>
+      <p className="hint">
+        {account.count > 1
+          ? `Esta é a conta "${account.name}", uma de ${account.count} neste app. Cada conta tem conversas, número e configurações próprios; troque de conta pelo trilho à esquerda ou com Ctrl+1 a Ctrl+${Math.min(account.count, 9)}.`
+          : "Use mais de um número ao mesmo tempo, como um pessoal e um business: cada conta fica separada, com conversas e configurações próprias."}
+      </p>
+      <form
+        className="cluster"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (changed) rename();
+        }}
+      >
+        <label className="field">
+          <span className="field__label">Nome desta conta</span>
+          <input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <button className="button button--secondary" type="submit" disabled={!changed || busy} aria-busy={busy || undefined}>
+          Renomear
+        </button>
+      </form>
+      <div className="cluster">
+        <button className="button button--secondary" type="button" onClick={() => void bridge.addAccount()} disabled={account.count >= account.max}>
+          <Plus size={16} aria-hidden /> Adicionar outra conta
+        </button>
+      </div>
+      {account.count > 1 && account.removable && <p className="hint">Para remover esta conta, clique com o botão direito nela no trilho à esquerda.</p>}
+    </section>
   );
 }
 
@@ -859,6 +907,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
             </section>
           )}
 
+          {tab === "conta" && isDesktop && <AccountsPanel />}
           {tab === "conta" && (
             <section className="surface stack">
               <h3 className="eyebrow">Conta e dados</h3>
@@ -866,7 +915,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 {connected && state.connection.me
                   ? `Conectado como +${state.connection.me.split("@")[0]}.`
                   : "Nenhum WhatsApp conectado agora."}{" "}
-                Cada número tem a sua caixa de entrada: ao conectar outro número, as conversas do anterior saem deste computador.
+                Cada conta tem a sua caixa de entrada: ao trocar o número desta conta, as conversas do anterior saem deste computador.
+                {isDesktop && " Para usar outro número junto, adicione outra conta."}
               </p>
               {confirm === "logout" || confirm === "reset" ? (
                 <div className="alert alert--danger stack" role="alert">
