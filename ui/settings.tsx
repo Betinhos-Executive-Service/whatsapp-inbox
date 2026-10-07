@@ -3,7 +3,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type AiStatus, type AppState, type Classifier, type Label, type Prefs, type QuickReply } from "./api.ts";
 import { desktop, type ReleaseInfo, type UpdateState } from "./desktop.ts";
 import { publishAi, useAiStatus } from "./ai-state.ts";
-import { AiModels } from "./ai-models.tsx";
 import { DeepSeekOptionsPanel } from "./ai-options.tsx";
 import { AiUsagePanel } from "./ai-usage.tsx";
 
@@ -104,7 +103,6 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
           [
             ["deepseek", "DeepSeek (nuvem)"],
             ["claude", "Claude (plano)"],
-            ["local", "Local (offline)"],
           ] as const
         ).map(([id, label]) => (
           <button key={id} type="button" role="radio" aria-checked={ai.provider === id} className="segmented__item" disabled={switching} onClick={() => void choose(id)}>
@@ -194,9 +192,7 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
           </p>
           <p className="hint">Instruções só de atendimento: crie um CLAUDE.md em {ai.claude.folder}. Rascunho e resumo usam o Claude; a classificação continua no Jev ou na DeepSeek.</p>
         </>
-      ) : (
-        <AiModels ai={ai} onChange={setLocal} />
-      )}
+      ) : null}
       <label className="field">
         <span className="field__label">Como a IA deve escrever</span>
         <textarea className="notes__note" rows={4} maxLength={2000} value={instructions} onChange={(e) => setInstructions(e.target.value)} />

@@ -11,7 +11,7 @@ const PERIODS: { id: Period; label: string }[] = [
   { id: null, label: "Tudo" },
 ];
 const KIND_LABEL = { classificar: "Classificação (Jev)", rascunho: "Rascunho de resposta", resumo: "Resumo da conversa" } as const;
-const PROVIDER_LABEL = { jev: "Jev (TypeSafe)", deepseek: "DeepSeek", local: "IA local", claude: "Claude (plano)" } as const;
+const PROVIDER_LABEL = { jev: "Jev (TypeSafe)", deepseek: "DeepSeek", local: "IA local (removida)", claude: "Claude (plano)" } as const;
 
 const dayShort = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" });
 const dayOf = (key: string) => dayShort.format(new Date(`${key}T12:00:00-03:00`));
@@ -187,7 +187,7 @@ export function AiUsagePanel({ notify }: { notify: (kind: "error" | "success", t
               </button>
             </div>
             <p id="usd-brl-help" className="hint">
-              Estimativa com a tabela pública: Jev US$ 0,042 por milhão de tokens de entrada; DeepSeek US$ 0,15 por milhão na entrada, US$ 0,003 em cache e US$ 0,60 na saída (dobra no horário de pico, de madrugada no Brasil). A IA local não custa nada. O valor exato é o da fatura de cada serviço.
+              Estimativa com a tabela pública: Jev US$ 0,042 por milhão de tokens de entrada; DeepSeek US$ 0,15 por milhão na entrada, US$ 0,003 em cache e US$ 0,60 na saída (dobra no horário de pico, de madrugada no Brasil). O valor exato é o da fatura de cada serviço.
             </p>
           </section>
         </>

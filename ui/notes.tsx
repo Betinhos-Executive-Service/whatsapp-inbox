@@ -158,7 +158,7 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
               )}
             </dl>
           ) : (
-            <p className="hint">{isAiReady(ai) ? (ai?.provider === "deepseek" ? "Gera um resumo das últimas mensagens com a DeepSeek." : ai?.provider === "claude" ? "Gera um resumo com o Claude do seu plano. Pode levar mais de um minuto." : "Gera um resumo das últimas mensagens, sem sair do seu computador.") : ai?.provider === "local" && ai.state === "baixando" ? `Baixando a IA local… ${ai.percent}%` : "Ative a IA em Configurações › IA para usar."}</p>
+            <p className="hint">{isAiReady(ai) ? (ai?.provider === "deepseek" ? "Gera um resumo das últimas mensagens com a DeepSeek." : ai?.provider === "claude" ? "Gera um resumo com o Claude do seu plano. Pode levar mais de um minuto." : "Gera um resumo das últimas mensagens.") : "Ative a IA em Configurações › IA para usar."}</p>
           )}
           <div className="cluster">
             <button className="button button--secondary button--compact" disabled={!isAiReady(ai) || summarizing} aria-busy={summarizing || undefined} onClick={() => void summarize()}>
