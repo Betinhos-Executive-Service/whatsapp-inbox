@@ -4,6 +4,8 @@ import {
   Ban,
   CheckCircle2,
   Copy,
+  Forward,
+  Pencil,
   Reply,
   Trash2,
   CircleDot,
@@ -56,6 +58,8 @@ import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, l
 // Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
 import { UpdateDialog } from "./update.tsx";
+import { ForwardDialog } from "./forward.tsx";
+import { AckIcon, canEdit, EditBar, ReactButton, ReactionList } from "./message-extras.tsx";
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
 import { toggleWa } from "./wa-text.ts";
 import { desktop } from "./desktop.ts";
@@ -453,7 +457,7 @@ function mergeTail(list: Message[], fresh: Message[]): Message[] {
 }
 
 /** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, onReply, onDelete, onCopy, onAuthor, onJump, onRetry, onDiscard }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard }: {
   messages: Message[];
   isGroup: boolean;
   hasMore: boolean;
@@ -467,6 +471,9 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   onCopy: (m: Message) => void;
   onAuthor: (jid: string, name: string) => void;
   onJump: (id: string) => void;
+  onReact: (m: Message, emoji: string) => void;
+  onForward: (m: Message) => void;
+  onEdit: (m: Message) => void;
   onRetry: (m: Message) => void;
   onDiscard: (m: Message) => void;
 }) {
@@ -504,6 +511,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                     {continues ? "" : initials(author ?? "?")}
                   </span>
                 ))}
+              <div className="bubble-wrap">
               <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}${m.deleted ? " bubble--deleted" : ""}${m.pending ? ` bubble--${m.pending}` : ""}`}>
                 {author && !continues &&
                   (sender ? (
@@ -537,11 +545,16 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                     <button type="button" className="bubble__retry" onClick={() => onDiscard(m)}>Descartar</button>
                   </span>
                 ) : (
-                  <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
-                    {formatTime(m.at)}
-                    {m.pending === "sending" && <Clock3 className="bubble__pending" size={11} aria-label="Enviando" />}
-                  </time>
+                  <span className="bubble__meta">
+                    {m.editedAt !== null && !m.deleted && <span className="bubble__edited">Editada</span>}
+                    <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
+                      {formatTime(m.at)}
+                    </time>
+                    {m.pending === "sending" ? <Clock3 className="bubble__pending" size={11} aria-label="Enviando" /> : m.fromMe && !m.deleted && <AckIcon ack={m.ack} />}
+                  </span>
                 )}
+              </div>
+              {!m.pending && <ReactionList m={m} onReact={onReact} />}
               </div>
               {!m.pending && <div className="message-actions" role="group" aria-label="Ações da mensagem">
                 {!m.deleted && (
@@ -549,9 +562,20 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                     <Reply size={16} aria-hidden />
                   </button>
                 )}
+                {!m.deleted && <ReactButton m={m} onReact={onReact} disabled={!canAct} />}
                 {!m.deleted && (!m.media || caption) && (
                   <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Copiar texto" title="Copiar texto" onClick={() => onCopy(m)}>
                     <Copy size={16} aria-hidden />
+                  </button>
+                )}
+                {!m.deleted && (
+                  <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Encaminhar" title="Encaminhar" disabled={!canAct} onClick={() => onForward(m)}>
+                    <Forward size={16} aria-hidden />
+                  </button>
+                )}
+                {canEdit(m) && (
+                  <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Editar mensagem" title="Editar" disabled={!canAct} onClick={() => onEdit(m)}>
+                    <Pencil size={16} aria-hidden />
                   </button>
                 )}
                 <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Apagar mensagem" title="Apagar" onClick={() => onDelete(m)}>
@@ -566,8 +590,10 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   );
 });
 
-function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, quickReplies, onSetupAi }: {
+function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, quickReplies, onSetupAi, sendTyping }: {
   chat: Chat;
+  /** Avisar ao contato que você está digitando (preferência). */
+  sendTyping: boolean;
   onSetupAi: () => void;
   quickReplies: QuickReply[];
   labels: string[];
@@ -593,6 +619,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setSide("profile");
   }, []);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [editing, setEditing] = useState<Message | null>(null);
+  const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [presence, setPresence] = useState<"composing" | "recording" | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   // Menções: participantes carregados no primeiro "@"; escolhas valem até enviar.
@@ -631,6 +660,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     });
     recorder.cancel();
     setReplyTo(null);
+    setEditing(null);
+    setForwarding(null);
+    setPresence(null);
     setParticipants(null);
     picks.current = [];
   }, [chat.jid]);
@@ -690,12 +722,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         return i >= 0 ? list.map((x, j) => (j === i ? m : x)) : [...list, m];
       });
     };
-    // Apagada para todos (por mim ou pelo contato): troca no lugar.
+    // Apagada, editada, reação ou status de entrega: troca no lugar.
     const onUpdate = (e: Event) => {
       const m = (e as CustomEvent<Message>).detail;
       if (m.chatJid !== chat.jid) return;
       setMessages((list) => list && list.map((x) => (x.id === m.id ? m : x)));
-      setReplyTo((r) => (r?.id === m.id ? null : r));
+      if (m.deleted) {
+        setReplyTo((r) => (r?.id === m.id ? null : r));
+        setEditing((r) => (r?.id === m.id ? null : r));
+      }
     };
     // Apagada para mim: sai da lista.
     const onRemove = (e: Event) => {
@@ -783,6 +818,19 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const send = async () => {
     const text = draft.trim();
     if ((!text && !attachments.length) || sending) return;
+    stopTyping();
+    if (editing) {
+        try {
+        if (text !== editing.text) replaceMessage(await api.editMessage(chat.jid, editing.id, text));
+        setEditing(null);
+        setDraft("");
+      } catch (e) {
+        notify("error", `Mensagem não editada. ${(e as Error).message}`);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
     stickToBottom.current = true;
     const quotedId = replyTo?.id;
     if (!attachments.length) {
@@ -795,7 +843,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       outbox.current.set(localId, { text: withMentions.text, quotedId, mentions: withMentions.mentions });
       setMessages((list) => [
         ...(list ?? []),
-        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, quoted, deleted: false, sender: null, pending: "sending" },
+        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], pending: "sending" },
       ]);
       setDraft("");
       setReplyTo(null);
@@ -917,6 +965,69 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     [chat.isGroup, notify],
   );
   const askDelete = useCallback((m: Message) => setDeleting(m), []);
+  const replaceMessage = (updated: Message) => setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
+  const react = useCallback(
+    async (m: Message, emoji: string) => {
+      try {
+        const updated = await api.react(chat.jid, m.id, emoji);
+        setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
+      } catch (e) {
+        notify("error", `Reação não enviada. ${(e as Error).message}`);
+      }
+    },
+    [chat.jid, notify],
+  );
+  const forward = useCallback((m: Message) => setForwarding(m), []);
+  const edit = useCallback((m: Message) => {
+    setReplyTo(null);
+    setEditing(m);
+    setDraft(m.text);
+    requestAnimationFrame(() => composer.current?.focus());
+  }, []);
+  const cancelEdit = () => {
+    setEditing(null);
+    setDraft("");
+  };
+
+  // "digitando" do contato: assina ao abrir a conversa e limpa sozinho se o aviso de parada não vier.
+  useEffect(() => {
+    if (connected) api.watch(chat.jid).catch(() => undefined);
+  }, [chat.jid, connected]);
+  useEffect(() => {
+    let timer = 0;
+    const onPresence = (e: Event) => {
+      const p = (e as CustomEvent<{ jid: string; state: "composing" | "recording" | null }>).detail;
+      if (p.jid !== chat.jid) return;
+      setPresence(p.state);
+      window.clearTimeout(timer);
+      if (p.state) timer = window.setTimeout(() => setPresence(null), 25_000);
+    };
+    window.addEventListener("inbox:presence", onPresence);
+    return () => {
+      window.removeEventListener("inbox:presence", onPresence);
+      window.clearTimeout(timer);
+    };
+  }, [chat.jid]);
+
+  // Meu "digitando": no máximo um aviso a cada 8 s; para depois de 4 s sem digitar.
+  const typingAt = useRef(0);
+  const typingStop = useRef(0);
+  const stopTyping = useCallback(() => {
+    window.clearTimeout(typingStop.current);
+    if (!typingAt.current) return;
+    typingAt.current = 0;
+    api.typing(chat.jid, "paused").catch(() => undefined);
+  }, [chat.jid]);
+  const noteTyping = () => {
+    if (!sendTyping || !connected) return;
+    if (Date.now() - typingAt.current > 8000) {
+      typingAt.current = Date.now();
+      api.typing(chat.jid, "composing").catch(() => undefined);
+    }
+    window.clearTimeout(typingStop.current);
+    typingStop.current = window.setTimeout(stopTyping, 4000);
+  };
+  useEffect(() => stopTyping, [stopTyping]);
   const showAuthor = useCallback(
     (jid: string, name: string) => openProfile({ jid, name, phone: jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : null, isGroup: false }),
     [openProfile],
@@ -1019,8 +1130,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
               <span className="heading-card" role="heading" aria-level={2}>
                 {chat.name}
               </span>
-              {chat.phone && <span className="hint">+{chat.phone}</span>}
-              {chat.isGroup && <span className="hint">Grupo · ver participantes</span>}
+              {presence ? (
+                <span className="hint chat-pane__presence" role="status">
+                  {presence === "recording" ? "gravando áudio…" : chat.isGroup ? "alguém está digitando…" : "digitando…"}
+                </span>
+              ) : (
+                <>
+                  {chat.phone && <span className="hint">+{chat.phone}</span>}
+                  {chat.isGroup && <span className="hint">Grupo · ver participantes</span>}
+                </>
+              )}
             </span>
           </button>
         </div>
@@ -1072,6 +1191,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onCopy={copy}
             onAuthor={showAuthor}
             onJump={jump}
+            onReact={react}
+            onForward={forward}
+            onEdit={edit}
             onRetry={retry}
             onDiscard={discard}
           />
@@ -1080,6 +1202,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
       {side === "profile" && profileTarget && <ProfilePanel target={profileTarget} connected={connected} onClose={() => setSide(null)} />}
       </div>
+      {forwarding && (
+        <ForwardDialog
+          message={forwarding}
+          onClose={() => setForwarding(null)}
+          onDone={(to) => {
+            setForwarding(null);
+            notify("success", `Mensagem encaminhada para ${to.name}.`);
+          }}
+        />
+      )}
       {deleting && <DeleteDialog message={deleting} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
       <form
         className="composer"
@@ -1093,6 +1225,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         </label>
         {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
         {showMention && <MentionMenu items={mentionItems} active={mentionActive} onPick={pickMention} onHover={setMentionActive} />}
+        {editing && <EditBar message={editing} onCancel={cancelEdit} />}
         {replyTo && <ReplyBar message={replyTo} isGroup={chat.isGroup} chatName={chat.name} onCancel={() => setReplyTo(null)} />}
         {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} disabled={sending} />}
         <input
@@ -1168,6 +1301,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           onChange={(e) => {
             setDraft(e.target.value);
             setCaret(e.target.selectionStart ?? e.target.value.length);
+            noteTyping();
           }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onScroll={(e) => {
@@ -1207,8 +1341,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
                 return;
               }
             }
-            if (e.key === "Escape" && replyTo && !showQuick) {
+            if (e.key === "Escape" && (replyTo || editing) && !showQuick) {
               e.preventDefault();
+              if (editing) cancelEdit();
               setReplyTo(null);
               return;
             }
@@ -1347,6 +1482,7 @@ function App() {
       upsert(chat);
       window.dispatchEvent(new CustomEvent("inbox:message", { detail: message }));
     });
+    es.addEventListener("presence", (e) => window.dispatchEvent(new CustomEvent("inbox:presence", { detail: JSON.parse((e as MessageEvent).data) })));
     es.addEventListener("update", (e) => {
       const { message, chat } = JSON.parse((e as MessageEvent).data) as { message: Message; chat: Chat | null };
       upsert(chat);
@@ -1431,6 +1567,7 @@ function App() {
               notify={push}
               onChat={upsert}
               quickReplies={quickReplies}
+              sendTyping={!!state?.prefs.sendTyping}
               onSetupAi={() => {
                 setSettingsTab("ia");
                 setSettingsOpen(true);

@@ -89,6 +89,10 @@ export type Message = {
   deleted: boolean;
   /** Autor em grupo (JID bruto do participante), para abrir o perfil. */
   sender: string | null;
+  /** Só nas enviadas: 1 pendente, 2 no servidor, 3 entregue, 4 lida, 5 ouvida (proto.WebMessageInfo.Status). */
+  ack: number | null;
+  editedAt: number | null;
+  reactions: { emoji: string; fromMe: boolean }[];
 };
 
 export type QuotedRef = { id: string; text: string; fromMe: boolean; author: string | null };
@@ -101,12 +105,15 @@ export type LabelExample = { label: string; snippet: string };
 
 export type Label = { name: string; description: string };
 
-export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "sender"> & {
+export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "sender" | "ack" | "editedAt" | "reactions"> & {
   rawJid: string;
   participant?: string | null;
   media?: string | null;
   /** QuotedRef em JSON. */
   quoted?: string | null;
+  ack?: number | null;
+  /** Mensagem enviada já serializada (proto), para reenviar quando o WhatsApp pedir retry. */
+  raw?: Uint8Array | null;
 };
 
 const DEFAULT_LABELS: Label[] = [
@@ -202,6 +209,14 @@ create table if not exists ai_usage (
 );
 create index if not exists ai_usage_at on ai_usage(at desc);
 create index if not exists ai_usage_chat on ai_usage(chat_jid);
+create table if not exists reactions (
+  chat_jid text not null references chats(jid) on delete cascade on update cascade,
+  message_id text not null,
+  sender text not null,
+  emoji text not null,
+  at integer not null,
+  primary key (chat_jid, message_id, sender)
+);
 create table if not exists photos (jid text primary key, file text, fetched_at integer not null);
 `;
 
@@ -214,6 +229,10 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
   ["chats", "ai_reason", "text"],
   ["messages", "quoted", "text"],
   ["messages", "deleted_at", "integer"],
+  ["messages", "ack", "integer"],
+  ["messages", "edited_at", "integer"],
+  ["messages", "raw", "blob"],
+  ["messages", "unread", "integer not null default 0"],
 ];
 
 const CHAT_SELECT = `select c.*,
@@ -274,7 +293,7 @@ function toReminder(r: Row): Reminder {
   };
 }
 
-function toMessage(r: Row): Message {
+function toMessage(r: Row, reactions: Message["reactions"] = []): Message {
   let media: Message["media"] = null;
   if (typeof r.media === "string") {
     try {
@@ -305,10 +324,16 @@ function toMessage(r: Row): Message {
     quoted: deleted ? null : quoted,
     deleted,
     sender: (r.participant as string) || null,
+    ack: r.ack == null ? null : Number(r.ack),
+    editedAt: r.edited_at == null ? null : Number(r.edited_at),
+    reactions: deleted ? [] : reactions,
   };
 }
 
 export const DELETED_TEXT = "Mensagem apagada";
+
+/** Colunas da mensagem para a tela (sem `raw`, que só serve ao retry). */
+const MESSAGE_COLUMNS = "chat_jid, id, participant, from_me, at, text, kind, media, quoted, deleted_at, ack, edited_at";
 
 export class Store {
   readonly db: DatabaseSync;
@@ -433,9 +458,14 @@ export class Store {
     const chat = this.q("select unread from chats where jid = ?").get(jid) as Row | undefined;
     const unread = Number(chat?.unread ?? 0);
     if (!unread) return [];
-    const keys = this
-      .q("select id, raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc limit ?")
-      .all(jid, unread) as Row[];
+    let keys = this.q("select id, raw_jid, participant from messages where chat_jid = ? and unread = 1").all(jid) as Row[];
+    // Bancos antigos não marcavam a mensagem: vale a aproximação das N mais recentes.
+    if (!keys.length) {
+      keys = this
+        .q("select id, raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc limit ?")
+        .all(jid, unread) as Row[];
+    }
+    this.q("update messages set unread = 0 where chat_jid = ? and unread = 1").run(jid);
     this.q("update chats set unread = 0 where jid = ?").run(jid);
     return keys.map((k) => ({ id: String(k.id), rawJid: String(k.raw_jid), participant: (k.participant as string) ?? null }));
   }
@@ -471,8 +501,14 @@ export class Store {
     return this.tx(() => {
       this.ensureChat(m.chatJid, { status: live ? "aberta" : "resolvida" });
       const inserted = this
-        .q("insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media, quoted) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(m.chatJid, m.id, m.rawJid, m.participant ?? null, m.fromMe ? 1 : 0, m.at, m.text, m.kind, m.media ?? null, m.quoted ?? null);
+        .q(
+          `insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media, quoted, ack, raw, unread)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          m.chatJid, m.id, m.rawJid, m.participant ?? null, m.fromMe ? 1 : 0, m.at, m.text, m.kind, m.media ?? null, m.quoted ?? null,
+          m.fromMe ? (m.ack ?? null) : null, m.raw ?? null, live && !m.fromMe ? 1 : 0,
+        );
       if (inserted.changes === 0) return false;
       this
         .q("update chats set last_at = ?, last_text = ?, last_from_me = ? where jid = ? and last_at <= ?")
@@ -491,13 +527,12 @@ export class Store {
   /** Grava a mensagem (ver insertMessage) e devolve mensagem e conversa já atualizadas, ou null se já existia. */
   addMessage(m: IncomingMessage, live: boolean): { message: Message; chat: Chat } | null {
     if (!this.insertMessage(m, live)) return null;
-    const message = toMessage(this.q("select * from messages where chat_jid = ? and id = ?").get(m.chatJid, m.id) as Row);
-    return { message, chat: this.getChat(m.chatJid)! };
+    return { message: this.getMessage(m.chatJid, m.id)!, chat: this.getChat(m.chatJid)! };
   }
 
-  getMessage(jid: string, id: string): Message | null {
-    const r = this.q("select * from messages where chat_jid = ? and id = ?").get(jid, id) as Row | undefined;
-    return r ? toMessage(r) : null;
+  getMessage(chatJid: string, id: string): Message | null {
+    const r = this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and id = ?`).get(chatJid, id) as Row | undefined;
+    return r ? toMessage(r, this.reactionsOf(chatJid, [id]).get(id)) : null;
   }
 
   /** Chave da mensagem no WhatsApp: para citar (responder) ou apagar. */
@@ -523,7 +558,10 @@ export class Store {
   deleteMessage(jid: string, id: string): boolean {
     return this.tx(() => {
       const gone = this.q("delete from messages where chat_jid = ? and id = ?").run(jid, id).changes > 0;
-      if (gone) this.refreshLast(jid);
+      if (gone) {
+        this.q("delete from reactions where chat_jid = ? and message_id = ?").run(jid, id);
+        this.refreshLast(jid);
+      }
       return gone;
     });
   }
@@ -537,9 +575,89 @@ export class Store {
 
   listMessages(jid: string, before: number | null, limit = 80): Message[] {
     const rows = (before
-      ? this.q("select * from messages where chat_jid = ? and at < ? order by at desc limit ?").all(jid, before, limit)
-      : this.q("select * from messages where chat_jid = ? order by at desc limit ?").all(jid, limit)) as Row[];
-    return rows.map(toMessage).reverse();
+      ? this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at < ? order by at desc limit ?`).all(jid, before, limit)
+      : this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? order by at desc limit ?`).all(jid, limit)) as Row[];
+    const reactions = this.reactionsOf(jid, rows.map((r) => String(r.id)));
+    return rows.map((r) => toMessage(r, reactions.get(String(r.id)))).reverse();
+  }
+
+  private reactionsOf(chatJid: string, ids: string[]): Map<string, Message["reactions"]> {
+    const out = new Map<string, Message["reactions"]>();
+    if (!ids.length) return out;
+    const rows = this
+      .q("select message_id, sender, emoji from reactions where chat_jid = ? and message_id in (select value from json_each(?)) order by at")
+      .all(chatJid, JSON.stringify(ids)) as Row[];
+    for (const r of rows) {
+      const id = String(r.message_id);
+      if (!out.has(id)) out.set(id, []);
+      out.get(id)!.push({ emoji: String(r.emoji), fromMe: r.sender === "me" });
+    }
+    return out;
+  }
+
+  /** Texto sem o "Autor: " que os grupos levam na frente. */
+  private stripAuthor(r: Row): string {
+    const text = String(r.text);
+    const i = text.indexOf(": ");
+    return r.participant && r.from_me !== 1 && i > 0 && i <= 60 ? text.slice(i + 2) : text;
+  }
+
+  /** Texto da mensagem como o WhatsApp mostra (sem o autor do grupo), para encaminhar. */
+  messageText(chatJid: string, id: string): string | null {
+    const r = this.q("select text, participant, from_me from messages where chat_jid = ? and id = ?").get(chatJid, id) as Row | undefined;
+    return r ? this.stripAuthor(r) : null;
+  }
+
+  /** Mensagem enviada serializada, para o WhatsApp reenviar num pedido de retry. */
+  rawMessage(id: string): Uint8Array | null {
+    const r = this.q("select raw from messages where id = ? and raw is not null limit 1").get(id) as Row | undefined;
+    return r?.raw instanceof Uint8Array ? r.raw : null;
+  }
+
+  /** Status de entrega só avança (o recibo de "lida" pode chegar antes do de "entregue"). */
+  setAck(chatJid: string, id: string, ack: number): Message | null {
+    const changed = this
+      .q("update messages set ack = ? where chat_jid = ? and id = ? and from_me = 1 and coalesce(ack, 0) < ?")
+      .run(ack, chatJid, id, ack).changes;
+    return changed ? this.getMessage(chatJid, id) : null;
+  }
+
+  editMessage(chatJid: string, id: string, text: string, at = Date.now()): { message: Message; chat: Chat } | null {
+    return this.tx(() => {
+      const r = this.q("select text, participant, from_me from messages where chat_jid = ? and id = ?").get(chatJid, id) as Row | undefined;
+      if (!r) return null;
+      // Em grupo, mantém o "Autor: " na frente, como na mensagem original.
+      const old = String(r.text);
+      const body = this.stripAuthor(r);
+      const next = body === old ? text : `${old.slice(0, old.length - body.length)}${text}`;
+      if (next === old) return null;
+      this.q("update messages set text = ?, edited_at = ? where chat_jid = ? and id = ?").run(next, at, chatJid, id);
+      this.refreshPreview(chatJid, id, next);
+      return { message: this.getMessage(chatJid, id)!, chat: this.getChat(chatJid)! };
+    });
+  }
+
+  /** A prévia da conversa acompanha a mudança quando ela é a última mensagem. */
+  private refreshPreview(chatJid: string, id: string, text: string) {
+    this
+      .q("update chats set last_text = ? where jid = ? and last_at = (select at from messages where chat_jid = ? and id = ?)")
+      .run(text, chatJid, chatJid, id);
+  }
+
+  /** Emoji vazio remove a reação. `sender` = "me" para as minhas. */
+  setReaction(chatJid: string, messageId: string, sender: string, emoji: string, at = Date.now()): Message | null {
+    if (!this.hasChat(chatJid)) return null;
+    if (emoji) {
+      this
+        .q(
+          `insert into reactions (chat_jid, message_id, sender, emoji, at) values (?, ?, ?, ?, ?)
+           on conflict(chat_jid, message_id, sender) do update set emoji = excluded.emoji, at = excluded.at`,
+        )
+        .run(chatJid, messageId, sender, emoji, at);
+    } else {
+      this.q("delete from reactions where chat_jid = ? and message_id = ? and sender = ?").run(chatJid, messageId, sender);
+    }
+    return this.getMessage(chatJid, messageId);
   }
 
   // ---- LID ↔ número
@@ -583,6 +701,7 @@ export class Store {
         return this.getChat(pn);
       }
       this.q("update or ignore messages set chat_jid = ? where chat_jid = ?").run(pn, lid);
+      this.q("update or ignore reactions set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update reminders set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update ai_usage set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update chats set note = coalesce(note, (select note from chats where jid = ?)) where jid = ?").run(lid, pn);

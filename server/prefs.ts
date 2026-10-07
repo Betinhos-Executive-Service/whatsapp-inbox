@@ -12,6 +12,8 @@ export const prefsSchema = z.object({
   quietEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable(),
   startWithWindows: z.boolean(),
   startMinimized: z.boolean(),
+  /** Mostrar "digitando..." ao contato enquanto você escreve. */
+  sendTyping: z.boolean(),
   /** Aparência: segue o Windows, claro ou escuro. */
   theme: z.enum(["system", "light", "dark"]),
 });
@@ -26,6 +28,7 @@ export const DEFAULT_PREFS: Prefs = {
   quietEnd: null,
   startWithWindows: false,
   startMinimized: true,
+  sendTyping: false,
   theme: "system",
 };
 
