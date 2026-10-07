@@ -32,6 +32,12 @@ export type Chat = {
   reminderAt: number | null;
   /** Tokens e custo estimado (US$) de toda a IA usada nesta conversa. */
   aiUsage: { calls: number; tokens: number; costUsd: number };
+  /** Etiquetas extras escolhidas por você (a principal é `label`). */
+  extraLabels: string[];
+  pinnedAt: number | null;
+  archived: boolean;
+  mutedUntil: number | null;
+  snoozedUntil: number | null;
 };
 
 export type UsageKind = "classificar" | "rascunho" | "resumo";
@@ -67,6 +73,19 @@ export type Summary = { resumo: string; pedido: string; proximoPasso: string };
 
 export type Reminder = { id: number; chatJid: string; dueAt: number; text: string; firedAt: number | null };
 export type QuickReply = { shortcut: string; text: string };
+
+export type ChatPatch = {
+  status?: Status;
+  label?: string | null;
+  extraLabels?: string[];
+  pinned?: boolean;
+  archived?: boolean;
+  mutedUntil?: number | null;
+  snoozedUntil?: number | null;
+};
+
+/** Mensagem achada na busca; `snippet` marca o termo entre \u0002 e \u0003. */
+export type SearchHit = { chatJid: string; id: string; at: number; fromMe: boolean; snippet: string };
 
 export type Message = {
   chatJid: string;
@@ -165,7 +184,10 @@ export const api = {
   watch: (jid: string) => request<{ ok: true }>("POST", `${chatPath(jid)}/watch`, {}),
   typing: (jid: string, state: "composing" | "paused") => request<{ ok: true }>("POST", `${chatPath(jid)}/typing`, { state }),
   sendMedia: (jid: string, file: OutgoingMedia) => request<Chat>("POST", `${chatPath(jid)}/send-media`, file),
-  update: (jid: string, patch: { status?: Status; label?: string | null; note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
+  update: (jid: string, patch: ChatPatch & { note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
+  search: (q: string) => request<SearchHit[]>("GET", `/api/search?q=${encodeURIComponent(q)}`),
+  /** Da mensagem achada até a mais nova, para abrir a conversa nela. */
+  messagesAround: (jid: string, id: string) => request<Message[]>("GET", `${chatPath(jid)}/messages?around=${encodeURIComponent(id)}`),
   reminders: (jid: string) => request<Reminder[]>("GET", `${chatPath(jid)}/reminders`),
   addReminder: (jid: string, dueAt: number, text: string) => request<Reminder>("POST", `${chatPath(jid)}/reminders`, { dueAt, text }),
   doneReminder: (id: number) => request<Chat>("POST", `/api/reminders/${id}/done`, {}),

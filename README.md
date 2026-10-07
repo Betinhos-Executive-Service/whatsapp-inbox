@@ -3,9 +3,12 @@
 Inbox local e leve para gerir e classificar as conversas do seu WhatsApp. Roda no seu PC, sem Docker e sem banco externo.
 
 - **Conversas por status:** Abertas, Aguardando e Resolvidas. Mensagem nova reabre a conversa; resposta sua passa para Aguardando.
-- **Etiquetas** editáveis (Cotação, Reserva, Operação…), escolhidas por você ou sugeridas pelo **Jev**.
-- **Responder** pelo próprio app (texto). Mídia aparece como `[Imagem]`, `[Áudio]` etc.
-- Só conversas individuais: grupos, status e canais ficam de fora.
+- **Etiquetas** editáveis (Cotação, Reserva, Operação…): a principal vem da IA ou de você; dá para somar etiquetas extras.
+- **Responder** pelo próprio app: texto, anexos e mensagem de voz, citando, mencionando com @ e com formatação do WhatsApp. Ticks de entrega/leitura, reações, editar (até 15 min), apagar e encaminhar.
+- **Organizar:** fixar no topo, arquivar, silenciar notificações e adiar (some das abertas e volta sozinha na hora marcada). Rascunho guardado por conversa.
+- **Busca** em nomes, números e no texto de todo o histórico, sem acento; o resultado abre a conversa na mensagem.
+- **Atalhos:** `Ctrl+K` busca, `Alt+↓/↑` próxima/anterior conversa, `Ctrl+Enter` resolve, `?` mostra todos.
+- Conversas individuais e grupos; status e canais ficam de fora.
 
 ## Instalar e usar
 

@@ -248,6 +248,12 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
     assert.equal((await post("forward", { id: "nao-existe", to: PN })).status, 404, "mensagem precisa existir");
     assert.equal((await post("typing", { state: "gritando" })).status, 400);
     assert.equal((await post("edit", { id: "x", text: "   " })).status, 400);
+    const patchChat = (body: unknown) =>
+      fetch(`${base}/api/chats/${encodeURIComponent(PN)}`, { method: "PATCH", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+    assert.equal((await patchChat({ extraLabels: ["Inventada"] })).status, 400);
+    assert.equal((await patchChat({ snoozedUntil: 1000 })).status, 400, "adiar para o passado");
+    assert.deepEqual((await (await patchChat({ extraLabels: ["Reserva"], pinned: true })).json()).extraLabels, ["Reserva"]);
+    assert.ok(Array.isArray(await (await fetch(`${base}/api/search?q=ol%C3%A1`)).json()));
   } finally {
     server.close();
   }

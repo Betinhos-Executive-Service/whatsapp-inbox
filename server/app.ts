@@ -82,6 +82,14 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       broadcast("reminder", { chat, reminder });
       options.onReminder?.(chat, reminder);
     }
+    // Conversa adiada que venceu avisa como um lembrete.
+    const now = Date.now();
+    for (const chat of store.wakeSnoozed(now)) {
+      const reminder = { id: 0, chatJid: chat.jid, dueAt: now, text: "Conversa adiada voltou para Abertas.", firedAt: now };
+      broadcast("chat", chat);
+      broadcast("reminder", { chat, reminder });
+      options.onReminder?.(chat, reminder);
+    }
   }
   const reminderTimer = setInterval(fireReminders, 30000);
   reminderTimer.unref();
@@ -263,7 +271,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       broadcast("message", { message, chat });
       if (live && !message.fromMe) {
         scheduleClassify(chat.jid);
-        options.onIncoming?.(chat, message);
+        // Silenciada: chega e conta como não lida, só não avisa.
+        if (!chat.mutedUntil || chat.mutedUntil <= Date.now()) options.onIncoming?.(chat, message);
       }
     });
     wa = client;

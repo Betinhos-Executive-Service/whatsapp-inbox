@@ -84,6 +84,11 @@ const chatPatchSchema = z.object({
   status: z.enum(STATUSES).optional(),
   label: z.string().min(1).nullable().optional(),
   note: z.string().max(5000).nullable().optional(),
+  extraLabels: z.array(z.string().min(1).max(30)).max(20).optional(),
+  pinned: z.boolean().optional(),
+  archived: z.boolean().optional(),
+  mutedUntil: z.number().int().positive().nullable().optional(),
+  snoozedUntil: z.number().int().positive().nullable().optional(),
 });
 
 const reminderSchema = z.object({
@@ -201,18 +206,31 @@ export function createHandler(api: Api) {
     if (path === "/api/events" && method === "GET") return api.subscribe(res);
     if (path === "/api/state" && method === "GET") return json(res, 200, api.state());
     if (path === "/api/chats" && method === "GET") return json(res, 200, store.listChats());
+    if (path === "/api/search" && method === "GET") {
+      const q = (url.searchParams.get("q") ?? "").slice(0, 200);
+      return json(res, 200, store.search(q));
+    }
 
     if (jid) {
       if (!store.hasChat(jid)) throw new HttpError(404, "Conversa não encontrada.");
       if (action === "" && method === "PATCH") {
         const patch = parse(chatPatchSchema, await readJson(req));
-        if (patch.label && !store.listLabels().some((l) => l.name === patch.label)) throw new HttpError(400, "Etiqueta não cadastrada.");
+        const known = new Set(store.listLabels().map((l) => l.name));
+        if (patch.label && !known.has(patch.label)) throw new HttpError(400, "Etiqueta não cadastrada.");
+        if (patch.extraLabels?.some((l) => !known.has(l))) throw new HttpError(400, "Etiqueta não cadastrada.");
+        if (patch.snoozedUntil && patch.snoozedUntil <= Date.now()) throw new HttpError(400, "Escolha um horário no futuro para adiar.");
         store.updateChat(jid, patch);
         if (patch.note !== undefined) store.setNote(jid, patch.note);
         api.onChatChanged(jid);
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/messages" && method === "GET") {
+        const around = url.searchParams.get("around");
+        if (around) {
+          const list = store.listMessagesAround(jid, around);
+          if (!list) throw new HttpError(404, "Mensagem não encontrada.");
+          return json(res, 200, list);
+        }
         const before = Number(url.searchParams.get("before")) || null;
         return json(res, 200, store.listMessages(jid, before));
       }
