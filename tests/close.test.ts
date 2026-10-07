@@ -20,3 +20,21 @@ test("encerrar o servidor não trava com a janela conectada ao SSE (instalação
   await Promise.race([app.close(), new Promise((_, reject) => setTimeout(() => reject(new Error("close() travou")), 3000))]);
   assert.ok(Date.now() - started < 3000);
 });
+
+test("markRead avisa onRead e send sem WhatsApp falha com mensagem clara", async () => {
+  const read: string[] = [];
+  const app = await startApp({
+    port: 0,
+    dataDir: mkdtempSync(join(tmpdir(), "wi-read-")),
+    distDir: "dist",
+    waDisabled: true,
+    onRead: (jid) => read.push(jid),
+  });
+  try {
+    await app.markRead("5511999999999@s.whatsapp.net");
+    assert.deepEqual(read, ["5511999999999@s.whatsapp.net"]);
+    await assert.rejects(app.send("5511999999999@s.whatsapp.net", "oi"), /WhatsApp ainda está iniciando/);
+  } finally {
+    await app.close();
+  }
+});
