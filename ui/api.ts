@@ -70,6 +70,8 @@ export type AiStatus = {
   claude: { configured: boolean; model: ClaudeModel; models: { id: ClaudeModel; name: string; hint: string }[]; folder: string; options: ClaudeOptions; defaults: ClaudeOptions };
   /** Janela de mensagens da classificação pelo Jev. */
   jev: { contextMessages: number };
+  /** IA do resumo (conversa e áudio); "same" segue a do rascunho. */
+  summary: { provider: "same" | "deepseek" | "claude"; deepseekModel: DeepSeekModel; claudeModel: ClaudeModel };
 };
 export type Summary = { resumo: string; pedido: string; proximoPasso: string };
 /** Resumo organizado de uma mensagem de voz. */
@@ -155,7 +157,7 @@ export type AppState = {
   /** Quem classifica de fato (já com o fallback aplicado) e se tem chave. */
   classifier: { provider: Classifier; configured: boolean; deepseekConfigured: boolean };
   /** Transcrição de áudio (Groq Whisper). */
-  groq: { configured: boolean; fromEnv: boolean; autoTranscribe: boolean };
+  groq: { configured: boolean; fromEnv: boolean; autoTranscribe: boolean; autoSummarize: boolean };
   labels: Label[];
 };
 
@@ -202,6 +204,7 @@ export const api = {
   ai: () => request<AiStatus>("GET", "/api/ai"),
   setAiProvider: (provider: AiStatus["provider"]) => request<AiStatus>("PUT", "/api/ai/provider", { provider }),
   setDeepseekModel: (model: DeepSeekModel) => request<AiStatus>("PUT", "/api/ai/deepseek-model", { model }),
+  setSummaryModel: (choice: Partial<AiStatus["summary"]>) => request<AiStatus>("PUT", "/api/ai/summary-model", choice),
   setClaudeModel: (model: ClaudeModel) => request<AiStatus>("PUT", "/api/ai/claude-model", { model }),
   /** null volta tudo ao padrão. */
   setClaudeOptions: (options: ClaudeOptions | null) => request<AiStatus>("PUT", "/api/ai/claude-options", { options }),
@@ -217,14 +220,14 @@ export const api = {
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
   cachedTranscript: (jid: string, id: string) =>
     request<{ text: string | null; summary: AudioSummary | null }>("GET", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`),
-  summarizeAudio: (jid: string, id: string) =>
-    request<{ summary: AudioSummary }>("POST", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}/summary`, {}),
+  summarizeAudio: (jid: string, id: string, force = false) =>
+    request<{ summary: AudioSummary }>("POST", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}/summary`, force ? { force } : {}),
   transcribeRecording: (data: string, mimetype: string) => request<{ text: string }>("POST", "/api/transcribe-recording", { data, mimetype }),
   transcribe: (jid: string, id: string) =>
     request<{ text: string }>("POST", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`, {}),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),
   saveLabels: (labels: Label[]) => request<Label[]>("PUT", "/api/labels", labels),
-  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoClassify?: boolean; classifyProvider?: Classifier; prefs?: Partial<Prefs> }) =>
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: Classifier; prefs?: Partial<Prefs> }) =>
     request<AppState>("PUT", "/api/settings", s),
   logout: () => request<AppState>("POST", "/api/logout", {}),
   reset: (reconnect: boolean) => request<AppState>("POST", "/api/reset", { reconnect }),

@@ -63,6 +63,61 @@ type AiPanelProps = {
   setRemoveDsKey: (v: boolean) => void;
 };
 
+/** IA e modelo do resumo (conversa e áudio), separados do rascunho. */
+function SummaryModelPanel() {
+  const live = useAiStatus();
+  const [saving, setSaving] = useState(false);
+  if (!live) return null;
+  const s = live.summary;
+  const save = async (choice: Partial<AiStatus["summary"]>) => {
+    setSaving(true);
+    try {
+      publishAi(await api.setSummaryModel(choice));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const providers = [
+    ["same", "Igual ao rascunho"],
+    ["deepseek", "DeepSeek"],
+    ["claude", "Claude"],
+  ] as const;
+  return (
+    <div className="stack">
+      <div className="segmented" role="radiogroup" aria-label="IA do resumo">
+        {providers.map(([id, label]) => (
+          <button key={id} type="button" role="radio" aria-checked={s.provider === id} className="segmented__item" disabled={saving} onClick={() => s.provider !== id && void save({ provider: id })}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {s.provider === "deepseek" && (
+        <div className="segmented" role="radiogroup" aria-label="Modelo da DeepSeek para resumo">
+          {live.deepseek.models.map((m) => (
+            <button key={m.id} type="button" role="radio" aria-checked={s.deepseekModel === m.id} className="segmented__item" disabled={saving} onClick={() => void save({ deepseekModel: m.id })}>
+              {m.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {s.provider === "claude" && (
+        <div className="segmented" role="radiogroup" aria-label="Modelo do Claude para resumo">
+          {live.claude.models.map((m) => (
+            <button key={m.id} type="button" role="radio" aria-checked={s.claudeModel === m.id} className="segmented__item" disabled={saving} onClick={() => void save({ claudeModel: m.id })}>
+              {m.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="hint">
+        {s.provider === "claude"
+          ? "O Claude pelo plano leva cerca de 1 minuto por resumo: o resumo automático de áudio fica lento."
+          : "Recomendado: DeepSeek Flash, mais barato e rápido. Vale para o resumo da conversa e o dos áudios; salvo na hora."}
+      </p>
+    </div>
+  );
+}
+
 function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, setRemoveDsKey }: AiPanelProps) {
   const live = useAiStatus();
   const [local, setLocal] = useState<AiStatus | null>(null);
@@ -163,8 +218,8 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
             {dsModel && <span className="hint">{dsModel.hint}</span>}
           </div>
           <p className="hint">
-            A DeepSeek recebe o nome do contato e o texto das últimas {ai.deepseek.options.contextMessages} mensagens da conversa. Modelo e opções valem para rascunho,
-            resumo e classificação pela DeepSeek e são salvos na hora.
+            A DeepSeek recebe o nome do contato e o texto das últimas {ai.deepseek.options.contextMessages} mensagens da conversa. Modelo e opções valem para o rascunho e
+            a classificação pela DeepSeek (e para o resumo, se ele seguir o rascunho) e são salvos na hora.
           </p>
           <details className="ai-advanced" open={JSON.stringify(ai.deepseek.options) !== JSON.stringify(ai.deepseek.defaults) || undefined}>
             <summary>Thinking, contexto e limites</summary>
@@ -197,7 +252,7 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
               ? "Usa o Claude Code deste PC, logado na sua conta: sem chave de API, consome o limite do seu plano e leva cerca de 1 minuto por resposta. Herda suas instruções e MCPs; só a leitura do Dataverse fica liberada."
               : "Claude Code não encontrado neste PC. Instale e faça login rodando claude no terminal."}
           </p>
-          <p className="hint">Instruções só de atendimento: crie um CLAUDE.md em {ai.claude.folder}. Rascunho e resumo usam o Claude; a classificação continua no Jev ou na DeepSeek.</p>
+          <p className="hint">Instruções só de atendimento: crie um CLAUDE.md em {ai.claude.folder}. O rascunho usa o Claude (e o resumo, se seguir o rascunho); a classificação continua no Jev ou na DeepSeek.</p>
           <details className="ai-advanced" open={JSON.stringify(ai.claude.options) !== JSON.stringify(ai.claude.defaults) || undefined}>
             <summary>Esforço, contexto e limites</summary>
             <ClaudeOptionsPanel ai={ai} onChange={setLocal} />
@@ -321,6 +376,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const [groqKey, setGroqKey] = useState("");
   const [removeGroqKey, setRemoveGroqKey] = useState(false);
   const [autoTranscribe, setAutoTranscribe] = useState(state.groq.autoTranscribe);
+  const [autoSummarize, setAutoSummarize] = useState(state.groq.autoSummarize);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"discard" | "logout" | "reset" | null>(null);
@@ -351,6 +407,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
     setGroqKey("");
     setRemoveGroqKey(false);
     setAutoTranscribe(state.groq.autoTranscribe);
+    setAutoSummarize(state.groq.autoSummarize);
     setAuto(state.jev.autoClassify);
     setClassifier(state.classifier.provider);
     setError(null);
@@ -368,7 +425,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => setPrefs((p) => ({ ...p, [k]: v }));
   const quietOn = !!(prefs.quietStart && prefs.quietEnd);
   const dirty =
-    !sameLabels(labels, state.labels) || aiText !== savedAiText || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || dsKey.trim() !== "" || removeDsKey || groqKey.trim() !== "" || removeGroqKey || autoTranscribe !== state.groq.autoTranscribe || auto !== state.jev.autoClassify || classifier !== state.classifier.provider;
+    !sameLabels(labels, state.labels) || aiText !== savedAiText || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || dsKey.trim() !== "" || removeDsKey || groqKey.trim() !== "" || removeGroqKey || autoTranscribe !== state.groq.autoTranscribe || autoSummarize !== state.groq.autoSummarize || auto !== state.jev.autoClassify || classifier !== state.classifier.provider;
 
   const requestClose = () => {
     if (saving) return;
@@ -444,6 +501,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
       if (groqKey.trim()) settings.groqApiKey = groqKey.trim();
       else if (removeGroqKey) settings.groqApiKey = null;
       if (autoTranscribe !== state.groq.autoTranscribe) settings.autoTranscribe = autoTranscribe;
+      if (autoSummarize !== state.groq.autoSummarize) settings.autoSummarize = autoSummarize;
       if (auto !== state.jev.autoClassify) settings.autoClassify = auto;
       if (classifier !== state.classifier.provider) settings.classifyProvider = classifier;
       if (!samePrefs(prefs, state.prefs)) settings.prefs = prefs;
@@ -661,7 +719,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
           )}
           {tab === "ia" && (
             <section className="surface stack">
-              <h3 className="eyebrow">Rascunho e resumo</h3>
+              <h3 className="eyebrow">Rascunho de mensagem</h3>
               <AiPanel
                 instructions={aiText}
                 setInstructions={setAiText}
@@ -670,6 +728,12 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 removeDsKey={removeDsKey}
                 setRemoveDsKey={setRemoveDsKey}
               />
+            </section>
+          )}
+          {tab === "ia" && (
+            <section className="surface stack">
+              <h3 className="eyebrow">Resumo (conversa e áudio)</h3>
+              <SummaryModelPanel />
             </section>
           )}
           {tab === "ia" && (
@@ -704,6 +768,12 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 onChange={setAutoTranscribe}
                 label="Transcrever automaticamente os áudios recebidos"
                 hint="Cada conversa pode seguir esta opção ou escolher Sempre/Nunca em Organizar."
+              />
+              <Toggle
+                checked={autoSummarize}
+                onChange={setAutoSummarize}
+                label="Resumir automaticamente os áudios transcritos"
+                hint="Só áudios com 15 segundos ou mais; usa a IA do resumo."
               />
               <p className="hint">Só o arquivo do áudio vai para a Groq. O texto fica salvo neste PC e nenhum áudio é cobrado duas vezes.</p>
             </section>

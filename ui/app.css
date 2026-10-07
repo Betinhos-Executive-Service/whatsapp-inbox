@@ -633,7 +633,10 @@ ul, ol { margin: 0; padding: 0; }
 .audio-summary__points li + li { margin-top: 2px; }
 .audio-summary__action { margin: var(--bt-space-1) 0 0; }
 .audio-summary__action span { font-weight: var(--bt-font-weight-bold); }
-.transcript-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--bt-space-2); margin-top: var(--bt-space-1); }
+.audio-summary--loading { display: flex; align-items: center; gap: var(--bt-space-1); color: var(--bt-color-text-secondary); font-size: var(--bt-font-size-12); }
+.transcript__action--quiet { color: var(--bt-color-text-secondary); }
+.transcript__action--quiet:hover:not(:disabled) { color: var(--bt-color-action); }
+.transcript-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--bt-space-3); margin-top: var(--bt-space-1); }
 .transcript__action { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; font: inherit; font-size: var(--bt-font-size-12); color: var(--bt-color-action); cursor: pointer; }
 .transcript__action:disabled { color: var(--bt-color-text-secondary); cursor: progress; }
 .transcript__action:focus-visible { outline: 2px solid var(--bt-color-action); outline-offset: 2px; border-radius: var(--bt-radius-sm); }

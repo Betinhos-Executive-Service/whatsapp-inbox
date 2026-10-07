@@ -873,6 +873,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       setDrafting(false);
     }
   };
+  // "Responder" no resumo de um áudio pede o rascunho desta conversa.
+  const suggestRef = useRef(suggest);
+  suggestRef.current = suggest;
+  useEffect(() => {
+    const onSuggest = (e: Event) => {
+      if ((e as CustomEvent<{ chatJid: string }>).detail.chatJid === chat.jid) void suggestRef.current();
+    };
+    window.addEventListener("inbox:suggest", onSuggest);
+    return () => window.removeEventListener("inbox:suggest", onSuggest);
+  }, [chat.jid]);
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const keepOffset = useRef<number | null>(null);
@@ -1739,6 +1749,8 @@ function App() {
       upsert(chat);
       window.dispatchEvent(new CustomEvent("inbox:message", { detail: message }));
     });
+    es.addEventListener("audio-summary", (e) => window.dispatchEvent(new CustomEvent("inbox:audio-summary", { detail: JSON.parse((e as MessageEvent).data) })));
+    es.addEventListener("audio-status", (e) => window.dispatchEvent(new CustomEvent("inbox:audio-status", { detail: JSON.parse((e as MessageEvent).data) })));
     es.addEventListener("transcript", (e) => window.dispatchEvent(new CustomEvent("inbox:transcript", { detail: JSON.parse((e as MessageEvent).data) })));
     es.addEventListener("presence", (e) => window.dispatchEvent(new CustomEvent("inbox:presence", { detail: JSON.parse((e as MessageEvent).data) })));
     es.addEventListener("update", (e) => {

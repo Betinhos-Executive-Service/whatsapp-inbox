@@ -758,6 +758,18 @@ export class Store {
     });
   }
 
+  /** Resumo do áudio como prévia, se ele ainda for a última mensagem da conversa. */
+  setAudioPreview(chatJid: string, id: string, text: string) {
+    this.refreshPreview(chatJid, id, text);
+  }
+
+  /** Sobe a prioridade da IA para "alta"; false quando a conversa ainda não foi classificada. */
+  raisePriority(jid: string, reason: string): boolean {
+    const r = this.q("update chats set ai_priority = 'alta', ai_reason = ? where jid = ? and ai_label is not null and coalesce(ai_priority, '') <> 'alta'").run(reason, jid);
+    if (r.changes > 0) return true;
+    return !!this.q("select 1 from chats where jid = ? and ai_label is not null").get(jid);
+  }
+
   /** A prévia da conversa acompanha a mudança quando ela é a última mensagem. */
   private refreshPreview(chatJid: string, id: string, text: string) {
     this
