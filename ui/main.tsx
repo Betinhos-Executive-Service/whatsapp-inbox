@@ -56,7 +56,7 @@ import { ProfilePanel, type ProfileTarget } from "./profile.tsx";
 import { applyTheme, storedTheme } from "./theme.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
 import { ResizeHandle } from "./resize.tsx";
-import { AttachmentTray, clock, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, type Attachment } from "./media.tsx";
+import { AttachmentTray, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
@@ -1190,6 +1190,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     },
     [chat.isGroup, notify],
   );
+  const copyFile = useCallback(
+    (m: Message) =>
+      void copyMedia(m).then(
+        (done) => notify("success", done),
+        (e: Error) => notify("error", e.message),
+      ),
+    [notify],
+  );
   const askDelete = useCallback((m: Message) => setDeleting(m), []);
   const replaceMessage = (updated: Message) => setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
   const react = useCallback(
@@ -1456,7 +1464,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
               ? { jid: menuAt.message.sender, name: splitAuthor(menuAt.message, true).author ?? "participante" }
               : null
           }
-          actions={{ onReply: reply, onReact: react, onCopy: copy, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor }}
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor }}
           onClose={closeMenu}
         />
       )}

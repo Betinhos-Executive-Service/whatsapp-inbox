@@ -1,11 +1,13 @@
 // Processo principal do app desktop: sobe o servidor local dentro do próprio Electron,
 // abre a janela nele e mantém tudo rodando na bandeja quando a janela é fechada.
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell, Tray } from "electron";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { startApp, type RunningApp } from "../server/app.ts";
 import type { Chat, Message, Reminder } from "../server/db.ts";
 import { inQuietHours, type Prefs } from "../server/prefs.ts";
 import { roundAvatar } from "./avatar.ts";
+import { mediaToTemp } from "./files.ts";
 import { isUrgent, notificationBody, notificationTitle, UnreadCounter } from "./notifications.ts";
 import { setupUpdates } from "./updates.ts";
 
@@ -217,6 +219,24 @@ function createWindow(url: string) {
   void window.loadURL(url);
 }
 
+/**
+ * Lista de arquivos (CF_HDROP) na área de transferência do Windows, a mesma do Ctrl+C no Explorer.
+ * O Electron só grava texto e imagem; o caminho vai por variável de ambiente, nunca no comando.
+ */
+function copyFileToClipboard(path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Set-Clipboard -LiteralPath $env:INBOX_CLIPBOARD_FILE"], {
+      env: { ...process.env, INBOX_CLIPBOARD_FILE: path },
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    child.on("error", reject);
+    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`Não foi possível copiar o arquivo. ${stderr.trim()}`.trim()))));
+  });
+}
+
 function buildTrayMenu() {
   tray?.setContextMenu(
     Menu.buildFromTemplate([
@@ -281,6 +301,21 @@ if (!app.requestSingleInstanceLock()) {
       const png = typeof image === "string" && image.startsWith("data:image/png;base64,") ? image : null;
       window?.setOverlayIcon(n > 0 && png ? nativeImage.createFromDataURL(png) : null, n > 0 ? `${n} não lidas` : "");
       tray?.setToolTip(n > 0 ? `${PRODUCT} — ${n} não lidas` : PRODUCT);
+    });
+    // Mídia como arquivo: copiar para colar em outro app, ou abrir no app padrão sem ir para Downloads.
+    const mediaFile = (event: Electron.IpcMainInvokeEvent, chatJid: unknown, id: unknown) => {
+      if (!origin || new URL(event.senderFrame?.url ?? "about:blank").origin !== origin) throw new Error("Origem não autorizada.");
+      if (typeof chatJid !== "string" || typeof id !== "string" || !chatJid || !id) throw new Error("Mensagem inválida.");
+      return mediaToTemp(origin, chatJid, id, join(app.getPath("temp"), PRODUCT));
+    };
+    ipcMain.handle("media:copy-file", async (event, chatJid: unknown, id: unknown) => {
+      const path = await mediaFile(event, chatJid, id);
+      if (process.platform !== "win32") throw new Error("Copiar arquivo só está disponível no Windows.");
+      await copyFileToClipboard(path);
+    });
+    ipcMain.handle("media:open", async (event, chatJid: unknown, id: unknown) => {
+      const failure = await shell.openPath(await mediaFile(event, chatJid, id));
+      if (failure) throw new Error(`Nenhum app abriu este arquivo. ${failure}`);
     });
     createWindow(`http://127.0.0.1:${server.port}`);
     updates = setupUpdates({

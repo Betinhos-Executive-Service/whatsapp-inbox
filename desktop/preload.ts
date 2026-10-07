@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("desktop", {
   installVersion: (version: string) => ipcRenderer.invoke("update:install-version", version),
   appInfo: () => ipcRenderer.invoke("app:info"),
   setUnread: (total: number, image: string | null) => ipcRenderer.send("app:unread", total, image),
+  copyFile: (chatJid: string, id: string) => ipcRenderer.invoke("media:copy-file", chatJid, id),
+  openFile: (chatJid: string, id: string) => ipcRenderer.invoke("media:open", chatJid, id),
   onOpenChat: (callback: (jid: string) => void) => {
     const listener = (_event: unknown, jid: string) => callback(jid);
     ipcRenderer.on("app:open-chat", listener);

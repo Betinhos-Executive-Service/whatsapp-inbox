@@ -7,6 +7,22 @@ import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
 import { STATUSES, type Store } from "./db.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
 
+/** Documento sem tipo (octet-stream): deduz pela extensão os formatos que a visualização abre. */
+const TYPE_BY_EXT: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".txt": "text/plain; charset=utf-8",
+  ".csv": "text/csv; charset=utf-8",
+};
+export function servedType(mimetype: string, fileName: string | null): string {
+  if (mimetype && mimetype !== "application/octet-stream") return mimetype;
+  return TYPE_BY_EXT[extname(fileName ?? "").toLowerCase()] ?? (mimetype || "application/octet-stream");
+}
+
 export type Api = {
   store: Store;
   distDir: string;
@@ -416,14 +432,16 @@ export function createHandler(api: Api) {
       });
       return json(res, 200, { text });
     }
-    const mediaMatch = path.match(/^\/api\/media\/([^/]+)\/([^/]+)$/);
+    // O último trecho opcional é só o nome do arquivo (título no visualizador de PDF); não muda o conteúdo.
+    const mediaMatch = path.match(/^\/api\/media\/([^/]+)\/([^/]+)(?:\/[^/]+)?$/);
     if (mediaMatch && method === "GET") {
       const file = await api.media(decodeURIComponent(mediaMatch[1]), decodeURIComponent(mediaMatch[2])).catch((error: Error) => {
         if (error instanceof HttpError) throw error;
         throw new HttpError(502, `Não foi possível baixar a mídia. Ela pode ter expirado no WhatsApp. (${error.message})`);
       });
       // A mídia de uma mensagem nunca muda: o navegador pode guardar sem revalidar.
-      const headers: Record<string, string> = { "content-type": file.mimetype, "cache-control": "private, max-age=31536000, immutable", "accept-ranges": "bytes" };
+      // nosniff: o arquivo abre na visualização só pelo tipo declarado (um "PDF" com HTML dentro não vira página).
+      const headers: Record<string, string> = { "content-type": servedType(file.mimetype, file.fileName), "cache-control": "private, max-age=31536000, immutable", "accept-ranges": "bytes", "x-content-type-options": "nosniff" };
       if (url.searchParams.has("download")) {
         headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName ?? "arquivo")}`;
       }

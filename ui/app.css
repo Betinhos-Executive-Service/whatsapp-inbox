@@ -622,12 +622,45 @@ ul, ol { margin: 0; padding: 0; }
 .media-thumb img.media-sticker { max-width: 140px; max-height: 140px; object-fit: contain; }
 .media-thumb:focus-visible { outline: 2px solid var(--bt-color-action); outline-offset: 2px; }
 .media-video { display: block; max-width: min(360px, 100%); max-height: 320px; border-radius: var(--bt-radius-md); background-color: var(--bt-color-ink-950); }
-.media-doc { display: flex; align-items: center; gap: var(--bt-space-2-5); min-width: 220px; max-width: 100%; padding: var(--bt-space-2); border-radius: var(--bt-radius-md); background-color: var(--bt-color-surface-neutral); border: var(--bt-border-width-default) solid var(--bt-color-border); color: var(--bt-color-text-primary); text-decoration: none; }
-.media-doc > svg { color: var(--bt-color-action); flex: 0 0 auto; }
-.media-doc:focus-visible { outline: 2px solid var(--bt-color-action); outline-offset: 2px; }
+.media-doc { display: flex; flex-direction: column; width: min(300px, 72vw); border-radius: var(--bt-radius-md); background-color: var(--bt-color-surface-neutral); border: var(--bt-border-width-default) solid var(--bt-color-border); overflow: hidden; color: var(--bt-color-text-primary); }
+.media-doc__card { cursor: pointer; }
+.media-doc__thumb { height: 132px; overflow: hidden; background-color: var(--bt-color-surface-soft); border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); }
+/* Miniatura do PDF: o visualizador fica mais largo que a caixa para a barra de rolagem sair do quadro. */
+.media-doc__thumb-pdf { display: block; width: calc(100% + 28px); height: 480px; margin: -4px 0 0 -4px; border: 0; pointer-events: none; }
+.media-doc__thumb-image { display: block; width: 100%; height: 100%; object-fit: cover; }
+.media-doc__thumb-pdf, .media-doc__thumb-image { transition: opacity var(--bt-duration-normal) var(--bt-ease-out); }
+.media-doc__thumb--loading > * { opacity: 0; }
+.media-doc__row { display: flex; align-items: center; gap: var(--bt-space-2-5); padding: var(--bt-space-2); transition: background-color var(--bt-duration-fast) ease; }
 .media-doc__icon { display: grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; border-radius: var(--bt-radius-sm); background-color: var(--bt-color-action-soft); color: var(--bt-color-action); }
 .media-doc__info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .media-doc__name { font-size: var(--bt-font-size-14); font-weight: var(--bt-font-weight-bold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-doc__actions { display: grid; grid-template-columns: 1fr 1fr; border-top: var(--bt-border-width-default) solid var(--bt-color-border); }
+.media-doc__action {
+  display: flex; align-items: center; justify-content: center; gap: var(--bt-space-1-5); min-height: 36px; padding: 0 var(--bt-space-2);
+  border: 0; background: transparent; color: var(--bt-color-action); font: inherit; font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-bold);
+  text-decoration: none; cursor: pointer; transition: background-color var(--bt-duration-fast) ease, transform var(--bt-duration-fast) var(--bt-ease-out);
+}
+.media-doc__action + .media-doc__action { border-left: var(--bt-border-width-default) solid var(--bt-color-border); }
+.media-doc__action:active { transform: scale(.97); }
+.media-doc__action:focus-visible { outline: 0; box-shadow: inset 0 0 0 2px var(--bt-focus-border); }
+@media (hover: hover) and (pointer: fine) {
+  .media-doc__card:hover .media-doc__row, .media-doc__action:hover { background-color: var(--bt-color-surface-soft); }
+}
+
+/* Visualização de arquivo, sem baixar */
+.viewer__panel { display: flex; flex-direction: column; width: min(100%, 980px); height: calc(100dvh - 2 * var(--bt-space-4)); padding: 0; overflow: hidden; }
+.viewer__header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--bt-space-2-5); padding: var(--bt-space-3) var(--bt-space-4); background-color: var(--bt-color-surface); border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); }
+.viewer__title { display: flex; flex-direction: column; flex: 1 1 160px; min-width: 0; }
+.viewer__title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--bt-font-size-14); }
+.viewer__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--bt-space-2); margin-left: auto; }
+.viewer__body { flex: 1; min-height: 0; display: grid; place-items: center; overflow: auto; background-color: var(--bt-color-canvas); }
+.viewer__frame { align-self: stretch; justify-self: stretch; width: 100%; height: 100%; border: 0; }
+.viewer__image { max-width: 100%; max-height: 100%; object-fit: contain; }
+.viewer__text { align-self: stretch; justify-self: stretch; margin: 0; padding: var(--bt-space-4); background-color: var(--bt-color-surface); font-family: var(--bt-font-family-mono); font-size: var(--bt-font-size-13); white-space: pre-wrap; overflow-wrap: anywhere; }
+.viewer__empty { display: flex; flex-direction: column; align-items: center; gap: var(--bt-space-2); max-width: 380px; padding: var(--bt-space-6); text-align: center; color: var(--bt-color-text-secondary); }
+.viewer__empty strong { color: var(--bt-color-text-primary); }
+.viewer__error { display: flex; align-items: center; gap: var(--bt-space-1-5); margin: 0; padding: var(--bt-space-2) var(--bt-space-4); font-size: var(--bt-font-size-12); font-weight: var(--bt-font-weight-semibold); color: var(--bt-color-danger); background-color: var(--bt-color-danger-soft); }
+.viewer__error--dark { border-radius: var(--bt-radius-md); cursor: default; }
 .media-error { display: flex; align-items: center; gap: var(--bt-space-1); font-size: var(--bt-font-size-12); color: var(--bt-color-warning); }
 .bubble .media-thumb + .bubble__text, .bubble .media-video + .bubble__text, .bubble .audio + .bubble__text, .bubble .media-doc + .bubble__text { margin-top: var(--bt-space-1-5); }
 .lightbox { position: fixed; inset: 0; z-index: var(--bt-z-index-drawer); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--bt-space-3); padding: var(--bt-space-4); background-color: rgba(0, 26, 61, .84); animation: fade var(--bt-duration-normal) var(--bt-ease-out); cursor: zoom-out; }
