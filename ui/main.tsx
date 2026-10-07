@@ -65,6 +65,7 @@ import { AckIcon, canEdit, EditBar, ReactButton, ReactionList } from "./message-
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
 import { toggleWa } from "./wa-text.ts";
 import { desktop } from "./desktop.ts";
+import { badgeImage } from "./badge.ts";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
@@ -1652,6 +1653,12 @@ function App() {
       offSettings();
     };
   }, []);
+
+  // Total de não lidas no ícone da barra de tarefas e na bandeja (só no app desktop).
+  const unreadTotal = useMemo(() => [...chats.values()].reduce((sum, c) => sum + (c.unread > 0 ? c.unread : 0), 0), [chats]);
+  useEffect(() => {
+    desktop()?.setUnread(unreadTotal, unreadTotal > 0 ? badgeImage(unreadTotal) : null);
+  }, [unreadTotal]);
 
   return (
     <div className="app" data-view={current ? "chat" : "list"}>

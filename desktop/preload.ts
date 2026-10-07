@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("desktop", {
   listVersions: () => ipcRenderer.invoke("update:list"),
   installVersion: (version: string) => ipcRenderer.invoke("update:install-version", version),
   appInfo: () => ipcRenderer.invoke("app:info"),
+  setUnread: (total: number, image: string | null) => ipcRenderer.send("app:unread", total, image),
   onOpenChat: (callback: (jid: string) => void) => {
     const listener = (_event: unknown, jid: string) => callback(jid);
     ipcRenderer.on("app:open-chat", listener);

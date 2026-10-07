@@ -19,6 +19,7 @@ export type DesktopBridge = {
   appInfo: () => Promise<{ version: string; packaged: boolean } | null>;
   onUpdate: (cb: (s: UpdateState) => void) => () => void;
   onRemind: (cb: () => void) => () => void;
+  setUnread: (total: number, image: string | null) => void;
   onOpenChat: (cb: (jid: string) => void) => () => void;
   onOpenSettings: (cb: () => void) => () => void;
 };
