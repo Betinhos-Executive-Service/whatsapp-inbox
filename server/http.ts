@@ -22,14 +22,10 @@ export type Api = {
   media: (jid: string, id: string) => Promise<{ body: Buffer; mimetype: string; fileName: string | null }>;
   ai: {
     status: () => unknown;
-    download: (id: "leve" | "melhor") => void;
-    cancel: () => Promise<void>;
-    remove: (id: "leve" | "melhor") => Promise<void>;
     draft: (jid: string) => Promise<string>;
     summarize: (jid: string) => Promise<unknown>;
     setInstructions: (text: string | null) => void;
-    select: (id: "leve" | "melhor") => Promise<void>;
-    setProvider: (provider: "deepseek" | "local" | "claude") => void;
+    setProvider: (provider: "deepseek" | "claude") => void;
     setDeepseekModel: (model: "deepseek-v4-pro" | "deepseek-flash") => void;
     setClaudeModel: (model: "sonnet" | "opus" | "haiku") => void;
     /** null volta tudo ao padrão. */
@@ -240,27 +236,8 @@ export function createHandler(api: Api) {
       api.ai.setUsdBrl(rate);
       return json(res, 200, { ok: true });
     }
-    const modelId = z.object({ id: z.enum(["leve", "melhor"]) });
-    if (path === "/api/ai/download" && method === "POST") {
-      api.ai.download(parse(modelId, await readJson(req)).id);
-      return json(res, 202, api.ai.status());
-    }
-    if (path === "/api/ai/download/cancel" && method === "POST") {
-      await readJson(req);
-      await api.ai.cancel();
-      return json(res, 200, api.ai.status());
-    }
-    if (path === "/api/ai/remove" && method === "POST") {
-      await api.ai.remove(parse(modelId, await readJson(req)).id);
-      return json(res, 200, api.ai.status());
-    }
-    if (path === "/api/ai/model" && method === "PUT") {
-      const { id } = parse(z.object({ id: z.enum(["leve", "melhor"]) }), await readJson(req));
-      await api.ai.select(id);
-      return json(res, 200, api.ai.status());
-    }
     if (path === "/api/ai/provider" && method === "PUT") {
-      const { provider } = parse(z.object({ provider: z.enum(["deepseek", "local", "claude"]) }), await readJson(req));
+      const { provider } = parse(z.object({ provider: z.enum(["deepseek", "claude"]) }), await readJson(req));
       api.ai.setProvider(provider);
       return json(res, 200, api.ai.status());
     }

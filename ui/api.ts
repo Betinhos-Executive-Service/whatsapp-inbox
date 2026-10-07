@@ -51,19 +51,10 @@ export type AiUsageSummary = {
   topChats: { jid: string; name: string; calls: number; costUsd: number }[];
 };
 
-export type AiStatus = (
-  | { state: "ausente" }
-  | { state: "baixando"; id: "leve" | "melhor"; percent: number; downloaded: number; total: number; speed: number; eta: number | null }
-  | { state: "pronto"; loaded: boolean }
-  | { state: "erro"; message: string }
-) & {
-  modelId: "leve" | "melhor";
-  model: string;
-  size: number;
-  models: { id: "leve" | "melhor"; name: string; size: number; installed: boolean; partial: boolean }[];
+export type AiStatus = {
   instructions: string;
   customInstructions: boolean;
-  provider: "deepseek" | "local" | "claude";
+  provider: "deepseek" | "claude";
   deepseek: { configured: boolean; fromEnv: boolean; model: DeepSeekModel; models: { id: DeepSeekModel; name: string; hint: string }[]; options: DeepSeekOptions; defaults: DeepSeekOptions };
   claude: { configured: boolean; model: ClaudeModel; models: { id: ClaudeModel; name: string; hint: string }[]; folder: string };
 };
@@ -139,10 +130,6 @@ export const api = {
   doneReminder: (id: number) => request<Chat>("POST", `/api/reminders/${id}/done`, {}),
   deleteReminder: (id: number) => request<Chat>("DELETE", `/api/reminders/${id}`),
   ai: () => request<AiStatus>("GET", "/api/ai"),
-  downloadAi: (id: "leve" | "melhor") => request<AiStatus>("POST", "/api/ai/download", { id }),
-  cancelAiDownload: () => request<AiStatus>("POST", "/api/ai/download/cancel", {}),
-  selectAi: (id: "leve" | "melhor") => request<AiStatus>("PUT", "/api/ai/model", { id }),
-  removeAi: (id: "leve" | "melhor") => request<AiStatus>("POST", "/api/ai/remove", { id }),
   setAiProvider: (provider: AiStatus["provider"]) => request<AiStatus>("PUT", "/api/ai/provider", { provider }),
   setDeepseekModel: (model: DeepSeekModel) => request<AiStatus>("PUT", "/api/ai/deepseek-model", { model }),
   setClaudeModel: (model: ClaudeModel) => request<AiStatus>("PUT", "/api/ai/claude-model", { model }),

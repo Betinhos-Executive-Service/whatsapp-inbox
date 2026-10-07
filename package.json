@@ -29,7 +29,6 @@
     "@typesafe-ai/sdk": "0.6.0",
     "@whiskeysockets/baileys": "7.0.0-rc14",
     "electron-updater": "6.8.9",
-    "node-llama-cpp": "3.22.1",
     "pino": "9.14.0",
     "qrcode": "1.5.4",
     "zod": "4.6.5"
@@ -64,12 +63,6 @@
       "dist/**/*",
       "dist-electron/**/*",
       "package.json",
-      "!**/node_modules/@node-llama-cpp/*cuda*/**",
-      "!**/node_modules/@node-llama-cpp/*arm64*/**",
-      "!**/node_modules/@node-llama-cpp/*linux*/**",
-      "!**/node_modules/@node-llama-cpp/*mac*/**",
-      "!**/node_modules/node-llama-cpp/llama/**/*.{cpp,c,h,hpp,cmake,txt,md}",
-      "!**/node_modules/node-llama-cpp/llama/gitRelease.bundle",
       "!**/node_modules/**/*.{map,ts,cts,mts,lib}"
     ],
     "win": {
@@ -100,10 +93,6 @@
         "repo": "whatsapp-inbox",
         "releaseType": "release"
       }
-    ],
-    "asarUnpack": [
-      "**/node_modules/node-llama-cpp/**",
-      "**/node_modules/@node-llama-cpp/**"
     ]
   },
   "repository": {
