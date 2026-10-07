@@ -24,11 +24,11 @@ export function useAiStatus(): AiStatus | null {
   return status;
 }
 
-/** A IA pode gerar agora? DeepSeek: basta a chave. Local: o modelo escolhido está baixado. */
+/** A IA pode gerar agora? DeepSeek: basta a chave. Claude: o Claude Code está instalado. Local: o modelo escolhido está baixado. */
 export const isAiReady = (ai: AiStatus | null) =>
-  !!ai && (ai.provider === "deepseek" ? ai.deepseek.configured : ai.state === "pronto");
+  !!ai && (ai.provider === "deepseek" ? ai.deepseek.configured : ai.provider === "claude" ? ai.claude.configured : ai.state === "pronto");
 
-export const aiName = (ai: AiStatus | null) => (ai?.provider === "deepseek" ? "IA" : "IA local");
+export const aiName = (ai: AiStatus | null) => (ai?.provider === "local" ? "IA local" : ai?.provider === "claude" ? "Claude" : "IA");
 
 // Cotação US$→R$ usada para mostrar o custo da IA em reais. Carregada uma vez; o painel de
 // gastos avisa (evento) quando a pessoa troca a cotação.

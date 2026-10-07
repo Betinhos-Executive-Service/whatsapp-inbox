@@ -186,7 +186,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       reset: async () => undefined,
       backup: async () => "",
       media: async () => ({ body: Buffer.from(""), mimetype: "image/jpeg", fileName: null }),
-      ai: { status: () => ({}), download: () => undefined, cancel: async () => undefined, remove: async () => undefined, draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, select: async () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
+      ai: { status: () => ({}), download: () => undefined, cancel: async () => undefined, remove: async () => undefined, draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, select: async () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
       subscribe: (res) => res.end(),
       onChatChanged: () => undefined,
     }),

@@ -28,8 +28,9 @@ export type Api = {
     summarize: (jid: string) => Promise<unknown>;
     setInstructions: (text: string | null) => void;
     select: (id: "leve" | "melhor") => Promise<void>;
-    setProvider: (provider: "deepseek" | "local") => void;
+    setProvider: (provider: "deepseek" | "local" | "claude") => void;
     setDeepseekModel: (model: "deepseek-v4-pro" | "deepseek-flash") => void;
+    setClaudeModel: (model: "sonnet" | "opus" | "haiku") => void;
     /** Resumo de gastos; days = null: desde sempre. */
     usage: (days: number | null) => unknown;
     setUsdBrl: (rate: number | null) => void;
@@ -256,13 +257,18 @@ export function createHandler(api: Api) {
       return json(res, 200, api.ai.status());
     }
     if (path === "/api/ai/provider" && method === "PUT") {
-      const { provider } = parse(z.object({ provider: z.enum(["deepseek", "local"]) }), await readJson(req));
+      const { provider } = parse(z.object({ provider: z.enum(["deepseek", "local", "claude"]) }), await readJson(req));
       api.ai.setProvider(provider);
       return json(res, 200, api.ai.status());
     }
     if (path === "/api/ai/deepseek-model" && method === "PUT") {
       const { model } = parse(z.object({ model: z.enum(["deepseek-v4-pro", "deepseek-flash"]) }), await readJson(req));
       api.ai.setDeepseekModel(model);
+      return json(res, 200, api.ai.status());
+    }
+    if (path === "/api/ai/claude-model" && method === "PUT") {
+      const { model } = parse(z.object({ model: z.enum(["sonnet", "opus", "haiku"]) }), await readJson(req));
+      api.ai.setClaudeModel(model);
       return json(res, 200, api.ai.status());
     }
     if (path === "/api/ai/instructions" && method === "PUT") {

@@ -85,13 +85,24 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
       setSwitching(false);
     }
   };
+  const chooseClaudeModel = async (model: AiStatus["claude"]["model"]) => {
+    if (model === ai.claude.model || switching) return;
+    setSwitching(true);
+    try {
+      setLocal(await api.setClaudeModel(model));
+    } finally {
+      setSwitching(false);
+    }
+  };
   const dsModel = ai.deepseek.models.find((m) => m.id === ai.deepseek.model);
+  const clModel = ai.claude.models.find((m) => m.id === ai.claude.model);
   return (
     <div className="stack">
       <div className="segmented" role="radiogroup" aria-label="Onde a IA roda">
         {(
           [
             ["deepseek", "DeepSeek (nuvem)"],
+            ["claude", "Claude (plano)"],
             ["local", "Local (offline)"],
           ] as const
         ).map(([id, label]) => (
@@ -146,6 +157,34 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
             {dsModel && <span className="hint">{dsModel.hint} Vale para rascunho, resumo e classificação pela DeepSeek.</span>}
           </div>
           <p className="hint">Rascunho e resumo em segundos, em modo rápido. A DeepSeek recebe o nome do contato e o texto das últimas 120 mensagens da conversa.</p>
+        </>
+      ) : ai.provider === "claude" ? (
+        <>
+          <div className="field">
+            <span className="field__label">Modelo</span>
+            <div className="segmented" role="radiogroup" aria-label="Modelo do Claude">
+              {ai.claude.models.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={ai.claude.model === m.id}
+                  className="segmented__item"
+                  disabled={switching}
+                  onClick={() => void chooseClaudeModel(m.id)}
+                >
+                  {m.name}
+                </button>
+              ))}
+            </div>
+            {clModel && <span className="hint">{clModel.hint}</span>}
+          </div>
+          <p className="hint">
+            {ai.claude.configured
+              ? "Usa o Claude Code deste PC, logado na sua conta: sem chave de API, consome o limite do seu plano e leva cerca de 1 minuto por resposta. Herda suas instruções e MCPs; só a leitura do Dataverse fica liberada."
+              : "Claude Code não encontrado neste PC. Instale e faça login rodando claude no terminal."}
+          </p>
+          <p className="hint">Instruções só de atendimento: crie um CLAUDE.md em {ai.claude.folder}. Rascunho e resumo usam o Claude; a classificação continua no Jev ou na DeepSeek.</p>
         </>
       ) : (
         <AiModels ai={ai} onChange={setLocal} />

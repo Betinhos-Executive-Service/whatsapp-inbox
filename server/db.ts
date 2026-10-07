@@ -169,7 +169,7 @@ create table if not exists label_examples (
 create table if not exists ai_usage (
   id integer primary key,
   at integer not null,
-  provider text not null check (provider in ('jev','deepseek','local')),
+  provider text not null check (provider in ('jev','deepseek','local','claude')),
   kind text not null check (kind in ('classificar','rascunho','resumo')),
   chat_jid text,
   model text not null,
@@ -285,8 +285,23 @@ export class Store {
       const cols = this.db.prepare(`pragma table_info(${table})`).all() as Row[];
       if (!cols.some((c) => c.name === column)) this.db.exec(`alter table ${table} add column ${column} ${ddl}`);
     }
+    this.migrateUsageProviders();
     const count = this.q("select count(*) n from labels").get() as Row;
     if (Number(count.n) === 0) this.saveLabels(DEFAULT_LABELS);
+  }
+
+  /** Bancos antigos têm o check de provider sem 'claude': recria a tabela mantendo os dados. */
+  private migrateUsageProviders() {
+    const row = this.db.prepare("select sql from sqlite_master where type = 'table' and name = 'ai_usage'").get() as Row | undefined;
+    if (!row || String(row.sql).includes("'claude'")) return;
+    this.db.exec(`begin;
+      alter table ai_usage rename to ai_usage_old;
+      ${SCHEMA.slice(SCHEMA.indexOf("create table if not exists ai_usage"), SCHEMA.indexOf("create index if not exists ai_usage_at"))}
+      insert into ai_usage select * from ai_usage_old;
+      drop table ai_usage_old;
+      create index if not exists ai_usage_at on ai_usage(at desc);
+      create index if not exists ai_usage_chat on ai_usage(chat_jid);
+      commit;`);
   }
 
   /** Statements compilados uma vez e reaproveitados: o histórico grava milhares de mensagens. */
