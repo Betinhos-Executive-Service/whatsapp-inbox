@@ -1,6 +1,6 @@
 import { Download, FileText, Mic, Pause, Play, Trash2, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { mediaUrl, type Message, type OutgoingMedia } from "./api.ts";
+import { api, mediaUrl, type Message, type OutgoingMedia } from "./api.ts";
 import { webmToOgg } from "./ogg.ts";
 
 /** "1:05" a partir de segundos. */
@@ -121,6 +121,39 @@ function Lightbox({ src, download, onClose }: { src: string; download: string; o
   );
 }
 
+/** Transcrição sob demanda (Groq). O texto fica em cache no app; aqui só na sessão. */
+const transcripts = new Map<string, string>();
+
+function Transcript({ m }: { m: Message }) {
+  const cacheKey = `${m.chatJid}|${m.id}`;
+  const [text, setText] = useState<string | null>(() => transcripts.get(cacheKey) ?? null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { text } = await api.transcribe(m.chatJid, m.id);
+      const value = text || "(sem fala reconhecida)";
+      transcripts.set(cacheKey, value);
+      setText(value);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (text !== null) return <p className="transcript">{text}</p>;
+  return (
+    <div className="transcript-bar">
+      <button type="button" className="transcript__action" onClick={() => void run()} disabled={busy} aria-busy={busy || undefined}>
+        {busy ? "Transcrevendo…" : "Transcrever"}
+      </button>
+      {error && <span className="transcript__error" role="alert">{error}</span>}
+    </div>
+  );
+}
+
 export function MediaView({ m, caption }: { m: Message; caption: string }) {
   const [failed, setFailed] = useState(false);
   const [zoom, setZoom] = useState(false);
@@ -154,7 +187,13 @@ export function MediaView({ m, caption }: { m: Message; caption: string }) {
     );
   }
   if (media.type === "video") return <video className="media-video" src={src} controls preload="metadata" onError={() => setFailed(true)} />;
-  if (media.type === "audio") return <AudioPlayer src={src} seconds={media.seconds} voice={media.ptt} onError={() => setFailed(true)} />;
+  if (media.type === "audio")
+    return (
+      <>
+        <AudioPlayer src={src} seconds={media.seconds} voice={media.ptt} onError={() => setFailed(true)} />
+        <Transcript m={m} />
+      </>
+    );
   const ext = (media.fileName?.split(".").pop() ?? media.mimetype.split("/").pop() ?? "").slice(0, 4).toUpperCase();
   return (
     <a className="media-doc" href={mediaUrl(m, true)} download>

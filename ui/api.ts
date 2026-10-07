@@ -149,6 +149,8 @@ export type AppState = {
   jev: { configured: boolean; fromEnv: boolean; autoClassify: boolean };
   /** Quem classifica de fato (já com o fallback aplicado) e se tem chave. */
   classifier: { provider: Classifier; configured: boolean; deepseekConfigured: boolean };
+  /** Transcrição de áudio (Groq Whisper). */
+  groq: { configured: boolean; fromEnv: boolean };
   labels: Label[];
 };
 
@@ -208,9 +210,11 @@ export const api = {
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
   quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
+  transcribe: (jid: string, id: string) =>
+    request<{ text: string }>("POST", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`, {}),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),
   saveLabels: (labels: Label[]) => request<Label[]>("PUT", "/api/labels", labels),
-  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; classifyProvider?: Classifier; prefs?: Partial<Prefs> }) =>
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoClassify?: boolean; classifyProvider?: Classifier; prefs?: Partial<Prefs> }) =>
     request<AppState>("PUT", "/api/settings", s),
   logout: () => request<AppState>("POST", "/api/logout", {}),
   reset: (reconnect: boolean) => request<AppState>("POST", "/api/reset", { reconnect }),

@@ -318,6 +318,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const [classifier, setClassifier] = useState<Classifier>(state.classifier.provider);
   const [dsKey, setDsKey] = useState("");
   const [removeDsKey, setRemoveDsKey] = useState(false);
+  const [groqKey, setGroqKey] = useState("");
+  const [removeGroqKey, setRemoveGroqKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"discard" | "logout" | "reset" | null>(null);
@@ -362,7 +364,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const setPref = <K extends keyof Prefs>(k: K, v: Prefs[K]) => setPrefs((p) => ({ ...p, [k]: v }));
   const quietOn = !!(prefs.quietStart && prefs.quietEnd);
   const dirty =
-    !sameLabels(labels, state.labels) || aiText !== savedAiText || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || dsKey.trim() !== "" || removeDsKey || auto !== state.jev.autoClassify || classifier !== state.classifier.provider;
+    !sameLabels(labels, state.labels) || aiText !== savedAiText || !sameQuick(quick, savedQuick) || !samePrefs(prefs, state.prefs) || key.trim() !== "" || removeKey || dsKey.trim() !== "" || removeDsKey || groqKey.trim() !== "" || removeGroqKey || auto !== state.jev.autoClassify || classifier !== state.classifier.provider;
 
   const requestClose = () => {
     if (saving) return;
@@ -435,6 +437,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
       else if (removeKey) settings.jevApiKey = null;
       if (dsKey.trim()) settings.deepseekApiKey = dsKey.trim();
       else if (removeDsKey) settings.deepseekApiKey = null;
+      if (groqKey.trim()) settings.groqApiKey = groqKey.trim();
+      else if (removeGroqKey) settings.groqApiKey = null;
       if (auto !== state.jev.autoClassify) settings.autoClassify = auto;
       if (classifier !== state.classifier.provider) settings.classifyProvider = classifier;
       if (!samePrefs(prefs, state.prefs)) settings.prefs = prefs;
@@ -661,6 +665,36 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 removeDsKey={removeDsKey}
                 setRemoveDsKey={setRemoveDsKey}
               />
+            </section>
+          )}
+          {tab === "ia" && (
+            <section className="surface stack">
+              <h3 className="eyebrow">Transcrição de áudio</h3>
+              {state.groq.fromEnv ? (
+                <p className="hint">A chave da Groq está definida no arquivo .env.local deste computador.</p>
+              ) : (
+                <label className="field">
+                  <span className="field__label">Chave de API da Groq</span>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    placeholder={state.groq.configured ? "Chave salva. Cole outra para trocar." : "Cole a chave (gsk_…)"}
+                    value={groqKey}
+                    onChange={(e) => {
+                      setGroqKey(e.target.value);
+                      setRemoveGroqKey(false);
+                    }}
+                    aria-describedby="groq-key-help"
+                  />
+                  <span id="groq-key-help" className="hint">
+                    {state.groq.configured
+                      ? "A chave fica salva só neste computador e nunca volta para a tela."
+                      : "Crie a chave em console.groq.com › API Keys. Usa Whisper Large v3 Turbo (cerca de US$ 0,04 por hora de áudio)."}
+                  </span>
+                </label>
+              )}
+              {state.groq.configured && !state.groq.fromEnv && <Toggle checked={removeGroqKey} onChange={setRemoveGroqKey} label="Remover a chave salva" />}
+              <p className="hint">Só o arquivo do áudio vai para a Groq, quando você clica em Transcrever. O texto fica salvo neste PC.</p>
             </section>
           )}
 

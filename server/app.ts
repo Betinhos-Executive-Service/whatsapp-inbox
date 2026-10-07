@@ -9,6 +9,7 @@ import { cacheMedia, loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
 import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPTIONS, findClaudeBin, isClaudeModel, parseClaudeOptions, runClaude, type ClaudeModel } from "./claude.ts";
 import { PhotoCache } from "./photos.ts";
+import { cachedTranscript, saveTranscript, transcribeAudio } from "./groq.ts";
 import { DeepSeekAI, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL, DEFAULT_DEEPSEEK_OPTIONS, isDeepSeekModel, parseDeepSeekOptions, type DeepSeekModel } from "./deepseek.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import { DEFAULT_USD_BRL, estimateCostUsd, type Provider as UsageProvider, type TokenUsage, type UsageKind } from "./pricing.ts";
@@ -103,6 +104,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   const deepseekOptions = () => parseDeepSeekOptions(store.getSetting("deepseek_options"));
   const deepseek = new DeepSeekAI(fetch, deepseekModel, deepseekOptions);
   const deepseekKey = () => process.env.DEEPSEEK_API_KEY || store.getSetting("deepseek_api_key");
+  const groqKey = () => process.env.GROQ_API_KEY || store.getSetting("groq_api_key");
   const claudeModel = (): ClaudeModel => {
     const saved = store.getSetting("claude_model");
     return isClaudeModel(saved) ? saved : DEFAULT_CLAUDE_MODEL;
@@ -255,6 +257,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       : (wa?.state ?? bootingState),
     jev: { configured: !!jevKey(), fromEnv: !!process.env.JEV_API_KEY, autoClassify: autoClassify() },
     classifier: { provider: classifier(), configured: !!classifierKey(), deepseekConfigured: !!deepseekKey() },
+    groq: { configured: !!groqKey(), fromEnv: !!process.env.GROQ_API_KEY },
     prefs: readPrefs(store),
     labels: store.listLabels(),
   });
@@ -288,6 +291,20 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     const ref = store.getMediaRef(jid, id);
     if (!ref) throw new Error("Esta mensagem não tem mídia salva. Mídias recebidas antes desta versão não podem ser abertas.");
     return loadMedia(join(options.dataDir, "media"), jid, id, ref);
+  }
+
+  /** Texto do áudio: do cache, ou transcreve na Groq e guarda. */
+  async function transcribe(jid: string, id: string): Promise<string> {
+    const dir = join(options.dataDir, "transcripts");
+    const cached = await cachedTranscript(dir, jid, id);
+    if (cached !== null) return cached;
+    const key = groqKey();
+    if (!key) throw new Error("Configure a chave da Groq em Configurações › IA para transcrever áudios.");
+    const file = await readMedia(jid, id);
+    if (!file.mimetype.startsWith("audio/")) throw new Error("Esta mensagem não é um áudio.");
+    const text = await transcribeAudio(fetch, key, file.body, file.mimetype);
+    await saveTranscript(dir, jid, id, text);
+    return text;
   }
 
   async function sendMedia(jid: string, file: OutgoingFile, quotedId?: string) {
@@ -383,6 +400,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         options.onPrefs?.(saved);
       }
       if (s.jevApiKey !== undefined) store.setSetting("jev_api_key", s.jevApiKey);
+      if (s.groqApiKey !== undefined) store.setSetting("groq_api_key", s.groqApiKey);
       if (s.deepseekApiKey !== undefined) {
         store.setSetting("deepseek_api_key", s.deepseekApiKey);
         broadcast("ai", aiState());
@@ -454,6 +472,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       },
     },
     media: readMedia,
+    transcribe,
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
       store.db.prepare("vacuum into ?").run(file);
