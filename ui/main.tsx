@@ -36,7 +36,7 @@ import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayo
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
-import { ChatMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
+import { ChatContextMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel, type ChatMenuAt } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import {
@@ -177,7 +177,12 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
 }
 
 /** Memo: chegada de mensagem numa conversa não redesenha as outras 200 da lista. */
-const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat; selected: boolean; onOpen: (jid: string) => void }) {
+const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu }: {
+  chat: Chat;
+  selected: boolean;
+  onOpen: (jid: string) => void;
+  onMenu: (chat: Chat, x: number, y: number) => void;
+}) {
   const urgent = (chat.ai?.urgent ?? 0) >= 0.5;
   const reminderDue = chat.reminderAt !== null && chat.reminderAt <= Date.now();
   const level = priorityLevel(priorityScore(chat));
@@ -186,7 +191,19 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
   const showPriority = !!aiPriority && chat.status !== "resolvida" && (aiPriority !== "baixa" || (!level && !urgent && chat.reminderAt === null));
   return (
     <li>
-      <button className="chat-item" aria-current={selected ? "true" : undefined} onClick={() => onOpen(chat.jid)}>
+      <button
+        className="chat-item"
+        aria-current={selected ? "true" : undefined}
+        aria-keyshortcuts="Shift+F10"
+        onClick={() => onOpen(chat.jid)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          // Pelo teclado (tecla Menu / Shift+F10) não há ponto do mouse: abre abaixo do nome.
+          const keyboard = e.clientX === 0 && e.clientY === 0;
+          const box = e.currentTarget.getBoundingClientRect();
+          onMenu(chat, keyboard ? box.left + 56 : e.clientX, keyboard ? box.top + 28 : e.clientY);
+        }}
+      >
         <Avatar jid={chat.jid} name={chat.name} />
         <span className="chat-item__body">
           <span className="chat-item__row">
@@ -265,8 +282,13 @@ function ChatList(props: {
   online: boolean;
   onSettings: () => void;
   loaded: boolean;
+  /** Fixar, arquivar, silenciar etc. pelo menu do clique direito. */
+  onPatch: (chat: Chat, patch: ChatPatch) => void;
 }) {
   const [tab, setTab] = useState<Tab>("aberta");
+  const [menuAt, setMenuAt] = useState<ChatMenuAt | null>(null);
+  const openMenu = useCallback((chat: Chat, x: number, y: number) => setMenuAt({ chat, x, y }), []);
+  const closeMenu = useCallback(() => setMenuAt(null), []);
   const [showArchived, setShowArchived] = useState(false);
   const [label, setLabel] = useState("");
   const [query, setQuery] = useState("");
@@ -490,7 +512,7 @@ function ChatList(props: {
         ) : (
           <ul className="chat-list">
             {filtered.slice(0, limit).map((c) => (
-              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} />
+              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} onMenu={openMenu} />
             ))}
           </ul>
         )}
@@ -501,6 +523,7 @@ function ChatList(props: {
         )}
         {messageQuery && <MessageHits hits={hits} chats={props.byJid} loading={hitsLoading} onOpen={props.onOpenAt} />}
       </div>
+      {menuAt && <ChatContextMenu at={{ ...menuAt, chat: props.byJid.get(menuAt.chat.jid) ?? menuAt.chat }} onChange={props.onPatch} onClose={closeMenu} />}
     </section>
   );
 }
@@ -537,6 +560,7 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
           </button>
         ))}
       </div>
+      <span className="chat-pane__divider" aria-hidden />
       <label className="field field--inline field--label">
         <span className="sr-only">Etiqueta</span>
         <select value={chat.label ?? ""} onChange={(e) => onChange({ label: e.target.value || null })}>
@@ -549,34 +573,40 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
         </select>
       </label>
       <ExtraLabelsPicker chat={chat} labels={labels} onChange={onChange} />
-      <button
-        className="button button--secondary button--compact"
-        onClick={onClassify}
-        disabled={classifying || !jevReady}
-        aria-busy={classifying || undefined}
-        title={jevReady ? `Pedir ao ${classifierName} para classificar esta conversa` : "Configure a chave do Jev ou da DeepSeek em Configurações › IA"}
-        aria-label={`Classificar com ${classifierName}`}
-      >
-        {classifying ? <LoaderCircle className="spin" size={16} aria-hidden /> : <Sparkles size={16} aria-hidden />}
-      </button>
-      {chat.ai && (() => {
+      {(() => {
+        // Classificar e o palpite da IA são um controle só: o botão mostra o resultado e refaz ao clicar.
         const ai = chat.ai;
-        const detail = [
-          `IA: ${ai.label} (${percent(ai.confidence)})`,
-          ai.priority && PRIORITY_META[ai.priority].text.toLowerCase(),
-          ai.needsReply >= 0.5 && "espera resposta",
-          ai.urgent >= 0.5 && "urgente",
-          chat.labelSource === "manual" && chat.label !== ai.label && "etiqueta escolhida por você",
-          ai.reason,
-        ].filter(Boolean).join(" · ");
+        const detail = ai
+          ? [
+              `IA: ${ai.label} (${percent(ai.confidence)})`,
+              ai.priority && PRIORITY_META[ai.priority].text.toLowerCase(),
+              ai.needsReply >= 0.5 && "espera resposta",
+              ai.urgent >= 0.5 && "urgente",
+              chat.labelSource === "manual" && chat.label !== ai.label && "etiqueta escolhida por você",
+              ai.reason,
+            ].filter(Boolean).join(" · ")
+          : "";
+        const title = !jevReady
+          ? "Configure a chave do Jev ou da DeepSeek em Configurações › IA"
+          : ai
+            ? `${detail}\nClique para classificar de novo com ${classifierName}.`
+            : `Pedir ao ${classifierName} para classificar esta conversa`;
         return (
-          <p className="classify__ai" title={detail}>
-            <Sparkles size={14} aria-hidden />
-            <span className="sr-only">{detail}</span>
-            <span aria-hidden>
-              <strong>{ai.label}</strong> {percent(ai.confidence)}
-            </span>
-          </p>
+          <button
+            className={`button button--secondary button--compact classify__ai-button${ai ? " classify__ai-button--done" : ""}`}
+            onClick={onClassify}
+            disabled={classifying || !jevReady}
+            aria-busy={classifying || undefined}
+            title={title}
+            aria-label={ai ? `Classificado pela IA: ${detail}. Classificar de novo com ${classifierName}` : `Classificar com ${classifierName}`}
+          >
+            {classifying ? <LoaderCircle className="spin" size={16} aria-hidden /> : <Sparkles size={16} aria-hidden />}
+            {ai && (
+              <span className="classify__ai-text" aria-hidden>
+                {ai.label} <span className="classify__ai-pct">{percent(ai.confidence)}</span>
+              </span>
+            )}
+          </button>
         );
       })()}
       {chat.aiError && (
@@ -1380,7 +1410,6 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             <StickyNote size={16} aria-hidden />
             {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
           </button>
-          <ChatMenu chat={chat} onChange={(patch) => void change(patch)} />
           <AiQuickPicker onMore={onSetupAi} />
         </div>
       </header>
@@ -1702,6 +1731,18 @@ function App() {
     }, 30);
   }, []);
 
+  // Clique direito na lista: aplica na hora e desfaz se o servidor recusar.
+  const patchChat = useCallback(async (chat: Chat, patch: ChatPatch) => {
+    const { pinned, ...rest } = patch;
+    upsert({ ...chat, ...rest, pinnedAt: pinned === undefined ? chat.pinnedAt : pinned ? Date.now() : null });
+    try {
+      upsert(await api.update(chat.jid, patch));
+    } catch (e) {
+      upsert(chat);
+      push("error", `Não foi possível atualizar a conversa. ${(e as Error).message}`);
+    }
+  }, [upsert, push]);
+
   const reload = useCallback(() => {
     api
       .chats()
@@ -1867,6 +1908,7 @@ function App() {
       ) : (
         <>
           <ChatList
+            onPatch={patchChat}
             chats={sorted}
             byJid={chats}
             labels={labels}

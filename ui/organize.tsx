@@ -1,5 +1,5 @@
-import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, ChevronDown, Clock, FolderCog, Keyboard, MessageSquareText, Pin, PinOff, Tags, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, ChevronLeft, ChevronRight, Clock, Keyboard, MessageSquareText, Pin, PinOff, Tags, X } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Chat, ChatPatch, SearchHit } from "./api.ts";
 import { dayLabel, formatTime, listTime } from "./format.ts";
 
@@ -53,77 +53,195 @@ export const isMuted = (c: Chat, now = Date.now()) => c.mutedUntil !== null && c
 export const isSnoozed = (c: Chat, now = Date.now()) => c.snoozedUntil !== null && c.snoozedUntil > now;
 export const untilLabel = (ms: number) => `${dayLabel(ms)} ${formatTime(ms)}`;
 
-function MenuItem({ icon, children, onClick }: { icon: ReactNode; children: ReactNode; onClick: () => void }) {
+type View = "main" | "mute" | "transcribe" | "snooze";
+
+/** Conversa da lista e ponto da tela onde o menu abre (clique direito ou Shift+F10). */
+export type ChatMenuAt = { chat: Chat; x: number; y: number };
+
+function MenuItem({ icon, children, onClick, hint, checked }: { icon: ReactNode; children: ReactNode; onClick: () => void; hint?: string; checked?: boolean }) {
   return (
-    <button type="button" role="menuitem" className="org-menu__item" onClick={onClick}>
+    <button type="button" role={checked === undefined ? "menuitem" : "menuitemradio"} aria-checked={checked} className="message-menu__item" onClick={onClick}>
       {icon}
-      <span>{children}</span>
+      <span className="message-menu__text">{children}</span>
+      {hint && <span className="message-menu__hint">{hint}</span>}
     </button>
   );
 }
 
-/** Fixar, arquivar, silenciar e adiar a conversa aberta. */
-export function ChatMenu({ chat, onChange }: { chat: Chat; onChange: (patch: ChatPatch) => void }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  useDismiss(open, setOpen, root);
-  const pick = (patch: ChatPatch) => {
-    setOpen(false);
-    onChange(patch);
-  };
+/** Abre um submenu no lugar do menu principal: rótulo, estado atual à direita e seta. */
+function SubmenuItem({ icon, children, hint, onOpen }: { icon: ReactNode; children: ReactNode; hint?: string; onOpen: () => void }) {
+  return (
+    <button type="button" role="menuitem" aria-haspopup="menu" className="message-menu__item" data-sub onClick={onOpen}>
+      {icon}
+      <span className="message-menu__text">{children}</span>
+      {hint && <span className="message-menu__hint">{hint}</span>}
+      <ChevronRight size={14} aria-hidden className="message-menu__chevron" />
+    </button>
+  );
+}
+
+const TRANSCRIBE = [
+  [null, "Seguir a configuração geral"],
+  ["on", "Sempre nesta conversa"],
+  ["off", "Nunca nesta conversa"],
+] as const;
+
+/** Fixar, arquivar, silenciar, adiar e transcrever uma conversa da lista. Fecha com Esc, clique fora ou rolagem. */
+export function ChatContextMenu({ at, onChange, onClose }: { at: ChatMenuAt; onChange: (chat: Chat, patch: ChatPatch) => void; onClose: () => void }) {
+  const chat = at.chat;
+  const panel = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<View>("main");
+  const [pos, setPos] = useState({ left: at.x, top: at.y });
   const muted = isMuted(chat);
   const snoozed = isSnoozed(chat);
+
+  // Cabe na tela: encosta na borda quando falta espaço. Refaz ao trocar de submenu.
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const gap = 8;
+    setPos({
+      left: Math.max(gap, Math.min(at.x, window.innerWidth - width - gap)),
+      top: Math.max(gap, Math.min(at.y, window.innerHeight - height - gap)),
+    });
+    el.querySelector<HTMLElement>("[role^=menuitem]")?.focus();
+  }, [at, view]);
+
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => !panel.current?.contains(e.target as Node) && onClose();
+    const onScroll = (e: Event) => !panel.current?.contains(e.target as Node) && onClose();
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onClose);
+    window.addEventListener("blur", onClose);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onClose);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+
+  const pick = (patch: ChatPatch) => {
+    onClose();
+    onChange(chat, patch);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const list = [...(panel.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
+    const i = list.indexOf(document.activeElement as HTMLElement);
+    const go = (n: number) => list[(n + list.length) % list.length]?.focus();
+    if (e.key === "Escape" || (e.key === "ArrowLeft" && view !== "main")) {
+      e.preventDefault();
+      if (view !== "main") setView("main");
+      else onClose();
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      onClose();
+    } else if (e.key === "ArrowRight" && list[i]?.dataset.sub !== undefined) {
+      e.preventDefault();
+      list[i].click();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      go(i + (e.key === "ArrowDown" ? 1 : -1));
+    } else if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      go(e.key === "Home" ? 0 : list.length - 1);
+    }
+  };
+
+  const back = (title: string) => (
+    <button type="button" role="menuitem" className="message-menu__item chat-menu__back" onClick={() => setView("main")}>
+      <ChevronLeft size={16} aria-hidden />
+      <span className="message-menu__text">{title}</span>
+    </button>
+  );
+
   return (
-    <div className="org-menu" ref={root}>
-      <button type="button" className="button button--secondary button--compact" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        <FolderCog size={16} aria-hidden /> Organizar
-        <ChevronDown size={14} aria-hidden />
-      </button>
-      {open && (
-        <div className="org-menu__panel" role="menu" aria-label="Organizar conversa">
+    <div
+      ref={panel}
+      className="message-menu chat-menu"
+      role="menu"
+      aria-label={`Organizar ${chat.name}`}
+      style={pos}
+      onKeyDown={onKeyDown}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {view === "main" && (
+        <>
+          <p className="chat-menu__title" aria-hidden>
+            {chat.name}
+          </p>
           <MenuItem icon={chat.pinnedAt ? <PinOff size={16} aria-hidden /> : <Pin size={16} aria-hidden />} onClick={() => pick({ pinned: !chat.pinnedAt })}>
             {chat.pinnedAt ? "Desafixar" : "Fixar no topo"}
           </MenuItem>
           <MenuItem icon={chat.archived ? <ArchiveRestore size={16} aria-hidden /> : <Archive size={16} aria-hidden />} onClick={() => pick({ archived: !chat.archived })}>
             {chat.archived ? "Desarquivar" : "Arquivar"}
           </MenuItem>
-          <p className="org-menu__label">{muted ? `Silenciada ${chat.mutedUntil! >= FOREVER ? "sempre" : `até ${untilLabel(chat.mutedUntil!)}`}` : "Silenciar notificações"}</p>
+          <span className="chat-menu__sep" role="separator" />
           {muted ? (
-            <MenuItem icon={<Bell size={16} aria-hidden />} onClick={() => pick({ mutedUntil: null })}>
+            <MenuItem icon={<Bell size={16} aria-hidden />} hint={chat.mutedUntil! >= FOREVER ? "sempre" : `até ${untilLabel(chat.mutedUntil!)}`} onClick={() => pick({ mutedUntil: null })}>
               Reativar notificações
             </MenuItem>
           ) : (
-            MUTES.map((m) => (
-              <MenuItem key={m.label} icon={<BellOff size={16} aria-hidden />} onClick={() => pick({ mutedUntil: m.ms === null ? FOREVER : Date.now() + m.ms })}>
-                {m.label}
-              </MenuItem>
-            ))
+            <SubmenuItem icon={<BellOff size={16} aria-hidden />} onOpen={() => setView("mute")}>
+              Silenciar
+            </SubmenuItem>
           )}
-          <p className="org-menu__label">Transcrever áudios recebidos</p>
-          {(
-            [
-              [null, "Seguir a configuração geral"],
-              ["on", "Sempre nesta conversa"],
-              ["off", "Nunca nesta conversa"],
-            ] as const
-          ).map(([value, label]) => (
-            <MenuItem key={label} icon={chat.autoTranscribe === value ? <Check size={16} aria-hidden /> : <AudioLines size={16} aria-hidden />} onClick={() => pick({ autoTranscribe: value })}>
-              {label}
-            </MenuItem>
-          ))}
-          <p className="org-menu__label">{snoozed ? `Adiada até ${untilLabel(chat.snoozedUntil!)}` : "Adiar (some das abertas e volta sozinha)"}</p>
           {snoozed ? (
-            <MenuItem icon={<X size={16} aria-hidden />} onClick={() => pick({ snoozedUntil: null })}>
+            <MenuItem icon={<X size={16} aria-hidden />} hint={`até ${untilLabel(chat.snoozedUntil!)}`} onClick={() => pick({ snoozedUntil: null })}>
               Cancelar adiamento
             </MenuItem>
           ) : (
-            snoozePresets().map((p) => (
-              <MenuItem key={p.label} icon={<Clock size={16} aria-hidden />} onClick={() => pick({ snoozedUntil: p.at })}>
-                {p.label}
-              </MenuItem>
-            ))
+            <SubmenuItem icon={<Clock size={16} aria-hidden />} onOpen={() => setView("snooze")}>
+              Adiar
+            </SubmenuItem>
           )}
-        </div>
+          <SubmenuItem
+            icon={<AudioLines size={16} aria-hidden />}
+            hint={chat.autoTranscribe === "on" ? "sempre" : chat.autoTranscribe === "off" ? "nunca" : "padrão"}
+            onOpen={() => setView("transcribe")}
+          >
+            Transcrever áudios
+          </SubmenuItem>
+        </>
+      )}
+      {view === "mute" && (
+        <>
+          {back("Silenciar notificações")}
+          {MUTES.map((m) => (
+            <MenuItem key={m.label} icon={<BellOff size={16} aria-hidden />} onClick={() => pick({ mutedUntil: m.ms === null ? FOREVER : Date.now() + m.ms })}>
+              {m.label}
+            </MenuItem>
+          ))}
+        </>
+      )}
+      {view === "snooze" && (
+        <>
+          {back("Adiar conversa")}
+          <p className="chat-menu__note">Sai das abertas e volta sozinha.</p>
+          {snoozePresets().map((p) => (
+            <MenuItem key={p.label} icon={<Clock size={16} aria-hidden />} onClick={() => pick({ snoozedUntil: p.at })}>
+              {p.label}
+            </MenuItem>
+          ))}
+        </>
+      )}
+      {view === "transcribe" && (
+        <>
+          {back("Transcrever áudios recebidos")}
+          {TRANSCRIBE.map(([value, label]) => (
+            <MenuItem
+              key={label}
+              checked={chat.autoTranscribe === value}
+              icon={chat.autoTranscribe === value ? <Check size={16} aria-hidden /> : <span className="chat-menu__blank" aria-hidden />}
+              onClick={() => pick({ autoTranscribe: value })}
+            >
+              {label}
+            </MenuItem>
+          ))}
+        </>
       )}
     </div>
   );
@@ -147,11 +265,12 @@ export function ExtraLabelsPicker({ chat, labels, onChange }: { chat: Chat; labe
         className="button button--secondary button--compact"
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="Etiquetas extras desta conversa"
+        title={chat.extraLabels.length ? `Etiquetas extras: ${chat.extraLabels.join(", ")}` : "Adicionar etiquetas extras"}
+        aria-label={chat.extraLabels.length ? `Etiquetas extras: ${chat.extraLabels.join(", ")}` : "Adicionar etiquetas extras"}
         onClick={() => setOpen((v) => !v)}
       >
         <Tags size={16} aria-hidden />
-        {chat.extraLabels.length ? `+${chat.extraLabels.length} etiqueta${chat.extraLabels.length > 1 ? "s" : ""}` : "Mais etiquetas"}
+        {chat.extraLabels.length > 0 && <span aria-hidden>+{chat.extraLabels.length}</span>}
       </button>
       {open && (
         <div className="org-menu__panel" role="dialog" aria-label="Etiquetas extras">
@@ -222,6 +341,7 @@ const SHORTCUTS: [string, string][] = [
   ["Alt + ↓ / Alt + ↑", "Próxima / conversa anterior da lista"],
   ["Ctrl + Enter", "Marcar como resolvida (fora do campo de mensagem)"],
   ["Esc", "Fechar painel, cancelar resposta ou edição"],
+  ["Botão direito / Shift + F10", "Organizar a conversa da lista: fixar, arquivar, silenciar, adiar"],
   ["/", "Respostas rápidas (no começo do campo)"],
   ["@", "Mencionar em grupo"],
   ["Ctrl + B / I", "Negrito / itálico no texto"],
