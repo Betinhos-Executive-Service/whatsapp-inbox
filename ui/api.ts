@@ -105,6 +105,8 @@ export type Message = {
   ack: number | null;
   editedAt: number | null;
   reactions: { emoji: string; fromMe: boolean }[];
+  /** Só no cliente: envio otimista ainda sem confirmação do servidor. */
+  pending?: "sending" | "failed";
 };
 
 /** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
@@ -169,7 +171,7 @@ export const api = {
   messages: (jid: string, before?: number) =>
     request<Message[]>("GET", `${chatPath(jid)}/messages${before ? `?before=${before}` : ""}`),
   read: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/read`, {}),
-  send: (jid: string, text: string, opts: { quotedId?: string; mentions?: string[] } = {}) =>
+  send: (jid: string, text: string, opts: { quotedId?: string; mentions?: string[]; mentionAll?: boolean } = {}) =>
     request<Chat>("POST", `${chatPath(jid)}/send`, { text, ...opts }),
   deleteMessage: (jid: string, id: string, mode: "everyone" | "me") =>
     request<{ chat: Chat; synced: boolean }>("POST", `${chatPath(jid)}/delete`, { id, mode }),

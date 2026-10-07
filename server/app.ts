@@ -39,9 +39,18 @@ export type AppOptions = {
   onPrefs?: (prefs: Prefs) => void;
   /** Lembrete venceu: o app desktop mostra a notificação. */
   onReminder?: (chat: Chat, reminder: Reminder) => void;
+  /** Conversa marcada como lida (na página ou pelo toast): o app desktop zera a notificação. */
+  onRead?: (jid: string) => void;
 };
 
-export type RunningApp = { port: number; prefs: () => Prefs; close: () => Promise<void> };
+export type RunningApp = {
+  port: number;
+  prefs: () => Prefs;
+  send: (jid: string, text: string) => Promise<void>;
+  markRead: (jid: string) => Promise<void>;
+  avatar: (jid: string) => Promise<Buffer | null>;
+  close: () => Promise<void>;
+};
 
 export async function startApp(options: AppOptions): Promise<RunningApp> {
   mkdirSync(options.dataDir, { recursive: true });
@@ -295,6 +304,17 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
 
   // ---- HTTP
 
+  const send = async (jid: string, text: string) => {
+    await connected().send(jid, text);
+  };
+  const markRead = async (jid: string) => {
+    const keys = store.markRead(jid);
+    broadcast("chat", store.getChat(jid));
+    options.onRead?.(jid);
+    await wa?.markRead(keys).catch(() => undefined); // recibo de leitura é cortesia, não bloqueia
+  };
+  const avatar = (jid: string) => photos.thumb(jid);
+
   const handler = createHandler({
     store,
     get port() {
@@ -302,7 +322,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     distDir: options.distDir,
     state: publicState,
-    send: (jid, text, opts) => connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(jid, opts.quotedId) : null, mentions: opts.mentions }),
+    send: (jid, text, opts) =>
+      connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll }),
     sendMedia,
     react: (jid, id, emoji) => connected().react(jid, id, emoji),
     editMessage: (jid, id, text) => connected().editSent(jid, id, text),
@@ -328,11 +349,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     typing: async (jid, state) => {
       if (readPrefs(store).sendTyping) await wa?.typing(jid, state);
     },
-    markRead: async (jid) => {
-      const keys = store.markRead(jid);
-      broadcast("chat", store.getChat(jid));
-      await wa?.markRead(keys).catch(() => undefined); // recibo de leitura é cortesia, não bloqueia
-    },
+    markRead,
     deleteMessage: async (jid, id, mode) => {
       const ref = store.messageKey(jid, id);
       if (!ref) throw new Error("Mensagem não encontrada.");
@@ -473,6 +490,9 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   return {
     port,
     prefs: () => readPrefs(store),
+    send,
+    markRead,
+    avatar,
     close: async () => {
       clearInterval(heartbeat);
       clearInterval(reminderTimer);

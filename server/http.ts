@@ -12,7 +12,7 @@ export type Api = {
   distDir: string;
   port: number;
   state: () => unknown;
-  send: (jid: string, text: string, opts: { quotedId?: string; mentions?: string[] }) => Promise<void>;
+  send: (jid: string, text: string, opts: { quotedId?: string; mentions?: string[]; mentionAll?: boolean }) => Promise<void>;
   sendMedia: (jid: string, file: { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number }, quotedId?: string) => Promise<void>;
   /** everyone = apagar para todos; me = só deste lado. synced = o celular também apagou. */
   deleteMessage: (jid: string, id: string, mode: "everyone" | "me") => Promise<{ synced: boolean }>;
@@ -135,6 +135,8 @@ const sendSchema = z.object({
   text: z.string().trim().min(1).max(4096),
   quotedId: z.string().min(1).max(200).optional(),
   mentions: z.array(z.string().regex(/^[\w.:-]+@(s\.whatsapp\.net|lid)$/, "Menção inválida.")).max(256).optional(),
+  /** "@todos": menciona o grupo inteiro. */
+  mentionAll: z.boolean().optional(),
 });
 
 /** JID de conversa, contato ou participante na URL. */
@@ -245,9 +247,9 @@ export function createHandler(api: Api) {
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/send" && method === "POST") {
-        const { text, quotedId, mentions } = parse(sendSchema, await readJson(req));
+        const { text, quotedId, mentions, mentionAll } = parse(sendSchema, await readJson(req));
         if (quotedId && !store.messageKey(jid, quotedId)) throw new HttpError(404, "A mensagem respondida não está mais salva.");
-        await api.send(jid, text, { quotedId, mentions });
+        await api.send(jid, text, { quotedId, mentions, mentionAll });
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/delete" && method === "POST") {
