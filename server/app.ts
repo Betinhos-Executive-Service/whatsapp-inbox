@@ -277,6 +277,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       broadcast("message", { message, chat });
       if (live && !message.fromMe) {
         scheduleClassify(chat.jid);
+        if (message.media?.type === "audio") readMedia(chat.jid, message.id).catch(() => undefined);
         if (message.media?.type === "audio" && shouldAutoTranscribe(chat)) {
           transcribe(chat.jid, message.id)
             .then((text) => broadcast("transcript", { chatJid: chat.jid, id: message.id, text }))
@@ -482,6 +483,11 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     media: readMedia,
     transcribe,
+    transcribeRecording: (body, mimetype) => {
+      const key = groqKey();
+      if (!key) return Promise.reject(new Error("Configure a chave da Groq em Configurações › IA para transcrever."));
+      return transcribeAudio(fetch, key, body, mimetype);
+    },
     cachedTranscript: (jid, id) => cachedTranscript(join(options.dataDir, "transcripts"), jid, id),
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);

@@ -215,6 +215,7 @@ export const api = {
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
   cachedTranscript: (jid: string, id: string) =>
     request<{ text: string | null }>("GET", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`),
+  transcribeRecording: (data: string, mimetype: string) => request<{ text: string }>("POST", "/api/transcribe-recording", { data, mimetype }),
   transcribe: (jid: string, id: string) =>
     request<{ text: string }>("POST", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`, {}),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),

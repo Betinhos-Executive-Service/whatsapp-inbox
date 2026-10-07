@@ -35,6 +35,7 @@ export type Api = {
   reset: (reconnect: boolean) => Promise<void>;
   media: (jid: string, id: string) => Promise<{ body: Buffer; mimetype: string; fileName: string | null }>;
   transcribe: (jid: string, id: string) => Promise<string>;
+  transcribeRecording: (body: Buffer, mimetype: string) => Promise<string>;
   /** Só o cache: não chama a Groq. */
   cachedTranscript: (jid: string, id: string) => Promise<string | null>;
   ai: {
@@ -371,6 +372,16 @@ export function createHandler(api: Api) {
       api.ai.setInstructions(text);
       return json(res, 200, api.ai.status());
     }
+    if (path === "/api/transcribe-recording" && method === "POST") {
+      const { data, mimetype } = parse(
+        z.object({ data: z.string().min(1), mimetype: z.enum(["audio/webm", "audio/ogg"]) }),
+        await readJson(req, Math.ceil((25 * 1024 * 1024 * 4) / 3) + 1024),
+      );
+      const text = await api.transcribeRecording(Buffer.from(data, "base64"), mimetype).catch((error: Error) => {
+        throw new HttpError(502, error.message);
+      });
+      return json(res, 200, { text });
+    }
     const transcribeMatch = path.match(/^\/api\/transcribe\/([^/]+)\/([^/]+)$/);
     if (transcribeMatch && method === "GET") {
       const text = await api.cachedTranscript(decodeURIComponent(transcribeMatch[1]), decodeURIComponent(transcribeMatch[2]));
@@ -389,11 +400,24 @@ export function createHandler(api: Api) {
         if (error instanceof HttpError) throw error;
         throw new HttpError(502, `Não foi possível baixar a mídia. Ela pode ter expirado no WhatsApp. (${error.message})`);
       });
-      const headers: Record<string, string> = { "content-type": file.mimetype, "cache-control": "private, max-age=86400" };
+      // A mídia de uma mensagem nunca muda: o navegador pode guardar sem revalidar.
+      const headers: Record<string, string> = { "content-type": file.mimetype, "cache-control": "private, max-age=31536000, immutable", "accept-ranges": "bytes" };
       if (url.searchParams.has("download")) {
         headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName ?? "arquivo")}`;
       }
-      res.writeHead(200, headers);
+      const size = file.body.length;
+      const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");
+      if (range && (range[1] || range[2])) {
+        const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+        const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+        if (start >= size || start > end) {
+          res.writeHead(416, { "content-range": `bytes */${size}` });
+          return res.end();
+        }
+        res.writeHead(206, { ...headers, "content-range": `bytes ${start}-${end}/${size}`, "content-length": String(end - start + 1) });
+        return res.end(file.body.subarray(start, end + 1));
+      }
+      res.writeHead(200, { ...headers, "content-length": String(size) });
       return res.end(file.body);
     }
     const reminderMatch = path.match(/^\/api\/reminders\/(\d+)(\/done)?$/);
