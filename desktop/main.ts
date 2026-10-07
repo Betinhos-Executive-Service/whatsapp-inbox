@@ -21,7 +21,8 @@ let updates: ReturnType<typeof setupUpdates> | null = null;
 // Um toast vivo por conversa: sem referência, o Windows pode descartar o clique;
 // com ela, a mensagem seguinte fecha a anterior e mostra o total.
 const byChat = new Map<string, Notification>();
-const reminders = new Set<Notification>();
+// Lembretes e toasts de erro: guardados só para o Windows não descartar clique nem ação.
+const transient = new Set<Notification>();
 const counter = new UnreadCounter();
 
 const iconPath = () => join(app.getAppPath(), "dist", "icon.ico");
@@ -54,11 +55,22 @@ function applyPrefs(prefs: Prefs) {
   app.setLoginItemSettings({ openAtLogin: prefs.startWithWindows, args: prefs.startMinimized ? ["--hidden"] : [] });
 }
 
+/**
+ * No Windows o `close` também dispara quando o toast expira e vai para a Central de Ações.
+ * Só o dispensar do usuário solta a referência; expirado segue guardado, para a resposta ou
+ * a ação feita depois pela Central funcionar e para `close()` ainda poder limpá-lo.
+ */
+function released(event: Electron.Event<Electron.NotificationCloseEventParams>) {
+  return event.reason === "userCanceled";
+}
+
 /** Conversa vista ou lida: some o toast e a contagem recomeça. */
 function clearChat(jid: string) {
   counter.clear(jid);
+  // No Windows é este close() no objeto guardado que tira o toast da Central de Ações.
   byChat.get(jid)?.close();
   byChat.delete(jid);
+  // Só vale no macOS (no Windows não faz nada).
   Notification.removeGroup(jid);
 }
 
@@ -70,9 +82,11 @@ function openChat(jid: string) {
 
 function failure(chat: Chat, title: string, detail: string) {
   const n = new Notification({ title, body: detail.slice(0, 180), icon: iconPath(), groupId: chat.jid, groupTitle: chat.name });
-  reminders.add(n);
+  transient.add(n);
   n.on("click", () => openChat(chat.jid));
-  n.on("close", () => reminders.delete(n));
+  n.on("close", (event) => {
+    if (released(event)) transient.delete(n);
+  });
   n.show();
 }
 
@@ -111,14 +125,17 @@ function notify(chat: Chat, message: Message) {
       if (!text || !server) return;
       server
         .send(chat.jid, text)
-        .then(() => server?.markRead(chat.jid))
-        .catch((e: Error) => failure(chat, `Mensagem não enviada para ${chat.name}`, `${e.message} Texto: ${text}`));
+        .then(
+          // Enviou: falha só no markRead não vira "não enviada".
+          () => server?.markRead(chat.jid).catch((e: Error) => console.error("Falha ao marcar como lida após responder:", e)),
+          (e: Error) => failure(chat, `Mensagem não enviada para ${chat.name}`, `${e.message} Texto: ${text}`),
+        );
     });
-    n.on("close", () => {
-      if (byChat.get(chat.jid) === n) byChat.delete(chat.jid);
+    n.on("close", (event) => {
+      if (released(event) && byChat.get(chat.jid) === n) byChat.delete(chat.jid);
     });
     n.show();
-  });
+  }).catch((e: Error) => console.error("Falha ao mostrar a notificação:", e));
 }
 
 /** Lembrete é pedido explícito seu: avisa mesmo com o app na frente e no horário de silêncio. */
@@ -133,11 +150,13 @@ function remind(chat: Chat, reminder: Reminder) {
       groupId: chat.jid,
       groupTitle: chat.name,
     });
-    reminders.add(n);
+    transient.add(n);
     n.on("click", () => openChat(chat.jid));
-    n.on("close", () => reminders.delete(n));
+    n.on("close", (event) => {
+      if (released(event)) transient.delete(n);
+    });
     n.show();
-  });
+  }).catch((e: Error) => console.error("Falha ao mostrar o lembrete:", e));
 }
 
 function createWindow(url: string) {

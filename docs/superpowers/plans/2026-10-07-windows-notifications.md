@@ -771,3 +771,4 @@ async function chatIcon(jid: string): Promise<string> {
 
 Se ações/resposta não dispararem no app instalado, registrar o comportamento (versão do Windows, AUMID no atalho) antes de qualquer correção.
 - [ ] **Passo 10:** mensagem de contato com foto mostra a foto em círculo no toast; contato sem foto (ou privacidade) mostra o ícone do app; grupo com foto mostra a foto do grupo.
+- [ ] **Passo 11:** deixar um toast expirar (ir para a Central de Ações), responder e marcar como lida por ele pela Central, e conferir que a Central fica limpa ao abrir a conversa no app.

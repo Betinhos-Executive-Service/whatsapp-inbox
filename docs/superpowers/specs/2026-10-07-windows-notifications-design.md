@@ -30,7 +30,7 @@ Funções puras, testáveis sem Electron:
 ### 2. Agrupamento (substituição)
 
 - Cada toast usa `id = jid` e `groupId = jid` (`groupTitle = chat.name`). Antes de mostrar, fecha o toast anterior da mesma conversa (mantido em `Map<jid, Notification>`), então só existe um por conversa, com contador e última mensagem.
-- O contador zera quando: a conversa é aberta pelo toast, a ação "Marcar como lida" roda, ou o servidor marca a conversa como lida (novo callback `onRead(jid)` em `startApp`, chamado no `markRead` existente). Ao zerar, `Notification.removeGroup(jid)` limpa a Central de Ações.
+- O contador zera quando: a conversa é aberta pelo toast, a ação "Marcar como lida" roda, ou o servidor marca a conversa como lida (novo callback `onRead(jid)` em `startApp`, chamado no `markRead` existente). Ao zerar, o toast guardado recebe `close()`: no Windows é isso que o tira da Central de Ações (`Notification.removeGroup` só vale no macOS e não faz nada no Windows). Toast expirado por tempo continua referenciado: o evento `close` com motivo `timedOut` não solta a referência (só `userCanceled`), para resposta e ação feitas depois pela Central ainda funcionarem e para `close()` ainda poder limpá-lo.
 
 ### 3. Urgência
 
