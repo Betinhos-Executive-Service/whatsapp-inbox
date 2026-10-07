@@ -168,6 +168,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
   const store = new Store(":memory:");
   store.addMessage(msg(), true);
   let port = 0;
+  const sentMedia: { body: Buffer; mimetype: string; fileName: string; ptt?: boolean }[] = [];
   const server = createServer(
     createHandler({
       store,
@@ -177,6 +178,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       },
       state: () => ({}),
       send: async () => undefined,
+      sendMedia: async (_jid, file) => void sentMedia.push(file),
       markRead: async () => undefined,
       classify: async () => null,
       saveSettings: () => undefined,
@@ -223,6 +225,14 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
     assert.equal(patch.status, 200);
     assert.equal((await patch.json()).status, "resolvida");
     assert.equal((await fetch(`${base}/api/chats/nao-existe/messages`)).status, 404);
+    const media = await fetch(`${base}/api/chats/${encodeURIComponent(PN)}/send-media`, {
+      method: "POST",
+      body: JSON.stringify({ fileName: "voz.ogg", mimetype: "audio/ogg", data: Buffer.from("abc").toString("base64"), ptt: true, seconds: 3 }),
+      headers: { "content-type": "application/json" },
+    });
+    assert.equal(media.status, 200);
+    assert.equal(sentMedia[0].body.toString(), "abc");
+    assert.equal(sentMedia[0].ptt, true);
   } finally {
     server.close();
   }

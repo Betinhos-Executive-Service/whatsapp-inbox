@@ -12,6 +12,10 @@ export type MediaRef = {
   mimetype: string;
   fileName: string | null;
   size: number | null;
+  /** Duração em segundos (áudio e vídeo), quando o WhatsApp informa. */
+  seconds?: number | null;
+  /** Áudio gravado no app (mensagem de voz), não arquivo de áudio. */
+  ptt?: boolean;
 };
 
 const MEDIA_TYPES: Record<string, MediaRef["type"]> = {
@@ -46,6 +50,8 @@ export function extractMedia(content: Content): MediaRef | null {
     mimetype: typeof m.mimetype === "string" && m.mimetype ? m.mimetype.split(";")[0] : DEFAULT_MIME[type],
     fileName: typeof m.fileName === "string" ? m.fileName : null,
     size: m.fileLength == null ? null : Number(m.fileLength),
+    seconds: typeof m.seconds === "number" && m.seconds > 0 ? m.seconds : null,
+    ptt: m.ptt === true,
   };
 }
 

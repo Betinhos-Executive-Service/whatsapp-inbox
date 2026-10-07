@@ -82,7 +82,7 @@ export type Message = {
   text: string;
   kind: string;
   /** Mídia baixável (sem as chaves, que ficam só no banco). */
-  media: { type: string; mimetype: string; fileName: string | null; size: number | null } | null;
+  media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
 };
 
 /** Correção sua de etiqueta, usada como exemplo nas próximas classificações do Jev. */
@@ -259,7 +259,7 @@ function toMessage(r: Row): Message {
   if (typeof r.media === "string") {
     try {
       const m = JSON.parse(r.media);
-      media = { type: m.type, mimetype: m.mimetype, fileName: m.fileName ?? null, size: m.size ?? null };
+      media = { type: m.type, mimetype: m.mimetype, fileName: m.fileName ?? null, size: m.size ?? null, seconds: m.seconds ?? null, ptt: m.ptt === true };
     } catch {
       media = null;
     }

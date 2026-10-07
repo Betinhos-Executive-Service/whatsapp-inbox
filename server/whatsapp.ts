@@ -31,6 +31,8 @@ function isConversation(jid: string | null | undefined): jid is string {
   return !!jid && (isPnUser(jid) || isLidUser(jid) || isJidGroup(jid)) === true;
 }
 
+export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number };
+
 export class WhatsApp extends EventEmitter<{
   connection: [ConnectionState];
   message: [{ message: Message; chat: Chat; live: boolean }];
@@ -285,6 +287,27 @@ export class WhatsApp extends EventEmitter<{
     if (!this.sock || this.state.status !== "conectado") throw new Error("O WhatsApp não está conectado.");
     const sent = await this.sock.sendMessage(jid, { text });
     if (sent) this.ingest(sent, true);
+  }
+
+  /** Envia anexo; o tipo da mensagem (imagem, vídeo, voz, documento) sai do mimetype. Devolve o id enviado. */
+  async sendMedia(jid: string, file: OutgoingFile): Promise<string | null> {
+    if (!this.sock || this.state.status !== "conectado") throw new Error("O WhatsApp não está conectado.");
+    const { body, fileName } = file;
+    const caption = file.caption?.trim() || undefined;
+    const base = file.mimetype.split(";")[0];
+    const content = file.ptt
+      ? { audio: body, ptt: true, mimetype: "audio/ogg; codecs=opus", ...(file.seconds ? { seconds: Math.round(file.seconds) } : {}) }
+      : base.startsWith("image/") && base !== "image/gif" && base !== "image/svg+xml"
+        ? { image: body, mimetype: base, caption }
+        : base === "video/mp4"
+          ? { video: body, mimetype: base, caption }
+          : base.startsWith("audio/")
+            ? { audio: body, mimetype: base }
+            : { document: body, mimetype: base || "application/octet-stream", fileName, caption };
+    const sent = await this.sock.sendMessage(jid, content);
+    if (!sent) return null;
+    this.ingest(sent, true);
+    return sent.key.id ?? null;
   }
 
   async markRead(keys: { id: string; rawJid: string; participant: string | null }[]): Promise<void> {
