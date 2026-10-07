@@ -34,6 +34,7 @@ import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, l
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
 import { UpdateDialog } from "./update.tsx";
 import { desktop } from "./desktop.ts";
+import { badgeImage } from "./badge.ts";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
@@ -990,6 +991,12 @@ function App() {
       offSettings();
     };
   }, []);
+
+  // Total de não lidas no ícone da barra de tarefas e na bandeja (só no app desktop).
+  const unreadTotal = useMemo(() => [...chats.values()].reduce((sum, c) => sum + (c.unread > 0 ? c.unread : 0), 0), [chats]);
+  useEffect(() => {
+    desktop()?.setUnread(unreadTotal, unreadTotal > 0 ? badgeImage(unreadTotal) : null);
+  }, [unreadTotal]);
 
   return (
     <div className="app" data-view={current ? "chat" : "list"}>

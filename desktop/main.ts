@@ -1,6 +1,6 @@
 // Processo principal do app desktop: sobe o servidor local dentro do próprio Electron,
 // abre a janela nele e mantém tudo rodando na bandeja quando a janela é fechada.
-import { app, BrowserWindow, dialog, Menu, nativeImage, Notification, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, shell, Tray } from "electron";
 import { join } from "node:path";
 import { startApp, type RunningApp } from "../server/app.ts";
 import type { Chat, Message, Reminder } from "../server/db.ts";
@@ -233,6 +233,14 @@ if (!app.requestSingleInstanceLock()) {
     tray.setToolTip(PRODUCT);
     tray.on("click", showWindow);
     buildTrayMenu();
+    // Contador vindo da página: só aceita número inteiro e PNG em data URL.
+    ipcMain.on("app:unread", (event, total: unknown, image: unknown) => {
+      if (!origin || new URL(event.senderFrame?.url ?? "about:blank").origin !== origin) return;
+      const n = Number.isInteger(total) && (total as number) >= 0 ? (total as number) : 0;
+      const png = typeof image === "string" && image.startsWith("data:image/png;base64,") ? image : null;
+      window?.setOverlayIcon(n > 0 && png ? nativeImage.createFromDataURL(png) : null, n > 0 ? `${n} não lidas` : "");
+      tray?.setToolTip(n > 0 ? `${PRODUCT} — ${n} não lidas` : PRODUCT);
+    });
     createWindow(`http://127.0.0.1:${server.port}`);
     updates = setupUpdates({
       window: () => window,
