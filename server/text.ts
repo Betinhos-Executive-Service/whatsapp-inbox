@@ -138,3 +138,31 @@ export function extractText(content: Content): Extracted | null {
       return { text: "[Mensagem não suportada]", kind: `other:${type}` };
   }
 }
+
+/** Mensagem citada (resposta) e menções, tiradas do contextInfo da mensagem. */
+export type MessageContext = {
+  quoted: { id: string; participant: string | null; text: string } | null;
+  mentions: string[];
+};
+
+export function extractContext(content: Content): MessageContext {
+  const out: MessageContext = { quoted: null, mentions: [] };
+  if (!content) return out;
+  const type = Object.keys(content).find((k) => !IGNORED.has(k) && content[k] != null);
+  const m = type ? content[type] : null;
+  const info = m && typeof m === "object" ? m.contextInfo : null;
+  if (!info) return out;
+  if (Array.isArray(info.mentionedJid)) out.mentions = info.mentionedJid.filter((j: unknown): j is string => typeof j === "string");
+  if (info.stanzaId && info.quotedMessage) {
+    const quotedText = extractText(info.quotedMessage)?.text ?? "[Mensagem]";
+    out.quoted = { id: String(info.stanzaId), participant: typeof info.participant === "string" ? info.participant : null, text: quotedText.slice(0, 500) };
+  }
+  return out;
+}
+
+/** Apagada para todos: devolve o id da mensagem revogada. */
+export function revokedId(content: Content): string | null {
+  const p = content?.protocolMessage;
+  // type 0 = REVOKE no protocolo do WhatsApp.
+  return p && (p.type === 0 || p.type === "REVOKE") && p.key?.id ? String(p.key.id) : null;
+}

@@ -147,7 +147,7 @@ test("Jev: perguntas, estado e resposta validados", () => {
   assert.throws(() => buildQuestions(labels.slice(0, 1)));
   const q = buildQuestions(labels);
   assert.deepEqual(Object.keys(q), ["etiqueta", "responder", "urgente", "prioridade"]);
-  const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null }]));
+  const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null, quoted: null, deleted: false, sender: null }]));
   assert.equal(state.mensagens[0].de, "contato");
   assert.equal(state.mensagens[0].texto.length, 1000);
   assert.ok(!JSON.stringify(state).includes("whatsapp.net"));
@@ -179,6 +179,10 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       state: () => ({}),
       send: async () => undefined,
       sendMedia: async (_jid, file) => void sentMedia.push(file),
+      deleteMessage: async () => ({ synced: true }),
+      participants: async () => [],
+      profile: async () => ({}),
+      photo: async () => null,
       markRead: async () => undefined,
       classify: async () => null,
       saveSettings: () => undefined,
@@ -186,7 +190,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       reset: async () => undefined,
       backup: async () => "",
       media: async () => ({ body: Buffer.from(""), mimetype: "image/jpeg", fileName: null }),
-      ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setDeepseekOptions: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
+      ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setDeepseekOptions: () => undefined, setClaudeOptions: () => undefined, setJevContext: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
       subscribe: (res) => res.end(),
       onChatChanged: () => undefined,
     }),

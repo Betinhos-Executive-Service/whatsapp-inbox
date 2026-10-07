@@ -2,7 +2,10 @@ export type Status = "aberta" | "aguardando" | "resolvida";
 export type Priority = "alta" | "media" | "baixa";
 export type Classifier = "jev" | "deepseek";
 export type DeepSeekModel = "deepseek-v4-pro" | "deepseek-flash";
-export type ClaudeModel = "sonnet" | "opus" | "haiku";
+export type ClaudeModel = "sonnet" | "opus" | "fable" | "haiku";
+export type ClaudeEffort = "default" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ClaudeOptions = { effort: ClaudeEffort; contextMessages: number; messageChars: number };
+export type Theme = "system" | "light" | "dark";
 export type Thinking = "off" | "low" | "high" | "max";
 export type DeepSeekTask = "draft" | "summary" | "classify";
 export type DeepSeekOptions = {
@@ -56,7 +59,9 @@ export type AiStatus = {
   customInstructions: boolean;
   provider: "deepseek" | "claude";
   deepseek: { configured: boolean; fromEnv: boolean; model: DeepSeekModel; models: { id: DeepSeekModel; name: string; hint: string }[]; options: DeepSeekOptions; defaults: DeepSeekOptions };
-  claude: { configured: boolean; model: ClaudeModel; models: { id: ClaudeModel; name: string; hint: string }[]; folder: string };
+  claude: { configured: boolean; model: ClaudeModel; models: { id: ClaudeModel; name: string; hint: string }[]; folder: string; options: ClaudeOptions; defaults: ClaudeOptions };
+  /** Janela de mensagens da classificação pelo Jev. */
+  jev: { contextMessages: number };
 };
 export type Summary = { resumo: string; pedido: string; proximoPasso: string };
 
@@ -71,10 +76,27 @@ export type Message = {
   text: string;
   kind: string;
   media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
+  /** Mensagem respondida (citação). */
+  quoted: { id: string; text: string; fromMe: boolean; author: string | null } | null;
+  /** Apagada para todos. */
+  deleted: boolean;
+  /** Autor em grupo (JID do participante), para abrir o perfil. */
+  sender: string | null;
 };
 
 /** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
-export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number };
+export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number; quotedId?: string };
+
+export type Participant = { jid: string; name: string; phone: string | null; admin: boolean; me: boolean };
+export type Profile = {
+  about: string | null;
+  aboutAt: number | null;
+  group: { subject: string; description: string | null; createdAt: number | null; size: number; participants: Participant[] } | null;
+};
+
+/** Foto de perfil servida pelo app (miniatura em cache; full = tamanho cheio). */
+export const photoUrl = (jid: string, full = false, v = 0) =>
+  `/api/photo/${encodeURIComponent(jid)}${full ? "?full=1" : v ? `?v=${v}` : ""}`;
 
 export const mediaUrl = (m: Message, download = false) =>
   `/api/media/${encodeURIComponent(m.chatJid)}/${encodeURIComponent(m.id)}${download ? "?download=1" : ""}`;
@@ -93,6 +115,7 @@ export type Prefs = {
   quietEnd: string | null;
   startWithWindows: boolean;
   startMinimized: boolean;
+  theme: Theme;
 };
 export type AppState = {
   prefs: Prefs;
@@ -122,7 +145,12 @@ export const api = {
   messages: (jid: string, before?: number) =>
     request<Message[]>("GET", `${chatPath(jid)}/messages${before ? `?before=${before}` : ""}`),
   read: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/read`, {}),
-  send: (jid: string, text: string) => request<Chat>("POST", `${chatPath(jid)}/send`, { text }),
+  send: (jid: string, text: string, opts: { quotedId?: string; mentions?: string[] } = {}) =>
+    request<Chat>("POST", `${chatPath(jid)}/send`, { text, ...opts }),
+  deleteMessage: (jid: string, id: string, mode: "everyone" | "me") =>
+    request<{ chat: Chat; synced: boolean }>("POST", `${chatPath(jid)}/delete`, { id, mode }),
+  participants: (jid: string) => request<Participant[]>("GET", `${chatPath(jid)}/participants`),
+  profile: (jid: string) => request<Profile>("GET", `/api/profile/${encodeURIComponent(jid)}`),
   sendMedia: (jid: string, file: OutgoingMedia) => request<Chat>("POST", `${chatPath(jid)}/send-media`, file),
   update: (jid: string, patch: { status?: Status; label?: string | null; note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
   reminders: (jid: string) => request<Reminder[]>("GET", `${chatPath(jid)}/reminders`),
@@ -133,6 +161,9 @@ export const api = {
   setAiProvider: (provider: AiStatus["provider"]) => request<AiStatus>("PUT", "/api/ai/provider", { provider }),
   setDeepseekModel: (model: DeepSeekModel) => request<AiStatus>("PUT", "/api/ai/deepseek-model", { model }),
   setClaudeModel: (model: ClaudeModel) => request<AiStatus>("PUT", "/api/ai/claude-model", { model }),
+  /** null volta tudo ao padrão. */
+  setClaudeOptions: (options: ClaudeOptions | null) => request<AiStatus>("PUT", "/api/ai/claude-options", { options }),
+  setJevContext: (messages: number | null) => request<AiStatus>("PUT", "/api/ai/jev-context", { messages }),
   /** null volta tudo ao padrão. */
   setDeepseekOptions: (options: DeepSeekOptions | null) => request<AiStatus>("PUT", "/api/ai/deepseek-options", { options }),
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
