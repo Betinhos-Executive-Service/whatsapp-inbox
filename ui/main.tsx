@@ -6,7 +6,6 @@ import {
   Pin,
   Ban,
   CheckCircle2,
-  Copy,
   Forward,
   MoreVertical,
   Pencil,
@@ -66,7 +65,7 @@ const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ defaul
 import { UpdateDialog } from "./update.tsx";
 import { ForwardDialog } from "./forward.tsx";
 import { MessageMenu, type MenuAt } from "./message-menu.tsx";
-import { AckIcon, canEdit, EditBar, ReactButton, ReactionList } from "./message-extras.tsx";
+import { AckIcon, canEdit, CopyButton, EditBar, ReactButton, ReactionList } from "./message-extras.tsx";
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
 import { toggleWa } from "./wa-text.ts";
 import { desktop } from "./desktop.ts";
@@ -618,7 +617,7 @@ function captionOf(m: Message, body: string): string {
   return caption;
 }
 
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu }: {
   messages: Message[];
   isGroup: boolean;
   hasMore: boolean;
@@ -627,9 +626,11 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   chatName: string;
   /** WhatsApp conectado: responder e apagar dependem dele. */
   canAct: boolean;
+  /** Mensagem sendo respondida ou editada: fica destacada na conversa. */
+  targetId: string | null;
   onReply: (m: Message) => void;
   onDelete: (m: Message) => void;
-  onCopy: (m: Message) => void;
+  onCopy: (m: Message, quiet?: boolean) => Promise<boolean>;
   onAuthor: (jid: string, name: string) => void;
   onJump: (id: string) => void;
   onReact: (m: Message, emoji: string) => void;
@@ -658,7 +659,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         const caption = captionOf(m, body);
         const sender = m.sender;
         return (
-          <div key={m.id} data-message-id={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}`}>
+          <div key={m.id} data-message-id={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
             <div
               className="message-line"
@@ -735,11 +736,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   </button>
                 )}
                 {!m.deleted && <ReactButton m={m} onReact={onReact} disabled={!canAct} />}
-                {!m.deleted && (!m.media || caption) && (
-                  <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Copiar texto" title="Copiar texto" onClick={() => onCopy(m)}>
-                    <Copy size={16} aria-hidden />
-                  </button>
-                )}
+                {!m.deleted && (!m.media || caption) && <CopyButton m={m} onCopy={onCopy} />}
                 {!m.deleted && (
                   <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Encaminhar" title="Encaminhar" disabled={!canAct} onClick={() => onForward(m)}>
                     <Forward size={16} aria-hidden />
@@ -1152,17 +1149,33 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
 
   // ---- ações da mensagem (callbacks estáveis para o memo de <Messages>)
 
+  /** Reinicia uma animação de uma vez na linha da mensagem (pular para a citada, reagir). */
+  const flashRow = useCallback((id: string, cls: string) => {
+    const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
+    if (!row) return;
+    row.classList.remove(cls);
+    void row.offsetWidth;
+    row.classList.add(cls);
+  }, []);
+
   const reply = useCallback((m: Message) => {
     setReplyTo(m);
     requestAnimationFrame(() => composer.current?.focus());
   }, []);
   const copy = useCallback(
-    (m: Message) => {
+    // quiet: o botão da bolha confirma no próprio ícone; o menu ainda usa o toast.
+    (m: Message, quiet = false) => {
       // Mídia: copia só a legenda, sem o "[Imagem]" do começo.
       const text = captionOf(m, splitAuthor(m, chat.isGroup).body);
-      navigator.clipboard.writeText(text).then(
-        () => notify("success", "Texto copiado."),
-        () => notify("error", "Não foi possível copiar."),
+      return navigator.clipboard.writeText(text).then(
+        () => {
+          if (!quiet) notify("success", "Texto copiado.");
+          return true;
+        },
+        () => {
+          notify("error", "Não foi possível copiar.");
+          return false;
+        },
       );
     },
     [chat.isGroup, notify],
@@ -1173,6 +1186,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     async (m: Message, emoji: string) => {
       const reactions = [...m.reactions.filter((r) => !r.fromMe), ...(emoji ? [{ emoji, fromMe: true }] : [])];
       setMessages((list) => list && list.map((x) => (x.id === m.id ? { ...x, reactions } : x)));
+      if (emoji) requestAnimationFrame(() => flashRow(m.id, "message-row--reacted"));
       try {
         const updated = await api.react(chat.jid, m.id, emoji);
         setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
@@ -1181,7 +1195,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         notify("error", `Reação não enviada. ${(e as Error).message}`);
       }
     },
-    [chat.jid, notify],
+    [chat.jid, notify, flashRow],
   );
   const forward = useCallback((m: Message) => setForwarding(m), []);
   const [menuAt, setMenuAt] = useState<MenuAt | null>(null);
@@ -1246,11 +1260,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
       if (!row) return notify("error", "A mensagem respondida é mais antiga. Use Carregar mensagens anteriores.");
       row.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-      row.classList.remove("message-row--flash");
-      void row.offsetWidth;
-      row.classList.add("message-row--flash");
+      flashRow(id, "message-row--flash");
     },
-    [notify],
+    [notify, flashRow],
   );
   const confirmDelete = async (mode: "everyone" | "me") => {
     if (!deleting) return;
@@ -1406,6 +1418,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             loadingMore={loadingMore}
             chatName={chat.name}
             canAct={connected}
+            targetId={editing?.id ?? replyTo?.id ?? null}
             onReply={reply}
             onDelete={askDelete}
             onCopy={copy}
@@ -1460,8 +1473,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         </label>
         {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
         {showMention && <MentionMenu items={mentionItems} active={mentionActive} onPick={pickMention} onHover={setMentionActive} />}
-        {editing && <EditBar message={editing} onCancel={cancelEdit} />}
-        {replyTo && <ReplyBar message={replyTo} isGroup={chat.isGroup} chatName={chat.name} onCancel={() => setReplyTo(null)} />}
+        {editing && <EditBar key={editing.id} message={editing} onCancel={cancelEdit} />}
+        {replyTo && <ReplyBar key={replyTo.id} message={replyTo} isGroup={chat.isGroup} chatName={chat.name} onCancel={() => setReplyTo(null)} />}
         {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} disabled={sending} />}
         <input
           ref={fileInput}
