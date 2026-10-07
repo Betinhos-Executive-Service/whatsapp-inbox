@@ -47,12 +47,12 @@ O servidor só escuta em `127.0.0.1` e recusa pedidos de outras origens.
 pnpm dev        # navegador: http://127.0.0.1:38291, recompila a cada mudança
 pnpm app        # abre o app desktop sem instalar
 pnpm exe        # gera o instalador em release/ sem publicar
-pnpm release    # publica versão nova no GitHub Releases (exige main limpa e gh logado)
+pnpm release    # usado pelo workflow da main; não rodar à mão
 pnpm test       # testes (node --test)
 pnpm typecheck
 ```
 
-Todo build incrementa a versão exibida no canto da tela. `pnpm release` faz o commit da versão, envia para a `main`, gera o instalador e publica a release; os apps instalados passam a avisar da versão nova.
+A versão é automática: cada alteração na `main` dispara o workflow `release` (GitHub Actions), que incrementa a versão, faz o commit `release: vX`, gera o instalador e publica a release; os apps instalados passam a avisar da versão nova. Não rode `pnpm release` à mão, senão a versão sobe duas vezes.
 
 Feche o app instalado antes de rodar `pnpm dev` ou `pnpm app` com a mesma sessão: dois clientes com a mesma sessão derrubam um ao outro.
 

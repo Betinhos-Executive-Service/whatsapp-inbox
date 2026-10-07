@@ -142,6 +142,12 @@ test("extractText cobre texto, mídia e ignora protocolo/reação", () => {
   assert.equal(extractText(null), null);
 });
 
+test("visualização única aparece como aviso, sem mídia", () => {
+  assert.deepEqual(extractText({ imageMessage: { viewOnce: true, caption: "x" } }), { text: "[Foto de visualização única] Abra no celular para ver.", kind: "view_once" });
+  assert.equal(extractText({ videoMessage: { viewOnce: true } })?.kind, "view_once");
+  assert.equal(extractText({ imageMessage: { caption: "oi" } })?.kind, "image");
+});
+
 test("Jev: perguntas, estado e resposta validados", () => {
   const labels = [{ name: "Cotação", description: "Preço" }, { name: "Outros", description: "" }];
   assert.throws(() => buildQuestions(labels.slice(0, 1)));
