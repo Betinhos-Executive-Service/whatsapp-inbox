@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { startApp, type RunningApp } from "../server/app.ts";
 import type { Chat, Message, Reminder } from "../server/db.ts";
 import { inQuietHours, type Prefs } from "../server/prefs.ts";
+import { isUrgent, notificationBody, notificationTitle, UnreadCounter } from "./notifications.ts";
 import { setupUpdates } from "./updates.ts";
 
 const PRODUCT = "WhatsApp Inbox";
@@ -16,8 +17,11 @@ let quitting = false;
 let trayHintShown = false;
 let origin: string | null = null;
 let updates: ReturnType<typeof setupUpdates> | null = null;
-// Notificações vivas: sem referência, o Windows pode descartar o clique.
-const shown = new Set<Notification>();
+// Um toast vivo por conversa: sem referência, o Windows pode descartar o clique;
+// com ela, a mensagem seguinte fecha a anterior e mostra o total.
+const byChat = new Map<string, Notification>();
+const reminders = new Set<Notification>();
+const counter = new UnreadCounter();
 
 const iconPath = () => join(app.getAppPath(), "dist", "icon.ico");
 
@@ -40,26 +44,67 @@ function applyPrefs(prefs: Prefs) {
   app.setLoginItemSettings({ openAtLogin: prefs.startWithWindows, args: prefs.startMinimized ? ["--hidden"] : [] });
 }
 
+/** Conversa vista ou lida: some o toast e a contagem recomeça. */
+function clearChat(jid: string) {
+  counter.clear(jid);
+  byChat.get(jid)?.close();
+  byChat.delete(jid);
+  Notification.removeGroup(jid);
+}
+
+function openChat(jid: string) {
+  showWindow();
+  sendToPage("app:open-chat", jid);
+  clearChat(jid);
+}
+
+function failure(chat: Chat, title: string, detail: string) {
+  const n = new Notification({ title, body: detail.slice(0, 180), icon: iconPath(), groupId: chat.jid, groupTitle: chat.name });
+  reminders.add(n);
+  n.on("click", () => openChat(chat.jid));
+  n.on("close", () => reminders.delete(n));
+  n.show();
+}
+
 function notify(chat: Chat, message: Message) {
   const prefs = server?.prefs();
   if (!prefs?.notifyEnabled || !Notification.isSupported()) return;
   // Com o app na frente a mensagem já aparece na tela.
   if (window?.isVisible() && window.isFocused()) return;
   if (inQuietHours(prefs)) return;
+  window?.flashFrame(true);
+  const count = counter.bump(chat.jid);
+  byChat.get(chat.jid)?.close();
   const n = new Notification({
-    title: chat.name,
-    body: prefs.notifyPreview ? message.text.slice(0, 180) : "Nova mensagem",
+    id: chat.jid,
+    groupId: chat.jid,
+    groupTitle: chat.name,
+    title: notificationTitle(chat, count),
+    body: notificationBody(message, prefs.notifyPreview),
     silent: !prefs.notifySound,
+    urgency: isUrgent(chat) ? "critical" : "normal",
     icon: iconPath(),
+    hasReply: true,
+    replyPlaceholder: "Responder…",
+    actions: [{ type: "button", text: "Marcar como lida" }],
   });
-  shown.add(n);
-  n.on("click", () => {
-    showWindow();
-    sendToPage("app:open-chat", chat.jid);
+  byChat.set(chat.jid, n);
+  n.on("click", () => openChat(chat.jid));
+  n.on("action", () => {
+    server?.markRead(chat.jid).catch((e: Error) => failure(chat, `Não foi possível marcar ${chat.name} como lida`, e.message));
   });
-  n.on("close", () => shown.delete(n));
+  n.on("reply", (event) => {
+    const text = event.reply.trim();
+    if (!text || !server) return;
+    server
+      .send(chat.jid, text)
+      .then(() => server?.markRead(chat.jid))
+      .catch((e: Error) => failure(chat, `Mensagem não enviada para ${chat.name}`, `${e.message} Texto: ${text}`));
+  });
+  n.on("close", () => {
+    if (byChat.get(chat.jid) === n) byChat.delete(chat.jid);
+  });
   n.show();
-  setTimeout(() => shown.delete(n), 60_000);
 }
 
 /** Lembrete é pedido explícito seu: avisa mesmo com o app na frente e no horário de silêncio. */
@@ -70,13 +115,12 @@ function remind(chat: Chat, reminder: Reminder) {
     body: reminder.text || "Hora de retomar esta conversa.",
     silent: server ? !server.prefs().notifySound : false,
     icon: iconPath(),
+    groupId: chat.jid,
+    groupTitle: chat.name,
   });
-  shown.add(n);
-  n.on("click", () => {
-    showWindow();
-    sendToPage("app:open-chat", chat.jid);
-  });
-  n.on("close", () => shown.delete(n));
+  reminders.add(n);
+  n.on("click", () => openChat(chat.jid));
+  n.on("close", () => reminders.delete(n));
   n.show();
 }
 
@@ -114,6 +158,7 @@ function createWindow(url: string) {
   window.once("ready-to-show", () => {
     if (!startHidden) window?.show();
   });
+  window.on("focus", () => window?.flashFrame(false));
   // Fechar a janela só esconde: o WhatsApp continua recebendo e o Jev classificando.
   window.on("close", (event) => {
     if (quitting) return;
@@ -177,6 +222,7 @@ if (!app.requestSingleInstanceLock()) {
         onIncoming: notify,
         onReminder: remind,
         onPrefs: applyPrefs,
+        onRead: clearChat,
       });
     } catch (error) {
       dialog.showErrorBox(PRODUCT, `Não foi possível iniciar o app.\n\n${error instanceof Error ? error.message : String(error)}`);
