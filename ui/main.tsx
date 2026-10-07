@@ -1,6 +1,9 @@
 import {
   AlarmClock,
+  Archive,
   ArrowLeft,
+  BellOff,
+  Pin,
   Ban,
   CheckCircle2,
   Copy,
@@ -30,7 +33,8 @@ import {
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
-import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type Connection, type Message, type Participant, type QuickReply, type Status } from "./api.ts";
+import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
+import { ChatMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import {
@@ -182,6 +186,8 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
         <span className="chat-item__body">
           <span className="chat-item__row">
             <span className="chat-item__name">{chat.name}</span>
+            {isMuted(chat) && <BellOff className="chat-item__flag" size={14} aria-label="Silenciada" />}
+            {chat.pinnedAt && <Pin className="chat-item__flag" size={14} aria-label="Fixada" />}
             <span className={`chat-item__time${chat.unread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>
           </span>
           <span className="chat-item__row">
@@ -195,7 +201,7 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
               </span>
             )}
           </span>
-          {(chat.label || urgent || chat.reminderAt !== null || level || showPriority) && (
+          {(chat.label || chat.extraLabels.length > 0 || urgent || chat.reminderAt !== null || level || showPriority || isSnoozed(chat)) && (
             <span className="chat-item__tags">
               {showPriority && aiPriority && <span className={`badge ${PRIORITY_META[aiPriority].cls}`}>{PRIORITY_META[aiPriority].text}</span>}
               {level && !urgent && !showPriority && (
@@ -204,6 +210,16 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
                 </span>
               )}
               {chat.label && <span className="badge badge--info">{chat.label}</span>}
+              {chat.extraLabels.map((l) => (
+                <span key={l} className="badge badge--neutral">
+                  {l}
+                </span>
+              ))}
+              {isSnoozed(chat) && (
+                <span className="badge badge--neutral">
+                  <Clock size={12} aria-hidden /> Adiada até {untilLabel(chat.snoozedUntil!)}
+                </span>
+              )}
               {urgent && (
                 <span className="badge badge--danger">
                   <TriangleAlert size={12} aria-hidden /> Urgente
@@ -232,15 +248,21 @@ function searchText(c: Chat): string {
 
 function ChatList(props: {
   chats: Chat[];
+  byJid: Map<string, Chat>;
   labels: string[];
   selected: string | null;
   onOpen: (jid: string) => void;
+  /** Abre a conversa já na mensagem achada pela busca. */
+  onOpenAt: (jid: string, id: string) => void;
+  /** Ordem que está na tela, para os atalhos de próxima/anterior. */
+  onVisible: (jids: string[]) => void;
   connection: Connection;
   online: boolean;
   onSettings: () => void;
   loaded: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("aberta");
+  const [showArchived, setShowArchived] = useState(false);
   const [label, setLabel] = useState("");
   const [query, setQuery] = useState("");
   // A digitação responde na hora; o filtro de milhares de conversas vem logo depois.
@@ -262,31 +284,72 @@ function ChatList(props: {
     }
   };
 
+  // Arquivadas ficam fora das abas; adiadas, fora de Abertas e Aguardando até a hora marcada.
   const counts = useMemo(() => {
-    const c: Record<Tab, number> = { aberta: 0, aguardando: 0, resolvida: 0, todas: props.chats.length };
-    for (const chat of props.chats) c[chat.status]++;
+    const now = Date.now();
+    const c: Record<Tab, number> & { arquivadas: number } = { aberta: 0, aguardando: 0, resolvida: 0, todas: 0, arquivadas: 0 };
+    for (const chat of props.chats) {
+      if (chat.archived) {
+        c.arquivadas++;
+        continue;
+      }
+      c.todas++;
+      if (chat.status === "resolvida" || !isSnoozed(chat, now)) c[chat.status]++;
+    }
     return c;
   }, [props.chats]);
 
   const filtered = useMemo(() => {
     const q = normalize(deferredQuery.trim());
+    const now = Date.now();
     const list = props.chats.filter(
       (c) =>
-        (tab === "todas" || c.status === tab) &&
-        (!label || (label === "__none" ? !c.label : c.label === label)) &&
+        (showArchived
+          ? c.archived
+          : !c.archived && (tab === "todas" || (c.status === tab && (tab === "resolvida" || !isSnoozed(c, now))))) &&
+        (!label || (label === "__none" ? !c.label && !c.extraLabels.length : c.label === label || c.extraLabels.includes(label))) &&
         (!q || searchText(c).includes(q)),
     );
-    if (order === "prioridade") {
-      const now = Date.now();
-      return list
-        .map((c) => ({ c, s: priorityScore(c, now) }))
-        .sort((a, b) => b.s - a.s || b.c.lastAt - a.c.lastAt)
-        .map((x) => x.c);
-    }
-    return list;
-  }, [props.chats, tab, label, deferredQuery, order]);
+    const ordered =
+      order === "prioridade"
+        ? list
+            .map((c) => ({ c, s: priorityScore(c, now) }))
+            .sort((a, b) => b.s - a.s || b.c.lastAt - a.c.lastAt)
+            .map((x) => x.c)
+        : list;
+    // Fixadas no topo, na ordem em que foram fixadas (a mais recente primeiro).
+    const pinned = ordered.filter((c) => c.pinnedAt).sort((a, b) => b.pinnedAt! - a.pinnedAt!);
+    return pinned.length ? [...pinned, ...ordered.filter((c) => !c.pinnedAt)] : ordered;
+  }, [props.chats, tab, label, deferredQuery, order, showArchived]);
 
-  useEffect(() => setLimit(PAGE), [tab, label, query]);
+  const { onVisible } = props;
+  useEffect(() => onVisible(filtered.map((c) => c.jid)), [filtered, onVisible]);
+
+  // Busca também no texto das mensagens (servidor), a partir de 2 letras.
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [hitsLoading, setHitsLoading] = useState(false);
+  const messageQuery = deferredQuery.trim().length >= 2 ? deferredQuery.trim() : "";
+  useEffect(() => {
+    if (!messageQuery) {
+      setHits([]);
+      return;
+    }
+    let alive = true;
+    setHitsLoading(true);
+    const timer = setTimeout(() => {
+      api
+        .search(messageQuery)
+        .then((list) => alive && setHits(list))
+        .catch(() => alive && setHits([]))
+        .finally(() => alive && setHitsLoading(false));
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [messageQuery]);
+
+  useEffect(() => setLimit(PAGE), [tab, label, query, showArchived]);
 
   return (
     <section className="list-pane" aria-label="Conversas">
@@ -301,11 +364,20 @@ function ChatList(props: {
         <label className="search">
           <Search size={16} aria-hidden />
           <span className="sr-only">Buscar conversa</span>
-          <input type="search" placeholder="Nome, número ou mensagem" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input id="chat-search" type="search" placeholder="Nome, número ou mensagem (Ctrl+K)" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
         <div className="segmented" role="tablist" aria-label="Status da conversa">
           {TABS.map((t) => (
-            <button key={t.id} role="tab" aria-selected={tab === t.id} className="segmented__item" onClick={() => setTab(t.id)}>
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={!showArchived && tab === t.id}
+              className="segmented__item"
+              onClick={() => {
+                setTab(t.id);
+                setShowArchived(false);
+              }}
+            >
               {t.label} <span className="segmented__count">{counts[t.id]}</span>
             </button>
           ))}
@@ -333,6 +405,13 @@ function ChatList(props: {
         </div>
       </header>
       <div className="list-pane__scroll">
+        {(showArchived || counts.arquivadas > 0) && (
+          <button type="button" className="archived-toggle" aria-pressed={showArchived} onClick={() => setShowArchived((v) => !v)}>
+            {showArchived ? <ArrowLeft size={16} aria-hidden /> : <Archive size={16} aria-hidden />}
+            {showArchived ? "Voltar para as conversas" : "Arquivadas"}
+            {!showArchived && <span className="segmented__count">{counts.arquivadas}</span>}
+          </button>
+        )}
         {!props.loaded ? (
           <ul className="chat-list" aria-busy="true" aria-label="Carregando conversas">
             {Array.from({ length: 6 }, (_, i) => (
@@ -342,7 +421,7 @@ function ChatList(props: {
         ) : filtered.length === 0 ? (
           <div className="empty">
             <Inbox size={36} aria-hidden />
-            <p className="empty__title">{props.chats.length ? "Nenhuma conversa nestes filtros" : "Nenhuma conversa ainda"}</p>
+            <p className="empty__title">{showArchived ? "Nenhuma conversa arquivada nestes filtros" : props.chats.length ? "Nenhuma conversa nestes filtros" : "Nenhuma conversa ainda"}</p>
             <p className="hint">
               {props.chats.length
                 ? "Troque a aba de status, a etiqueta ou a busca."
@@ -361,6 +440,7 @@ function ChatList(props: {
             Mostrar mais {Math.min(PAGE, filtered.length - limit)}
           </button>
         )}
+        {messageQuery && <MessageHits hits={hits} chats={props.byJid} loading={hitsLoading} onOpen={props.onOpenAt} />}
       </div>
     </section>
   );
@@ -375,7 +455,7 @@ const PRIORITY_META = {
 function ClassificationBar({ chat, labels, onChange, onClassify, classifying, jevReady, classifierName }: {
   chat: Chat;
   labels: string[];
-  onChange: (patch: { status?: Status; label?: string | null }) => void;
+  onChange: (patch: ChatPatch) => void;
   onClassify: () => void;
   classifying: boolean;
   jevReady: boolean;
@@ -408,6 +488,7 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
           ))}
         </select>
       </label>
+      <ExtraLabelsPicker chat={chat} labels={labels} onChange={onChange} />
       <button
         className="button button--secondary button--compact"
         onClick={onClassify}
@@ -569,8 +650,10 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   );
 });
 
-function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, quickReplies, onSetupAi, sendTyping }: {
+function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, quickReplies, onSetupAi, sendTyping, focus }: {
   chat: Chat;
+  /** Mensagem para abrir em destaque (vinda da busca); `seq` força reabrir a mesma. */
+  focus: { id: string; seq: number } | null;
   /** Avisar ao contato que você está digitando (preferência). */
   sendTyping: boolean;
   onSetupAi: () => void;
@@ -669,24 +752,31 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const keepOffset = useRef<number | null>(null);
+  const pendingFocus = useRef<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     setMessages(null);
-    setDraft("");
-    stickToBottom.current = true;
-    api
-      .messages(chat.jid)
+    stickToBottom.current = !focus;
+    (focus ? api.messagesAround(chat.jid, focus.id) : api.messages(chat.jid))
       .then((list) => {
         if (!alive) return;
+        // Abre já rolado e destacado na mensagem achada (ver o useLayoutEffect abaixo).
+        pendingFocus.current = focus?.id ?? null;
         setMessages(list);
-        setHasMore(list.length >= 80);
+        setHasMore(focus ? true : list.length >= 80);
       })
       .catch((e) => alive && notify("error", e.message));
     return () => {
       alive = false;
     };
-  }, [chat.jid, notify]);
+  }, [chat.jid, notify, focus]);
+
+  // Rascunho por conversa: volta ao abrir e é guardado enquanto digita (não durante uma edição).
+  useEffect(() => setDraft(drafts.get(chat.jid)), [chat.jid]);
+  useEffect(() => {
+    if (!editing) drafts.set(chat.jid, draft);
+  }, [chat.jid, draft, editing]);
 
   // Mensagem nova chegando nesta conversa (SSE) vira evento no window.
   useEffect(() => {
@@ -727,7 +817,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el || !messages) return;
-    if (keepOffset.current !== null) {
+    if (pendingFocus.current) {
+      const id = pendingFocus.current;
+      pendingFocus.current = null;
+      jump(id);
+    } else if (keepOffset.current !== null) {
       el.scrollTop = el.scrollHeight - keepOffset.current;
       keepOffset.current = null;
     } else if (stickToBottom.current) {
@@ -993,7 +1087,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
   };
 
-  const change = async (patch: { status?: Status; label?: string | null }) => {
+  const change = async (patch: ChatPatch) => {
     try {
       onChat(await api.update(chat.jid, patch));
     } catch (e) {
@@ -1082,6 +1176,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             <StickyNote size={16} aria-hidden /> Notas e lembretes
             {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
           </button>
+          <ChatMenu chat={chat} onChange={(patch) => void change(patch)} />
           <AiQuickPicker onMore={onSetupAi} />
         </div>
         <ClassificationBar
@@ -1342,6 +1437,20 @@ function App() {
   const [chats, setChats] = useState<Map<string, Chat>>(new Map());
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [focus, setFocus] = useState<{ id: string; seq: number } | null>(null);
+  const openChat = useCallback((jid: string | null) => {
+    setFocus(null);
+    setSelected(jid);
+  }, []);
+  const openAt = useCallback((jid: string, id: string) => {
+    setSelected(jid);
+    setFocus((f) => ({ id, seq: (f?.seq ?? 0) + 1 }));
+  }, []);
+  const visible = useRef<string[]>([]);
+  const onVisible = useCallback((jids: string[]) => {
+    visible.current = jids;
+  }, []);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [online, setOnline] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsUsed = useRef(false);
@@ -1452,13 +1561,52 @@ function App() {
     if (theme) applyTheme(theme);
   }, [theme]);
 
+  // Atalhos globais (ver ShortcutsDialog). Dentro de campos, só Ctrl+K vale.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing = !!el && (el.isContentEditable || /^(input|textarea|select)$/i.test(el.tagName));
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSelected(null);
+        requestAnimationFrame(() => document.getElementById("chat-search")?.focus());
+        return;
+      }
+      if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        const list = visible.current;
+        if (!list.length) return;
+        e.preventDefault();
+        const i = selected ? list.indexOf(selected) : -1;
+        const next = e.key === "ArrowDown" ? Math.min(list.length - 1, i + 1) : Math.max(0, i === -1 ? 0 : i - 1);
+        openChat(list[next]);
+        return;
+      }
+      if (typing || e.altKey || e.repeat) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        setShortcutsOpen(true);
+      } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && selected) {
+        e.preventDefault();
+        api
+          .update(selected, { status: "resolvida" })
+          .then((c) => {
+            upsert(c);
+            push("success", `${c.name} marcada como resolvida.`);
+          })
+          .catch((err) => push("error", `Não foi possível resolver. ${(err as Error).message}`));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, openChat, upsert, push]);
+
   // Clique na notificação abre a conversa; "Configurações" na bandeja abre o painel.
   useEffect(() => {
     const bridge = desktop();
     if (!bridge) return;
     const offChat = bridge.onOpenChat((jid) => {
       setSkipConnect(true);
-      setSelected(jid);
+      openChat(jid);
     });
     const offSettings = bridge.onOpenSettings(() => setSettingsOpen(true));
     return () => {
@@ -1475,9 +1623,12 @@ function App() {
         <>
           <ChatList
             chats={sorted}
+            byJid={chats}
             labels={labels}
             selected={selected}
-            onOpen={setSelected}
+            onOpen={openChat}
+            onOpenAt={openAt}
+            onVisible={onVisible}
             connection={connection}
             online={online}
             onSettings={() => setSettingsOpen(true)}
@@ -1487,11 +1638,12 @@ function App() {
             <ChatView
               key={current.jid}
               chat={current}
+              focus={focus}
               labels={labels}
               connected={online && connection.status === "conectado"}
               jevReady={!!state?.classifier.configured}
               classifierName={state?.classifier.provider === "deepseek" ? "DeepSeek" : "Jev"}
-              onBack={() => setSelected(null)}
+              onBack={() => openChat(null)}
               notify={push}
               onChat={upsert}
               quickReplies={quickReplies}
@@ -1531,6 +1683,7 @@ function App() {
         />
         </Suspense>
       )}
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       <UpdateDialog />
       <Toasts toasts={toasts} dismiss={dismiss} />
       <div className="build-badge" aria-hidden="true">

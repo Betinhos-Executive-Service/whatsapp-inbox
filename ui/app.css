@@ -353,7 +353,7 @@ ul, ol { margin: 0; padding: 0; }
 .avatar.tone-5 { background-color: var(--bt-color-gray-100); }
 .bubble__text { font-size: var(--bt-font-size-14); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bubble__time { font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); font-variant-numeric: tabular-nums; }
-.bubble__meta { display: flex; justify-content: flex-end; align-items: center; gap: var(--bt-space-1); margin-top: 2px; font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); }
+.bubble__meta { position: relative; display: flex; justify-content: flex-end; align-items: center; gap: var(--bt-space-1); margin-top: 2px; font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); }
 .bubble__edited { font-style: italic; }
 .bubble__ack { display: inline-flex; color: var(--bt-color-text-secondary); }
 .bubble__ack--read { color: var(--bt-color-action); }
@@ -889,4 +889,63 @@ ul, ol { margin: 0; padding: 0; }
   :root[data-theme='dark'] .field input:hover:not(:focus),
   :root[data-theme='dark'] .field select:hover:not(:focus),
   :root[data-theme='dark'] .search:hover:not(:focus-within) { border-color: #3a4a66; }
+}
+
+/* ---- organizar: fixar, silenciar, arquivadas, adiar, etiquetas extras */
+.chat-item__row .chat-item__name { flex: 1 1 auto; min-width: 0; }
+.chat-item__flag { flex: 0 0 auto; color: var(--bt-color-text-secondary); }
+.archived-toggle {
+  display: flex; align-items: center; gap: var(--bt-space-2); width: 100%; min-height: var(--bt-control-height-default);
+  padding: 0 var(--bt-space-4); border: 0; border-bottom: var(--bt-border-width-default) solid var(--bt-color-border);
+  background-color: var(--bt-color-surface-neutral); color: var(--bt-color-text-primary);
+  font: inherit; font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-bold); text-align: left; cursor: pointer;
+}
+.archived-toggle > svg { color: var(--bt-color-text-secondary); }
+.archived-toggle .segmented__count { margin-left: auto; }
+.archived-toggle:focus-visible { outline: 0; box-shadow: inset var(--bt-focus-ring); }
+@media (hover: hover) and (pointer: fine) { .archived-toggle:hover { background-color: var(--bt-color-surface-soft); } }
+
+.org-menu { position: relative; }
+.org-menu__panel {
+  position: absolute; top: calc(100% + var(--bt-space-1)); right: 0; z-index: var(--bt-z-index-floating-action);
+  display: flex; flex-direction: column; gap: 2px; min-width: 240px; padding: var(--bt-space-1);
+  background-color: var(--bt-color-surface); border: var(--bt-border-width-default) solid var(--bt-color-border);
+  border-radius: 9px; box-shadow: var(--bt-shadow-popover); animation: fade var(--bt-duration-instant) var(--bt-ease-out);
+}
+.classify .org-menu__panel { right: auto; left: 0; }
+.org-menu__label {
+  margin: var(--bt-space-2) var(--bt-space-2) var(--bt-space-1); font-size: var(--bt-font-size-11); font-weight: var(--bt-font-weight-extrabold);
+  letter-spacing: .08em; text-transform: uppercase; color: var(--bt-color-text-secondary);
+}
+.org-menu__label:first-child { margin-top: var(--bt-space-1); }
+.org-menu__item {
+  display: flex; align-items: center; gap: var(--bt-space-2); min-height: var(--bt-control-height-compact); padding: 0 var(--bt-space-2);
+  border: 0; border-radius: var(--bt-radius-sm); background-color: transparent; color: var(--bt-color-text-primary);
+  font: inherit; font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-semibold); text-align: left; cursor: pointer;
+}
+.org-menu__item > svg { color: var(--bt-color-text-secondary); flex: 0 0 auto; }
+.org-menu__item:focus-visible { outline: 0; box-shadow: var(--bt-focus-ring); }
+.org-menu__check { align-items: center; min-height: var(--bt-control-height-compact); padding: 0 var(--bt-space-2); border-radius: var(--bt-radius-sm); font-size: var(--bt-font-size-13); }
+@media (hover: hover) and (pointer: fine) {
+  .org-menu__item:hover, .org-menu__check:hover { background-color: var(--bt-color-surface-soft); }
+}
+
+/* ---- mensagens achadas na busca */
+.message-hits { border-top: var(--bt-border-width-default) solid var(--bt-color-border); }
+.message-hits__title { display: flex; align-items: center; gap: var(--bt-space-1-5); padding: var(--bt-space-3) var(--bt-space-4) var(--bt-space-1); }
+.message-hits__empty { padding: var(--bt-space-2) var(--bt-space-4) var(--bt-space-4); }
+.message-hit__snippet { font-size: var(--bt-font-size-12); color: var(--bt-color-slate-700); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.message-hit__snippet mark { background-color: var(--bt-color-warning-soft); color: var(--bt-color-text-primary); font-weight: var(--bt-font-weight-bold); border-radius: 2px; }
+
+/* ---- atalhos de teclado */
+.shortcuts { display: flex; flex-direction: column; gap: var(--bt-space-3); padding: var(--bt-space-5); width: min(100%, 460px); }
+.shortcuts__head { display: flex; align-items: center; justify-content: space-between; }
+.shortcuts__head h2 { display: flex; align-items: center; gap: var(--bt-space-2); }
+.shortcuts__list { display: flex; flex-direction: column; gap: var(--bt-space-1-5); margin: 0; }
+.shortcuts__row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: var(--bt-space-3); align-items: center; font-size: var(--bt-font-size-13); }
+.shortcuts__row dd { margin: 0; color: var(--bt-color-slate-700); }
+kbd {
+  display: inline-block; padding: 1px var(--bt-space-1-5); border: var(--bt-border-width-default) solid var(--bt-color-border);
+  border-radius: var(--bt-radius-xs); background-color: var(--bt-color-surface-neutral);
+  font-family: var(--bt-font-family-sans); font-size: var(--bt-font-size-12); font-weight: var(--bt-font-weight-bold); white-space: nowrap;
 }
