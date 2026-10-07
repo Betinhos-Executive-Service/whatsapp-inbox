@@ -265,18 +265,17 @@ function AccountsPanel() {
           if (changed) rename();
         }}
       >
-        <label className="field">
-          <span className="field__label">Nome desta conta</span>
-          <input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <button className="button button--secondary" type="submit" disabled={!changed || busy} aria-busy={busy || undefined}>
+        <Field label="Nome desta conta">
+          <Input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Button variant="secondary" type="submit" disabled={!changed} loading={busy}>
           Renomear
-        </button>
+        </Button>
       </form>
       <div className="cluster">
-        <button className="button button--secondary" type="button" onClick={() => void bridge.addAccount()} disabled={account.count >= account.max}>
-          <Plus size={16} aria-hidden /> Adicionar outra conta
-        </button>
+        <Button variant="secondary" type="button" icon={<Plus size={16} aria-hidden />} onClick={() => void bridge.addAccount()} disabled={account.count >= account.max}>
+          Adicionar outra conta
+        </Button>
       </div>
       {account.count > 1 && account.removable && <p className="hint">Para remover esta conta, clique com o botão direito nela no trilho à esquerda.</p>}
     </section>
