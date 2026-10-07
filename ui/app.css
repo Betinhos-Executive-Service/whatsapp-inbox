@@ -515,7 +515,8 @@ ul, ol { margin: 0; padding: 0; }
 }
 .drawer__panel--wide { width: min(100vw, var(--bt-drawer-width-wide)); }
 .settings-tabs {
-  display: flex; gap: var(--bt-space-1); overflow-x: auto; scrollbar-width: none;
+  /* Quebra em mais de uma linha em vez de rolar escondido: nenhuma aba some da vista. */
+  display: flex; flex-wrap: wrap; gap: 0 var(--bt-space-1);
   padding: var(--bt-space-2) var(--bt-space-5) 0;
   background-color: var(--bt-color-surface);
   border-bottom: var(--bt-border-width-default) solid var(--bt-color-border);
