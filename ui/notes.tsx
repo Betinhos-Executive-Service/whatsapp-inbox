@@ -2,6 +2,7 @@ import { AlarmClock, Check, LoaderCircle, Trash2, WandSparkles, X } from "lucide
 import { useEffect, useRef, useState } from "react";
 import { api, type Chat, type Reminder, type Summary } from "./api.ts";
 import { aiName, isAiReady, useAiStatus, useUsdBrl } from "./ai-state.ts";
+import { ResizeHandle } from "./resize.tsx";
 import { dayLabel, formatBrl, formatTime, formatTokens, formatUsd } from "./format.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -124,6 +125,7 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
 
   return (
     <aside className="notes" aria-label="Notas e lembretes">
+      <ResizeHandle cssVar="--inbox-side-w" storageKey="inbox:side-w" initial={320} min={280} max={560} edge="start" reserve={360} label="Largura do painel lateral" />
       <header className="notes__header">
         <h3 className="heading-card">Notas e lembretes</h3>
         <button

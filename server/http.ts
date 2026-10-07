@@ -29,11 +29,12 @@ export type Api = {
   typing: (jid: string, state: "composing" | "paused") => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   classify: (jid: string) => Promise<unknown>;
-  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
   media: (jid: string, id: string) => Promise<{ body: Buffer; mimetype: string; fileName: string | null }>;
+  transcribe: (jid: string, id: string) => Promise<string>;
   ai: {
     status: () => unknown;
     draft: (jid: string) => Promise<string>;
@@ -110,6 +111,7 @@ const settingsSchema = z.object({
   prefs: prefsSchema.partial().optional(),
   jevApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   deepseekApiKey: z.string().trim().min(10).max(500).nullable().optional(),
+  groqApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   autoClassify: z.boolean().optional(),
   classifyProvider: z.enum(["jev", "deepseek"]).optional(),
 });
@@ -364,6 +366,14 @@ export function createHandler(api: Api) {
       const { text } = parse(z.object({ text: z.string().max(2000).nullable() }), await readJson(req));
       api.ai.setInstructions(text);
       return json(res, 200, api.ai.status());
+    }
+    const transcribeMatch = path.match(/^\/api\/transcribe\/([^/]+)\/([^/]+)$/);
+    if (transcribeMatch && method === "POST") {
+      await readJson(req);
+      const text = await api.transcribe(decodeURIComponent(transcribeMatch[1]), decodeURIComponent(transcribeMatch[2])).catch((error: Error) => {
+        throw new HttpError(502, error.message);
+      });
+      return json(res, 200, { text });
     }
     const mediaMatch = path.match(/^\/api\/media\/([^/]+)\/([^/]+)$/);
     if (mediaMatch && method === "GET") {
