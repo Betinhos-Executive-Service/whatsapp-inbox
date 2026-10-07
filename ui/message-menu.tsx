@@ -1,7 +1,8 @@
-import { Copy, Download, Forward, Pencil, Reply, Trash2, UserRound } from "lucide-react";
+import { Copy, Download, Eye, Forward, ImageIcon, Pencil, Reply, Trash2, UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { mediaUrl, type Message } from "./api.ts";
 import { canEdit, REACTIONS } from "./message-extras.tsx";
+import { canCopyMedia } from "./media.tsx";
 
 /** Mensagem e ponto da tela onde o menu abre (clique direito ou botão "Mais opções"). */
 export type MenuAt = { message: Message; x: number; y: number };
@@ -10,6 +11,10 @@ export type MessageMenuActions = {
   onReply: (m: Message) => void;
   onReact: (m: Message, emoji: string) => void;
   onCopy: (m: Message) => void;
+  /** Imagem como imagem; outros arquivos como arquivo (colar no Explorer, e-mail etc.). */
+  onCopyMedia: (m: Message) => void;
+  /** Abre a visualização dentro do app, sem baixar. */
+  onView: (m: Message) => void;
   onForward: (m: Message) => void;
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
@@ -32,6 +37,8 @@ export function MessageMenu({ at, canAct, hasText, author, actions, onClose }: {
 }) {
   const m = at.message;
   const mine = m.reactions.find((r) => r.fromMe)?.emoji ?? null;
+  const image = m.media?.type === "image" || m.media?.type === "sticker";
+  const viewable = image || m.media?.type === "document";
   const panel = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: at.x, top: at.y });
 
@@ -40,6 +47,10 @@ export function MessageMenu({ at, canAct, hasText, author, actions, onClose }: {
     : [
         { id: "reply", label: "Responder", icon: <Reply size={16} aria-hidden />, disabled: !canAct, run: () => actions.onReply(m) },
         ...(hasText ? [{ id: "copy", label: "Copiar", icon: <Copy size={16} aria-hidden />, run: () => actions.onCopy(m) }] : []),
+        ...(m.media && canCopyMedia(m)
+          ? [{ id: "copy-media", label: image ? "Copiar imagem" : "Copiar arquivo", icon: image ? <ImageIcon size={16} aria-hidden /> : <Copy size={16} aria-hidden />, run: () => actions.onCopyMedia(m) }]
+          : []),
+        ...(viewable ? [{ id: "view", label: "Visualizar", icon: <Eye size={16} aria-hidden />, run: () => actions.onView(m) }] : []),
         { id: "forward", label: "Encaminhar", icon: <Forward size={16} aria-hidden />, disabled: !canAct, run: () => actions.onForward(m) },
         ...(m.media ? [{ id: "download", label: "Baixar arquivo", icon: <Download size={16} aria-hidden />, href: mediaUrl(m, true) }] : []),
         ...(canEdit(m) ? [{ id: "edit", label: "Editar", icon: <Pencil size={16} aria-hidden />, disabled: !canAct, run: () => actions.onEdit(m) }] : []),

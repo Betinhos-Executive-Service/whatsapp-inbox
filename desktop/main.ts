@@ -3,6 +3,7 @@
 // na bandeja quando a janela é fechada. Cada conta é uma instância separada (dados, auth e
 // configurações próprios); a troca de conta só alterna qual área aparece.
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell, Tray, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { startApp, type RunningApp } from "../server/app.ts";
@@ -11,6 +12,7 @@ import { inQuietHours, type Prefs } from "../server/prefs.ts";
 import type { ConnectionState } from "../server/whatsapp.ts";
 import { addAccount, isRemovableDir, loadAccounts, MAX_ACCOUNTS, removeAccount, renameAccount, saveAccounts, setActive, type Account, type Registry } from "./accounts.ts";
 import { roundAvatar } from "./avatar.ts";
+import { mediaToTemp } from "./files.ts";
 import { isUrgent, notificationBody, notificationTitle, UnreadCounter } from "./notifications.ts";
 import type { RailAccount } from "./rail/rail.ts";
 import { setupUpdates } from "./updates.ts";
@@ -479,6 +481,22 @@ function setupIpc() {
     inst.unread = Number.isInteger(total) && (total as number) >= 0 ? (total as number) : 0;
     updateUnread();
   });
+  // Mídia como arquivo: copiar para colar em outro app, ou abrir no app padrão sem ir para Downloads.
+  const mediaFile = (event: IpcMainInvokeEvent, chatJid: unknown, id: unknown) => {
+    const inst = senderInstance(event);
+    if (!inst?.origin) throw new Error("Origem não autorizada.");
+    if (typeof chatJid !== "string" || typeof id !== "string" || !chatJid || !id) throw new Error("Mensagem inválida.");
+    return mediaToTemp(inst.origin, chatJid, id, join(app.getPath("temp"), PRODUCT, inst.account.id));
+  };
+  ipcMain.handle("media:copy-file", async (event, chatJid: unknown, id: unknown) => {
+    const path = await mediaFile(event, chatJid, id);
+    if (process.platform !== "win32") throw new Error("Copiar arquivo só está disponível no Windows.");
+    await copyFileToClipboard(path);
+  });
+  ipcMain.handle("media:open", async (event, chatJid: unknown, id: unknown) => {
+    const failure = await shell.openPath(await mediaFile(event, chatJid, id));
+    if (failure) throw new Error(`Nenhum app abriu este arquivo. ${failure}`);
+  });
   ipcMain.handle("account:info", (event) => {
     const inst = senderInstance(event);
     return inst ? accountInfo(inst) : null;
@@ -563,6 +581,24 @@ function createWindow() {
     }
   });
   void window.loadFile(join(app.getAppPath(), "dist", "rail", "index.html"));
+}
+
+/**
+ * Lista de arquivos (CF_HDROP) na área de transferência do Windows, a mesma do Ctrl+C no Explorer.
+ * O Electron só grava texto e imagem; o caminho vai por variável de ambiente, nunca no comando.
+ */
+function copyFileToClipboard(path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Set-Clipboard -LiteralPath $env:INBOX_CLIPBOARD_FILE"], {
+      env: { ...process.env, INBOX_CLIPBOARD_FILE: path },
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    child.on("error", reject);
+    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`Não foi possível copiar o arquivo. ${stderr.trim()}`.trim()))));
+  });
 }
 
 function buildTrayMenu() {

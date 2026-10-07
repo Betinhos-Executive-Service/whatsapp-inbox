@@ -1,6 +1,7 @@
-import { Download, FileText, LoaderCircle, Mic, Pause, Play, RefreshCw, Reply, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { Check, Copy, Download, ExternalLink, Eye, FileText, LoaderCircle, Mic, Pause, Play, RefreshCw, Reply, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, mediaUrl, type AudioSummary, type Message, type OutgoingMedia } from "./api.ts";
+import { desktop } from "./desktop.ts";
 import { webmToOgg } from "./ogg.ts";
 import { Button, Select } from "./ds/index.ts";
 
@@ -112,18 +113,310 @@ export function AudioPlayer({ src, seconds, voice, onError }: { src: string; sec
   );
 }
 
-function Lightbox({ src, download, onClose }: { src: string; download: string; onClose: () => void }) {
-  const close = useRef<HTMLButtonElement>(null);
+// ---- Copiar e visualizar mídia
+
+/** Erro do IPC chega como "Error invoking remote method 'x': Error: texto". */
+const bridgeError = (e: unknown) => ((e as Error)?.message ?? "").replace(/^Error invoking remote method '[^']+': (Error: )?/, "") || "Não foi possível concluir.";
+
+/** Imagem copiável como imagem; o resto só como arquivo, pelo app desktop. */
+export const canCopyMedia = (m: Message) => !!m.media && (m.media.type === "image" || m.media.type === "sticker" || !!desktop()?.copyFile);
+
+/** Copia a mídia e devolve a confirmação a mostrar. Imagem vira PNG (o único formato que a área de transferência aceita). */
+export async function copyMedia(m: Message): Promise<string> {
+  const media = m.media;
+  if (!media) throw new Error("Esta mensagem não tem mídia.");
+  if (media.type === "image" || media.type === "sticker") {
+    const res = await fetch(mediaUrl(m));
+    if (!res.ok) throw new Error("Não foi possível abrir a imagem. Ela pode ter expirado no WhatsApp.");
+    const bitmap = await createImageBitmap(await res.blob());
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const png = await canvas.convertToBlob({ type: "image/png" });
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    return "Imagem copiada.";
+  }
+  const bridge = desktop();
+  if (!bridge?.copyFile) throw new Error("Copiar arquivo só funciona no app desktop.");
+  await bridge.copyFile(m.chatJid, m.id).catch((e: unknown) => {
+    throw new Error(bridgeError(e));
+  });
+  return "Arquivo copiado. Cole com Ctrl+V onde quiser.";
+}
+
+/** Pede a uma bolha de mídia que abra a própria visualização (menu de contexto). */
+export const viewMedia = (m: Message) => window.dispatchEvent(new CustomEvent("inbox:view-media", { detail: { chatJid: m.chatJid, id: m.id } }));
+
+function useViewRequest(m: Message, open: () => void) {
   useEffect(() => {
-    close.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    const onView = (e: Event) => {
+      const d = (e as CustomEvent<{ chatJid: string; id: string }>).detail;
+      if (d.chatJid === m.chatJid && d.id === m.id) open();
+    };
+    window.addEventListener("inbox:view-media", onView);
+    return () => window.removeEventListener("inbox:view-media", onView);
+  }, [m.chatJid, m.id, open]);
+}
+
+type PreviewKind = "pdf" | "image" | "video" | "audio" | "text";
+const KIND_BY_EXT: Record<string, PreviewKind> = { pdf: "pdf", png: "image", jpg: "image", jpeg: "image", gif: "image", webp: "image", txt: "text", csv: "text" };
+
+/** O que abre dentro do app. SVG e HTML ficam de fora: rodariam script na origem do app. */
+export function previewKind(media: NonNullable<Message["media"]>): PreviewKind | null {
+  const mime = media.mimetype.toLowerCase().split(";")[0].trim();
+  if (mime === "application/pdf") return "pdf";
+  if (/^image\/(png|jpe?g|gif|webp|bmp)$/.test(mime)) return "image";
+  if (/^video\/(mp4|webm)$/.test(mime)) return "video";
+  if (/^audio\//.test(mime)) return "audio";
+  if (/^text\/(plain|csv)$/.test(mime) || mime === "application/json") return "text";
+  if (!mime || mime === "application/octet-stream") return KIND_BY_EXT[(media.fileName?.split(".").pop() ?? "").toLowerCase()] ?? null;
+  return null;
+}
+
+/** Texto acima disso não abre na visualização (fica pesado); abre no app padrão. */
+const TEXT_LIMIT = 1024 * 1024;
+
+function TextPreview({ src }: { src: string }) {
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch(src)
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
+      .then((t) => alive && setText(t))
+      .catch(() => alive && setError(true));
+    return () => {
+      alive = false;
+    };
+  }, [src]);
+  if (error) return <p className="viewer__empty">Não foi possível abrir o texto.</p>;
+  if (text === null)
+    return (
+      <p className="viewer__empty" role="status">
+        <LoaderCircle size={16} className="spin" aria-hidden /> Abrindo…
+      </p>
+    );
+  return <pre className="viewer__text">{text}</pre>;
+}
+
+/** Botão de copiar com confirmação no próprio botão (o modal cobre os toasts). */
+function CopyMediaButton({ m, onError }: { m: Message; onError: (text: string | null) => void }) {
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  const timer = useRef(0);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const image = m.media?.type === "image" || m.media?.type === "sticker";
+  const run = async () => {
+    setState("busy");
+    onError(null);
+    try {
+      await copyMedia(m);
+      setState("done");
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setState("idle"), 1600);
+    } catch (e) {
+      setState("idle");
+      onError((e as Error).message);
+    }
+  };
   return (
-    <div className="lightbox" role="dialog" aria-modal="true" aria-label="Imagem ampliada" onClick={onClose}>
+    <button type="button" className="button button--secondary" onClick={() => void run()} disabled={state === "busy"} aria-busy={state === "busy" || undefined}>
+      {state === "busy" ? <LoaderCircle size={16} className="spin" aria-hidden /> : state === "done" ? <Check size={16} aria-hidden /> : <Copy size={16} aria-hidden />}
+      {state === "done" ? "Copiado" : image ? "Copiar imagem" : "Copiar arquivo"}
+    </button>
+  );
+}
+
+/** Foco preso no diálogo e devolvido a quem abriu; Esc fecha. */
+function useDialog(panel: React.RefObject<HTMLElement | null>, first: React.RefObject<HTMLElement | null>, onClose: () => void) {
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    first.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      } else if (e.key === "Tab" && panel.current) {
+        const list = [...panel.current.querySelectorAll<HTMLElement>("a[href], button:not(:disabled), video, audio, iframe")];
+        const i = list.indexOf(document.activeElement as HTMLElement);
+        if (e.shiftKey && i <= 0) {
+          e.preventDefault();
+          list[list.length - 1]?.focus();
+        } else if (!e.shiftKey && i === list.length - 1) {
+          e.preventDefault();
+          list[0]?.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      opener?.focus?.();
+    };
+  }, [panel, first, onClose]);
+}
+
+/** Abre o arquivo dentro do app, sem baixar. Formatos que o app não mostra vão para o app padrão do Windows. */
+function FileViewer({ m, onClose }: { m: Message; onClose: () => void }) {
+  const media = m.media!;
+  const src = mediaUrl(m);
+  const name = media.fileName ?? "Documento";
+  const kind = previewKind(media);
+  const tooBig = kind === "text" && (media.size ?? 0) > TEXT_LIMIT;
+  const bridge = desktop();
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  useDialog(panel, close, onClose);
+  const openExternal = async () => {
+    if (!bridge?.openFile) return;
+    setOpening(true);
+    setError(null);
+    try {
+      await bridge.openFile(m.chatJid, m.id);
+    } catch (e) {
+      setError(bridgeError(e));
+    } finally {
+      setOpening(false);
+    }
+  };
+  const ext = (media.fileName?.split(".").pop() ?? media.mimetype.split("/").pop() ?? "").slice(0, 4).toUpperCase();
+  return (
+    <div className="modal viewer" role="dialog" aria-modal="true" aria-label={`Visualizar ${name}`}>
+      <div className="modal__overlay" onClick={onClose} />
+      <div ref={panel} className="modal__panel surface viewer__panel">
+        <header className="viewer__header">
+          <span className="media-doc__icon" aria-hidden>
+            <FileText size={20} />
+          </span>
+          <span className="viewer__title">
+            <strong title={name}>{name}</strong>
+            <span className="hint">{[ext, media.size ? fileSize(media.size) : null].filter(Boolean).join(" · ")}</span>
+          </span>
+          <div className="viewer__actions">
+            {canCopyMedia(m) && <CopyMediaButton m={m} onError={setError} />}
+            {bridge?.openFile && (
+              <button type="button" className="button button--secondary" onClick={() => void openExternal()} disabled={opening} aria-busy={opening || undefined}>
+                {opening ? <LoaderCircle size={16} className="spin" aria-hidden /> : <ExternalLink size={16} aria-hidden />} Abrir no app
+              </button>
+            )}
+            <a className="button button--secondary" href={mediaUrl(m, true)} download>
+              <Download size={16} aria-hidden /> Baixar
+            </a>
+            <button ref={close} type="button" className="icon-button" aria-label="Fechar visualização (Esc)" title="Fechar (Esc)" onClick={onClose}>
+              <X size={18} aria-hidden />
+            </button>
+          </div>
+        </header>
+        {error && (
+          <p className="viewer__error" role="alert">
+            <TriangleAlert size={14} aria-hidden /> {error}
+          </p>
+        )}
+        <div className="viewer__body">
+          {kind === "pdf" ? (
+            // O nome no fim do endereço vira o título na barra do visualizador de PDF.
+            <iframe className="viewer__frame" src={`${src}/${encodeURIComponent(name)}`} title={name} />
+          ) : kind === "image" ? (
+            <img className="viewer__image" src={src} alt={name} />
+          ) : kind === "video" ? (
+            <video className="viewer__image" src={src} controls autoPlay />
+          ) : kind === "audio" ? (
+            <audio src={src} controls autoPlay />
+          ) : kind === "text" && !tooBig ? (
+            <TextPreview src={src} />
+          ) : (
+            <div className="viewer__empty">
+              <FileText size={32} aria-hidden />
+              <p>
+                <strong>{tooBig ? "Arquivo grande demais para mostrar aqui." : "Este tipo de arquivo não abre dentro do app."}</strong>
+              </p>
+              <p className="hint">{bridge?.openFile ? "Abra no app padrão do Windows: o arquivo não vai para Downloads." : "Baixe o arquivo para abrir no computador."}</p>
+              {bridge?.openFile ? (
+                <button type="button" className="button button--primary" onClick={() => void openExternal()} disabled={opening} aria-busy={opening || undefined}>
+                  {opening ? <LoaderCircle size={16} className="spin" aria-hidden /> : <ExternalLink size={16} aria-hidden />} Abrir no app padrão
+                </button>
+              ) : (
+                <a className="button button--primary" href={mediaUrl(m, true)} download>
+                  <Download size={16} aria-hidden /> Baixar
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Miniatura no balão: primeira página do PDF (visualizador do Chromium, sem interação) ou a imagem. */
+function DocThumb({ m, kind }: { m: Message; kind: PreviewKind }) {
+  const src = mediaUrl(m);
+  const [loaded, setLoaded] = useState(false);
+  // Esconde até carregar: o visualizador do PDF começa como um quadro escuro.
+  return (
+    <div className={`media-doc__thumb${loaded ? "" : " media-doc__thumb--loading"}`}>
+      {kind === "image" ? (
+        <img className="media-doc__thumb-image" src={src} alt="" loading="lazy" onLoad={() => setLoaded(true)} />
+      ) : (
+        <iframe className="media-doc__thumb-pdf" src={`${src}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} title="" tabIndex={-1} aria-hidden loading="lazy" onLoad={() => setLoaded(true)} />
+      )}
+    </div>
+  );
+}
+
+function DocCard({ m }: { m: Message }) {
+  const media = m.media!;
+  const [viewing, setViewing] = useState(false);
+  const open = useCallback(() => setViewing(true), []);
+  const closeViewer = useCallback(() => setViewing(false), []);
+  useViewRequest(m, open);
+  const kind = previewKind(media);
+  const name = media.fileName ?? "Documento";
+  const ext = (media.fileName?.split(".").pop() ?? media.mimetype.split("/").pop() ?? "").slice(0, 4).toUpperCase();
+  return (
+    <div className="media-doc">
+      {/* O cartão inteiro abre a visualização com o mouse; no teclado, o botão "Ver" faz o mesmo. */}
+      <div className="media-doc__card" onClick={open}>
+        {(kind === "pdf" || kind === "image") && <DocThumb m={m} kind={kind} />}
+        <div className="media-doc__row">
+          <span className="media-doc__icon" aria-hidden>
+            <FileText size={20} />
+          </span>
+          <span className="media-doc__info">
+            <span className="media-doc__name" title={name}>{name}</span>
+            <span className="hint">{[ext, media.size ? fileSize(media.size) : null].filter(Boolean).join(" · ")}</span>
+          </span>
+        </div>
+      </div>
+      <div className="media-doc__actions">
+        <button type="button" className="media-doc__action" onClick={open} aria-label={`Ver ${name}`}>
+          <Eye size={16} aria-hidden /> Ver
+        </button>
+        <a className="media-doc__action" href={mediaUrl(m, true)} download aria-label={`Baixar ${name}`}>
+          <Download size={16} aria-hidden /> Baixar
+        </a>
+      </div>
+      {viewing && <FileViewer m={m} onClose={closeViewer} />}
+    </div>
+  );
+}
+
+function Lightbox({ m, src, download, onClose }: { m: Message; src: string; download: string; onClose: () => void }) {
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  useDialog(panel, close, onClose);
+  return (
+    <div ref={panel} className="lightbox" role="dialog" aria-modal="true" aria-label="Imagem ampliada" onClick={onClose}>
       <img src={src} alt="" onClick={(e) => e.stopPropagation()} />
+      {error && (
+        <p className="viewer__error viewer__error--dark" role="alert" onClick={(e) => e.stopPropagation()}>
+          <TriangleAlert size={14} aria-hidden /> {error}
+        </p>
+      )}
       <div className="lightbox__actions" onClick={(e) => e.stopPropagation()}>
+        <CopyMediaButton m={m} onError={setError} />
         <a className="button button--secondary" href={download} download>
           <Download size={16} aria-hidden /> Baixar
         </a>
@@ -309,7 +602,10 @@ export function MediaView({ m, caption }: { m: Message; caption: string }) {
   const [zoom, setZoom] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const closeZoom = useCallback(() => setZoom(false), []);
+  const openZoom = useCallback(() => setZoom(true), []);
   const media = m.media!;
+  const image = media.type === "image" || media.type === "sticker";
+  useViewRequest(m, image && !failed ? openZoom : noop);
   const src = mediaUrl(m);
   if (failed) {
     return (
@@ -332,7 +628,7 @@ export function MediaView({ m, caption }: { m: Message; caption: string }) {
             className={sticker ? "media-sticker" : undefined}
           />
         </button>
-        {zoom && <Lightbox src={src} download={mediaUrl(m, true)} onClose={closeZoom} />}
+        {zoom && <Lightbox m={m} src={src} download={mediaUrl(m, true)} onClose={closeZoom} />}
       </>
     );
   }
@@ -344,20 +640,10 @@ export function MediaView({ m, caption }: { m: Message; caption: string }) {
         <Transcript m={m} />
       </>
     );
-  const ext = (media.fileName?.split(".").pop() ?? media.mimetype.split("/").pop() ?? "").slice(0, 4).toUpperCase();
-  return (
-    <a className="media-doc" href={mediaUrl(m, true)} download>
-      <span className="media-doc__icon" aria-hidden>
-        <FileText size={20} />
-      </span>
-      <span className="media-doc__info">
-        <span className="media-doc__name">{media.fileName ?? "Documento"}</span>
-        <span className="hint">{[ext, media.size ? fileSize(media.size) : null].filter(Boolean).join(" · ")}</span>
-      </span>
-      <Download size={16} aria-hidden />
-    </a>
-  );
+  return <DocCard m={m} />;
 }
+
+const noop = () => undefined;
 
 // ---- Envio
 
