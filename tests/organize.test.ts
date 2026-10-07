@@ -85,8 +85,20 @@ test("etiquetas extras: só cadastradas, sem repetir, somem quando a etiqueta sa
   assert.deepEqual(s.getChat(PN)?.extraLabels, []);
 });
 
-test("fixar, arquivar e silenciar; mensagem nova desarquiva", () => {
+test("arquivada continua no arquivo com mensagem nova, como no WhatsApp", () => {
   const s = new Store(":memory:");
+  s.addMessage(msg(), true);
+  s.updateChat(PN, { archived: true });
+  s.addMessage(msg(), true);
+  const c = s.getChat(PN)!;
+  assert.equal(c.archived, true);
+  assert.equal(c.unread, 2, "conta como não lida mesmo arquivada");
+  assert.equal(s.lastMessageKey(PN)?.id, s.listMessages(PN, null).at(-1)?.id);
+});
+
+test("fixar, arquivar e silenciar; sem 'manter arquivadas' a mensagem nova desarquiva", () => {
+  const s = new Store(":memory:");
+  s.keepArchived = false;
   s.addMessage(msg(), true);
   const c = s.updateChat(PN, { pinned: true, archived: true, mutedUntil: 5_000 })!;
   assert.ok(c.pinnedAt);

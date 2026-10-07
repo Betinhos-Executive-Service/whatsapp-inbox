@@ -66,9 +66,9 @@ export function UpdateDialog() {
           {state.status === "error" ? "A atualização não terminou" : `Versão nova disponível ${version}`}
         </h2>
         <p id="update-text" className="hint update-dialog__text">
-          {state.status === "available" && "Atualizar agora baixa a versão nova, fecha o app por alguns segundos e abre de novo. As conversas e a conexão continuam."}
+          {state.status === "available" && "Atualizar agora baixa a versão nova, fecha o app e mostra a instalação. Leva até 1 minuto e o app abre de novo sozinho. As conversas e a conexão continuam."}
           {state.status === "downloading" && `Baixando a atualização… ${state.percent}%`}
-          {state.status === "installing" && "Instalando. O app fecha e abre de novo sozinho."}
+          {state.status === "installing" && "Instalando. O app vai fechar e uma janela de instalação aparece; em até 1 minuto ele abre de novo sozinho. Não precisa fazer nada."}
           {state.status === "error" && `Não foi possível baixar ou instalar. Verifique a internet e tente de novo. (${state.message})`}
         </p>
         {state.status === "downloading" && (

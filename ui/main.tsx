@@ -35,7 +35,7 @@ import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayo
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
-import { ChatMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
+import { ChatItemMenu, ChatMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, SearchBox, Select } from "./ds/index.ts";
@@ -94,14 +94,15 @@ const STATUS_META: Record<Status, { label: string; icon: ReactNode }> = {
 };
 const PAGE = 200;
 
-type Toast = { id: number; kind: "error" | "success"; text: string };
+type Toast = { id: number; kind: "error" | "success"; text: string; action?: { label: string; run: () => void } };
 
 function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const push = useCallback((kind: Toast["kind"], text: string) => {
+  const push = useCallback((kind: Toast["kind"], text: string, action?: Toast["action"]) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t.slice(-2), { id, kind, text }]);
-    if (kind === "success") setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
+    setToasts((t) => [...t.slice(-2), { id, kind, text, action }]);
+    // Com "Desfazer", fica um pouco mais para dar tempo de clicar.
+    if (kind === "success") setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 8000 : 4000);
   }, []);
   const dismiss = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   return { toasts, push, dismiss };
@@ -114,6 +115,18 @@ function Toasts({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number) =>
         <div key={t.id} className={`toast toast--${t.kind}`} role={t.kind === "error" ? "alert" : "status"}>
           {t.kind === "error" ? <TriangleAlert size={18} aria-hidden /> : <CheckCircle2 size={18} aria-hidden />}
           <span>{t.text}</span>
+          {t.action && (
+            <Button
+              variant="ghost"
+              size="compact"
+              onClick={() => {
+                dismiss(t.id);
+                t.action!.run();
+              }}
+            >
+              {t.action.label}
+            </Button>
+          )}
           <Button variant="ghost" size="compact" aria-label="Fechar aviso" icon={<X size={16} aria-hidden />} onClick={() => dismiss(t.id)} />
         </div>
       ))}
@@ -176,7 +189,7 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
 }
 
 /** Memo: chegada de mensagem numa conversa não redesenha as outras 200 da lista. */
-const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat; selected: boolean; onOpen: (jid: string) => void }) {
+const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu }: { chat: Chat; selected: boolean; onOpen: (jid: string) => void; onMenu: (jid: string, x: number, y: number) => void }) {
   const urgent = (chat.ai?.urgent ?? 0) >= 0.5;
   const reminderDue = chat.reminderAt !== null && chat.reminderAt <= Date.now();
   const level = priorityLevel(priorityScore(chat));
@@ -185,7 +198,18 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
   const showPriority = !!aiPriority && chat.status !== "resolvida" && (aiPriority !== "baixa" || (!level && !urgent && chat.reminderAt === null));
   return (
     <li>
-      <button className="chat-item" aria-current={selected ? "true" : undefined} onClick={() => onOpen(chat.jid)}>
+      <button
+        className="chat-item"
+        aria-current={selected ? "true" : undefined}
+        onClick={() => onOpen(chat.jid)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          // Pelo teclado (tecla Menu / Shift+F10) não há ponto do mouse: abre sob o item.
+          const box = e.currentTarget.getBoundingClientRect();
+          const keyboard = e.clientX === 0 && e.clientY === 0;
+          onMenu(chat.jid, keyboard ? box.left + 8 : e.clientX, keyboard ? box.bottom : e.clientY);
+        }}
+      >
         <Avatar jid={chat.jid} name={chat.name} />
         <span className="chat-item__body">
           <span className="chat-item__row">
@@ -264,8 +288,14 @@ function ChatList(props: {
   online: boolean;
   onSettings: () => void;
   loaded: boolean;
+  /** Arquivar ou fixar pelo clique direito, sem abrir a conversa. */
+  onPatch: (jid: string, patch: ChatPatch) => void;
 }) {
   const [tab, setTab] = useState<Tab>("aberta");
+  const [menu, setMenu] = useState<{ jid: string; x: number; y: number } | null>(null);
+  const openMenu = useCallback((jid: string, x: number, y: number) => setMenu({ jid, x, y }), []);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const menuChat = menu ? props.byJid.get(menu.jid) : undefined;
   const [showArchived, setShowArchived] = useState(false);
   const [label, setLabel] = useState("");
   const [query, setQuery] = useState("");
@@ -476,7 +506,7 @@ function ChatList(props: {
         ) : (
           <ul className="chat-list">
             {filtered.slice(0, limit).map((c) => (
-              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} />
+              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} onMenu={openMenu} />
             ))}
           </ul>
         )}
@@ -487,6 +517,7 @@ function ChatList(props: {
         )}
         {messageQuery && <MessageHits hits={hits} chats={props.byJid} loading={hitsLoading} onOpen={props.onOpenAt} />}
       </div>
+      {menu && menuChat && <ChatItemMenu chat={menuChat} x={menu.x} y={menu.y} onChange={(patch) => props.onPatch(menuChat.jid, patch)} onClose={closeMenu} />}
     </section>
   );
 }
@@ -1783,7 +1814,25 @@ function App() {
     if (theme) applyTheme(theme);
   }, [theme]);
 
-  // Atalhos globais (ver ShortcutsDialog). Dentro de campos, só Ctrl+K vale.
+  /** Ajuste vindo da lista ou do atalho; arquivar avisa com "Desfazer", como no WhatsApp. */
+  const patchChat = useCallback(
+    (jid: string, patch: ChatPatch) => {
+      api
+        .update(jid, patch)
+        .then((c) => {
+          upsert(c);
+          if (patch.archived === undefined) return;
+          push("success", `${c.name} ${patch.archived ? "arquivada" : "desarquivada"}.`, {
+            label: "Desfazer",
+            run: () => patchChat(jid, { archived: !patch.archived }),
+          });
+        })
+        .catch((err) => push("error", `Não foi possível atualizar a conversa. ${(err as Error).message}`));
+    },
+    [upsert, push],
+  );
+
+  // Atalhos globais (ver ShortcutsDialog). Dentro de campos, só Ctrl+K e Ctrl+E valem.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
@@ -1792,6 +1841,12 @@ function App() {
         e.preventDefault();
         setSelected(null);
         requestAnimationFrame(() => document.getElementById("chat-search")?.focus());
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        const chat = selected ? chats.get(selected) : undefined;
+        if (chat && !e.repeat) patchChat(chat.jid, { archived: !chat.archived });
         return;
       }
       if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -1820,7 +1875,7 @@ function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, openChat, upsert, push]);
+  }, [selected, chats, openChat, upsert, push, patchChat]);
 
   // Clique na notificação abre a conversa; "Configurações" na bandeja abre o painel.
   useEffect(() => {
@@ -1838,7 +1893,8 @@ function App() {
   }, []);
 
   // Total de não lidas no ícone da barra de tarefas e na bandeja (só no app desktop).
-  const unreadTotal = useMemo(() => [...chats.values()].reduce((sum, c) => sum + (c.unread > 0 ? c.unread : 0), 0), [chats]);
+  // Arquivadas não entram no selo da barra de tarefas, como no WhatsApp.
+  const unreadTotal = useMemo(() => [...chats.values()].reduce((sum, c) => sum + (c.unread > 0 && !c.archived ? c.unread : 0), 0), [chats]);
   useEffect(() => {
     const bridge = desktop();
     if (!bridge) return;
@@ -1879,6 +1935,7 @@ function App() {
             online={online}
             onSettings={() => setSettingsOpen(true)}
             loaded={loaded}
+            onPatch={patchChat}
           />
           {current ? (
             <ChatView
