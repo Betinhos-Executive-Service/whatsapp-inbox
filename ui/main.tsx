@@ -435,10 +435,11 @@ function ChatList(props: {
           size="compact"
           clearable={false}
           searchable={props.labels.length > 8}
-          value={label}
-          onChange={(v) => setLabel(v ?? "")}
+          // O Select do DS trata "" como vazio (mostra "Selecione"); "__all" representa o filtro sem etiqueta escolhida.
+          value={label || "__all"}
+          onChange={(v) => setLabel(v && v !== "__all" ? v : "")}
           options={[
-            { value: "", label: "Todas as etiquetas" },
+            { value: "__all", label: "Todas as etiquetas" },
             { value: "__none", label: "Sem etiqueta" },
             ...props.labels.map((l) => ({ value: l, label: l })),
           ]}
