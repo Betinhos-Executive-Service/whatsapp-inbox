@@ -691,6 +691,26 @@ ul, ol { margin: 0; padding: 0; }
 .chat-pane { position: relative; }
 .drop-hint { position: absolute; inset: var(--bt-space-2); z-index: var(--bt-z-index-floating-action); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--bt-space-2); border: 2px dashed var(--bt-color-action); border-radius: var(--bt-radius-lg); background-color: rgba(252, 252, 251, .92); color: var(--bt-color-action); font-weight: var(--bt-font-weight-extrabold); pointer-events: none; }
 .list-pane__filters { display: grid; grid-template-columns: 1fr 1fr; gap: var(--bt-space-2); }
+/* Lista estreita (janela pequena ou painel arrastado): abas em 2×2 em vez de rolar escondidas. */
+.list-pane { container-type: inline-size; container-name: list-pane; }
+@container list-pane (max-width: 500px) {
+  .list-pane__header .segmented { display: grid; grid-template-columns: 1fr 1fr; overflow: visible; }
+}
+@container list-pane (max-width: 300px) {
+  .list-pane__filters { grid-template-columns: minmax(0, 1fr); }
+}
+/* Desktop estreito: notas/perfil sobrepõem as mensagens em vez de espremê-las. */
+.chat-pane__body { container-type: inline-size; container-name: chat-body; }
+@media (min-width: 821px) {
+  @container chat-body (max-width: 700px) {
+    .chat-pane__body > .notes {
+      position: absolute; top: 0; right: 0; bottom: 0;
+      width: min(var(--inbox-side-w, 320px), 100%);
+      z-index: var(--bt-z-index-floating-action);
+      box-shadow: var(--bt-shadow-drawer);
+    }
+  }
+}
 
 .summary { display: grid; gap: var(--bt-space-1); margin: 0; padding: var(--bt-space-3); border-radius: var(--bt-radius-md); background-color: var(--bt-color-surface-neutral); border: var(--bt-border-width-default) solid var(--bt-color-border); }
 .summary dt { font-size: var(--bt-font-size-11); font-weight: var(--bt-font-weight-extrabold); text-transform: uppercase; letter-spacing: .08em; color: var(--bt-color-text-secondary); }
