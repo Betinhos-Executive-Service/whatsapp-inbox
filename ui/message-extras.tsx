@@ -59,10 +59,9 @@ export function CopyButton({ m, onCopy }: { m: Message; onCopy: (m: Message, qui
   const timer = useRef(0);
   useEffect(() => () => clearTimeout(timer.current), []);
   return (
-    <Button
-      variant="ghost"
-      size="compact"
-      className={`copy-button${done ? " is-done" : ""}`}
+    <button
+      type="button"
+      className={`icon-button icon-button--plain icon-button--small copy-button${done ? " is-done" : ""}`}
       aria-label={done ? "Texto copiado" : "Copiar texto"}
       title={done ? "Copiado" : "Copiar texto"}
       onClick={async () => {
@@ -71,14 +70,11 @@ export function CopyButton({ m, onCopy }: { m: Message; onCopy: (m: Message, qui
         clearTimeout(timer.current);
         timer.current = window.setTimeout(() => setDone(false), 1400);
       }}
-      icon={
-        <>
-          <Copy className="copy-button__icon copy-button__icon--copy" size={16} aria-hidden />
-          <Check className="copy-button__icon copy-button__icon--check" size={16} aria-hidden />
-          <span className="sr-only" aria-live="polite">{done ? "Texto copiado" : ""}</span>
-        </>
-      }
-    />
+    >
+      <Copy className="copy-button__icon copy-button__icon--copy" size={16} aria-hidden />
+      <Check className="copy-button__icon copy-button__icon--check" size={16} aria-hidden />
+      <span className="sr-only" aria-live="polite">{done ? "Texto copiado" : ""}</span>
+    </button>
   );
 }
 
@@ -92,16 +88,17 @@ export function ReactButton({ m, onReact, disabled }: { m: Message; onReact: (m:
       onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}
       onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
     >
-      <Button
-        variant="ghost"
-        size="compact"
-        icon={<SmilePlus size={16} aria-hidden />}
+      <button
+        type="button"
+        className="icon-button icon-button--plain icon-button--small"
         aria-label="Reagir"
         title="Reagir"
         aria-expanded={open}
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-      />
+      >
+        <SmilePlus size={16} aria-hidden />
+      </button>
       {open && (
         <span className="reaction-picker" role="menu" aria-label="Escolher reação">
           {REACTIONS.map((emoji, i) => (
