@@ -18,7 +18,7 @@ import makeWASocket, {
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
-import { extractAction, extractContext, extractMedia, extractText, revokedId, sentChangeError, type Action } from "./text.ts";
+import { extractAction, extractContext, extractMedia, extractText, revokedId, sentChangeError, viewOnceText, type Action } from "./text.ts";
 
 export type ConnectionStatus = "iniciando" | "qr" | "conectado" | "reconectando" | "desconectado";
 export type ConnectionState = { status: ConnectionStatus; qr: string | null; me: string | null; error: string | null };
@@ -138,7 +138,9 @@ export class WhatsApp extends EventEmitter<{
   /** `quiet`: lote do histórico; a tela recarrega uma vez no fim, sem um evento por mensagem. */
   private ingest(m: WAMessage, live: boolean, quiet = false) {
     const raw = m.key.remoteJid;
-    if (!isConversation(raw) || !m.key.id || !m.message) return;
+    // Visualização única chega sem conteúdo em aparelho conectado; só marca que existe.
+    const viewOnce = !!m.key.isViewOnce && !m.message;
+    if (!isConversation(raw) || !m.key.id || (!m.message && !viewOnce)) return;
     const content = normalizeMessageContent(m.message);
     const revoked = revokedId(content);
     if (revoked) {
@@ -149,8 +151,8 @@ export class WhatsApp extends EventEmitter<{
     }
     const action = extractAction(content);
     if (action) return this.applyAction(this.canonical(raw, m.key.remoteJidAlt), action, m, quiet);
-    const extracted = extractText(content);
-    const media = extractMedia(content);
+    const extracted = viewOnce ? viewOnceText() : extractText(content);
+    const media = viewOnce ? null : extractMedia(content);
     if (!extracted) return;
     const at = Number(m.messageTimestamp ?? 0) * 1000 || Date.now();
     const chatJid = this.canonical(raw, m.key.remoteJidAlt);
@@ -174,7 +176,7 @@ export class WhatsApp extends EventEmitter<{
     };
     const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
     // Enviada agora: guarda o proto para reenviar se o WhatsApp do contato pedir retry.
-    if (isLive && m.key.fromMe) incoming.raw = proto.Message.encode(m.message).finish();
+    if (isLive && m.key.fromMe && m.message) incoming.raw = proto.Message.encode(m.message).finish();
     if (quiet) {
       // Lote do histórico: só grava; a tela recarrega uma vez no fim, então não lê nada de volta.
       this.store.insertMessage(incoming, isLive);
