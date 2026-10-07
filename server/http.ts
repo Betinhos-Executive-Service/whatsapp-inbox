@@ -2,6 +2,7 @@ import { readFile, rm, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { z } from "zod";
+import { claudeOptionsSchema, type ClaudeOptions } from "./claude.ts";
 import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
 import { STATUSES, type Store } from "./db.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
@@ -11,14 +12,17 @@ export type Api = {
   distDir: string;
   port: number;
   state: () => unknown;
-  /** `quotedId`: responde citando essa mensagem. */
-  send: (jid: string, text: string, quotedId?: string) => Promise<void>;
+  send: (jid: string, text: string, opts: { quotedId?: string; mentions?: string[] }) => Promise<void>;
   sendMedia: (jid: string, file: { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number }, quotedId?: string) => Promise<void>;
+  /** everyone = apagar para todos; me = só deste lado. synced = o celular também apagou. */
+  deleteMessage: (jid: string, id: string, mode: "everyone" | "me") => Promise<{ synced: boolean }>;
+  participants: (jid: string) => Promise<unknown>;
+  profile: (jid: string) => Promise<unknown>;
+  /** Foto de perfil (miniatura em cache ou tamanho cheio); null = sem foto. */
+  photo: (jid: string, full: boolean) => Promise<Buffer | null>;
   /** Emoji vazio tira a reação. */
   react: (jid: string, id: string, emoji: string) => Promise<void>;
   editMessage: (jid: string, id: string, text: string) => Promise<void>;
-  /** Apaga para todos. */
-  revokeMessage: (jid: string, id: string) => Promise<void>;
   forward: (from: string, id: string, to: string) => Promise<void>;
   /** Conversa aberta na tela: assina o "digitando" do contato. */
   watch: (jid: string) => Promise<void>;
@@ -37,7 +41,9 @@ export type Api = {
     setInstructions: (text: string | null) => void;
     setProvider: (provider: "deepseek" | "claude") => void;
     setDeepseekModel: (model: "deepseek-v4-pro" | "deepseek-flash") => void;
-    setClaudeModel: (model: "sonnet" | "opus" | "haiku") => void;
+    setClaudeModel: (model: "sonnet" | "opus" | "fable" | "haiku") => void;
+    setClaudeOptions: (options: ClaudeOptions | null) => void;
+    setJevContext: (n: number | null) => void;
     /** null volta tudo ao padrão. */
     setDeepseekOptions: (options: DeepSeekOptions | null) => void;
     /** Resumo de gastos; days = null: desde sempre. */
@@ -117,8 +123,17 @@ const sendMediaSchema = z.object({
   caption: z.string().max(4096).optional(),
   ptt: z.boolean().optional(),
   seconds: z.number().positive().max(24 * 3600).optional(),
-  quotedId: z.string().min(1).max(128).optional(),
+  quotedId: z.string().min(1).max(200).optional(),
 });
+
+const sendSchema = z.object({
+  text: z.string().trim().min(1).max(4096),
+  quotedId: z.string().min(1).max(200).optional(),
+  mentions: z.array(z.string().regex(/^[\w.:-]+@(s\.whatsapp\.net|lid)$/, "Menção inválida.")).max(256).optional(),
+});
+
+/** JID de conversa, contato ou participante na URL. */
+const JID = /^[\w.:-]+@(s\.whatsapp\.net|lid|g\.us)$/;
 
 async function readJson(req: IncomingMessage, limit = 64 * 1024): Promise<unknown> {
   let size = 0;
@@ -212,25 +227,25 @@ export function createHandler(api: Api) {
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/send" && method === "POST") {
-        const { text, quotedId } = parse(
-          z.object({ text: z.string().trim().min(1).max(4096), quotedId: z.string().min(1).max(128).optional() }),
-          await readJson(req),
-        );
-        await api.send(jid, text, quotedId);
+        const { text, quotedId, mentions } = parse(sendSchema, await readJson(req));
+        if (quotedId && !store.messageKey(jid, quotedId)) throw new HttpError(404, "A mensagem respondida não está mais salva.");
+        await api.send(jid, text, { quotedId, mentions });
         return json(res, 200, store.getChat(jid));
       }
+      if (action === "/delete" && method === "POST") {
+        const { id, mode } = parse(z.object({ id: z.string().min(1).max(200), mode: z.enum(["everyone", "me"]) }), await readJson(req));
+        if (!store.messageKey(jid, id)) throw new HttpError(404, "Mensagem não encontrada.");
+        const { synced } = await api.deleteMessage(jid, id, mode);
+        return json(res, 200, { chat: store.getChat(jid), synced });
+      }
+      if (action === "/participants" && method === "GET") return json(res, 200, await api.participants(jid));
       if (action === "/edit" && method === "POST") {
-        const { id, text } = parse(z.object({ id: z.string().min(1).max(128), text: z.string().trim().min(1).max(4096) }), await readJson(req));
+        const { id, text } = parse(z.object({ id: z.string().min(1).max(200), text: z.string().trim().min(1).max(4096) }), await readJson(req));
         await api.editMessage(jid, id, text);
         return json(res, 200, store.getMessage(jid, id));
       }
-      if (action === "/revoke" && method === "POST") {
-        const { id } = parse(z.object({ id: z.string().min(1).max(128) }), await readJson(req));
-        await api.revokeMessage(jid, id);
-        return json(res, 200, store.getMessage(jid, id));
-      }
       if (action === "/forward" && method === "POST") {
-        const { id, to } = parse(z.object({ id: z.string().min(1).max(128), to: z.string().min(1).max(128) }), await readJson(req));
+        const { id, to } = parse(z.object({ id: z.string().min(1).max(200), to: z.string().min(1).max(200) }), await readJson(req));
         if (!store.hasChat(to)) throw new HttpError(404, "Conversa de destino não encontrada.");
         if (!store.getMessage(jid, id)) throw new HttpError(404, "Mensagem não encontrada.");
         await api.forward(jid, id, to);
@@ -246,7 +261,7 @@ export function createHandler(api: Api) {
         return json(res, 200, { ok: true });
       }
       if (action === "/react" && method === "POST") {
-        const { id, emoji } = parse(z.object({ id: z.string().min(1).max(128), emoji: z.string().max(16) }), await readJson(req));
+        const { id, emoji } = parse(z.object({ id: z.string().min(1).max(200), emoji: z.string().max(16) }), await readJson(req));
         await api.react(jid, id, emoji);
         return json(res, 200, store.getMessage(jid, id));
       }
@@ -271,6 +286,20 @@ export function createHandler(api: Api) {
       }
     }
 
+    const profileMatch = path.match(/^\/api\/(profile|photo)\/([^/]+)$/);
+    if (profileMatch && method === "GET") {
+      const target = decodeURIComponent(profileMatch[2]);
+      if (!JID.test(target)) throw new HttpError(400, "Contato inválido.");
+      if (profileMatch[1] === "profile") return json(res, 200, await api.profile(target));
+      const body = await api.photo(target, url.searchParams.has("full"));
+      if (!body) {
+        // Sem foto: a tela mostra as iniciais. Cache curto para não perguntar a cada rolagem.
+        res.writeHead(404, { "cache-control": "private, max-age=3600" });
+        return res.end();
+      }
+      res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "private, max-age=3600", "content-length": body.length });
+      return res.end(body);
+    }
     if (path === "/api/ai" && method === "GET") return json(res, 200, api.ai.status());
     if (path === "/api/ai/usage" && method === "GET") {
       const days = url.searchParams.get("days");
@@ -292,8 +321,18 @@ export function createHandler(api: Api) {
       return json(res, 200, api.ai.status());
     }
     if (path === "/api/ai/claude-model" && method === "PUT") {
-      const { model } = parse(z.object({ model: z.enum(["sonnet", "opus", "haiku"]) }), await readJson(req));
+      const { model } = parse(z.object({ model: z.enum(["sonnet", "opus", "fable", "haiku"]) }), await readJson(req));
       api.ai.setClaudeModel(model);
+      return json(res, 200, api.ai.status());
+    }
+    if (path === "/api/ai/claude-options" && method === "PUT") {
+      const { options } = parse(z.object({ options: claudeOptionsSchema.nullable() }), await readJson(req));
+      api.ai.setClaudeOptions(options);
+      return json(res, 200, api.ai.status());
+    }
+    if (path === "/api/ai/jev-context" && method === "PUT") {
+      const { messages } = parse(z.object({ messages: z.number().int().min(10).max(100).nullable() }), await readJson(req));
+      api.ai.setJevContext(messages);
       return json(res, 200, api.ai.status());
     }
     if (path === "/api/ai/deepseek-options" && method === "PUT") {

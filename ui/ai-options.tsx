@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
-import { api, type AiStatus, type DeepSeekOptions, type DeepSeekTask, type Thinking } from "./api.ts";
+import { api, type AiStatus, type ClaudeEffort, type ClaudeOptions, type DeepSeekOptions, type DeepSeekTask, type Thinking } from "./api.ts";
+import { EFFORT_LABELS } from "./ai-quick.tsx";
+
+const EFFORT_HINTS: Record<ClaudeEffort, string> = {
+  default: "Usa o esforço configurado no Claude Code deste PC.",
+  low: "Responde mais rápido e gasta menos do limite do plano.",
+  medium: "Equilíbrio entre tempo e cuidado.",
+  high: "Pensa mais antes de responder. Mais lento.",
+  xhigh: "Raciocínio longo. Pode passar de alguns minutos.",
+  max: "O máximo de raciocínio. Lento e gasta bem mais do limite do plano.",
+};
 
 const THINKING: { id: Thinking; label: string; hint: string }[] = [
   { id: "off", label: "Desligado", hint: "Modo rápido: resposta direta em poucos segundos. Mais barato." },
@@ -15,7 +25,7 @@ const TASKS: { id: DeepSeekTask; label: string }[] = [
 ];
 
 /** Campo numérico que só grava ao sair do campo (ou Enter); valor fora da faixa volta ao anterior. */
-function NumberField({ label, value, min, max, step, hint, disabled, onCommit, hideLabel }: {
+export function NumberField({ label, value, min, max, step, hint, disabled, onCommit, hideLabel }: {
   hideLabel?: boolean;
   label: string; value: number; min: number; max: number; step: number; hint?: string; disabled: boolean; onCommit: (v: number) => void;
 }) {
@@ -138,5 +148,100 @@ export function DeepSeekOptionsPanel({ ai, onChange }: { ai: AiStatus; onChange:
         </button>
       </div>
     </div>
+  );
+}
+
+/** Opções do Claude pelo plano: esforço e janela da conversa. Salvas na hora. */
+export function ClaudeOptionsPanel({ ai, onChange }: { ai: AiStatus; onChange: (ai: AiStatus) => void }) {
+  const o = ai.claude.options;
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async (next: ClaudeOptions | null) => {
+    setSaving(true);
+    setError(null);
+    try {
+      onChange(await api.setClaudeOptions(next));
+    } catch (e) {
+      setError(`Não foi possível salvar. ${(e as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const patch = (p: Partial<ClaudeOptions>) => void save({ ...o, ...p });
+  const isDefault = JSON.stringify(o) === JSON.stringify(ai.claude.defaults);
+  return (
+    <div className="stack ai-options">
+      <div className="field">
+        <span className="field__label">Esforço (raciocínio)</span>
+        <div className="segmented" role="radiogroup" aria-label="Esforço do Claude">
+          {(Object.keys(EFFORT_LABELS) as ClaudeEffort[]).map((id) => (
+            <button key={id} type="button" role="radio" aria-checked={o.effort === id} className="segmented__item" disabled={saving} onClick={() => o.effort !== id && patch({ effort: id })}>
+              {EFFORT_LABELS[id]}
+            </button>
+          ))}
+        </div>
+        <span className="hint">{EFFORT_HINTS[o.effort]}</span>
+      </div>
+      <div className="ai-options__grid">
+        <NumberField
+          label="Mensagens no contexto"
+          value={o.contextMessages}
+          min={10}
+          max={1000}
+          step={10}
+          disabled={saving}
+          hint="Últimas mensagens da conversa enviadas (10 a 1000)."
+          onCommit={(v) => patch({ contextMessages: Math.round(v) })}
+        />
+        <NumberField
+          label="Caracteres por mensagem"
+          value={o.messageChars}
+          min={100}
+          max={10000}
+          step={100}
+          disabled={saving}
+          hint="Mensagens maiores são cortadas (100 a 10000)."
+          onCommit={(v) => patch({ messageChars: Math.round(v) })}
+        />
+      </div>
+      {error && <p className="hint hint--warning" role="alert">{error}</p>}
+      <div>
+        <button type="button" className="button button--secondary button--compact" disabled={saving || isDefault} onClick={() => void save(null)}>
+          Restaurar padrão
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Janela de mensagens que o Jev recebe para classificar. Salva na hora. */
+export function JevContextField({ ai, onChange }: { ai: AiStatus; onChange: (ai: AiStatus) => void }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async (n: number) => {
+    setSaving(true);
+    setError(null);
+    try {
+      onChange(await api.setJevContext(n));
+    } catch (e) {
+      setError(`Não foi possível salvar. ${(e as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <>
+      <NumberField
+        label="Mensagens enviadas ao Jev"
+        value={ai.jev.contextMessages}
+        min={10}
+        max={100}
+        step={5}
+        disabled={saving}
+        hint="Últimas mensagens da conversa usadas na classificação pelo Jev (10 a 100). Salvo na hora."
+        onCommit={(v) => void save(Math.round(v))}
+      />
+      {error && <p className="hint hint--warning" role="alert">{error}</p>}
+    </>
   );
 }

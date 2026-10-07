@@ -2,9 +2,12 @@ import {
   AlarmClock,
   ArrowLeft,
   Ban,
-  Check,
-  CheckCheck,
   CheckCircle2,
+  Copy,
+  Forward,
+  Pencil,
+  Reply,
+  Trash2,
   CircleDot,
   Clock,
   Inbox,
@@ -12,12 +15,6 @@ import {
   Mic,
   Paperclip,
   MessageSquareText,
-  Forward,
-  MoreHorizontal,
-  Pencil,
-  Reply,
-  SmilePlus,
-  Trash2,
   Search,
   SendHorizontal,
   Settings,
@@ -30,12 +27,30 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type ReactNode } from "react";
+import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
-import { mediaUrl, api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
+import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type Connection, type Message, type Participant, type QuickReply, type Status } from "./api.ts";
+import { Avatar, refreshAvatars } from "./avatar.tsx";
+import { AiQuickPicker } from "./ai-quick.tsx";
+import {
+  applyMentions,
+  canRevoke,
+  DeleteDialog,
+  filterParticipants,
+  insertMention,
+  MentionMenu,
+  mentionLabel,
+  mentionQuery,
+  messageBody,
+  quoteAuthor,
+  ReplyBar,
+  type MentionPick,
+} from "./conversation.tsx";
+import { ProfilePanel, type ProfileTarget } from "./profile.tsx";
+import { applyTheme, storedTheme } from "./theme.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
-import { AttachmentTray, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, type Attachment } from "./media.tsx";
+import { AttachmentTray, clock, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
@@ -43,11 +58,17 @@ import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, l
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
 import { UpdateDialog } from "./update.tsx";
 import { ForwardDialog } from "./forward.tsx";
+import { AckIcon, canEdit, EditBar, ReactButton, ReactionList } from "./message-extras.tsx";
+import { WaInline, WaLive, WaText } from "./wa-format.tsx";
+import { toggleWa } from "./wa-text.ts";
 import { desktop } from "./desktop.ts";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
 declare const __BUILD_DATE__: string;
+
+// O index.html já pintou o tema salvo; aqui passa a acompanhar o Windows quando for "Sistema".
+applyTheme(storedTheme());
 
 type Tab = Status | "todas";
 const TABS: { id: Tab; label: string }[] = [
@@ -157,9 +178,7 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
   return (
     <li>
       <button className="chat-item" aria-current={selected ? "true" : undefined} onClick={() => onOpen(chat.jid)}>
-        <span className="avatar" aria-hidden>
-          {initials(chat.name)}
-        </span>
+        <Avatar jid={chat.jid} name={chat.name} />
         <span className="chat-item__body">
           <span className="chat-item__row">
             <span className="chat-item__name">{chat.name}</span>
@@ -168,7 +187,7 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen }: { chat: Chat
           <span className="chat-item__row">
             <span className="chat-item__preview">
               {chat.lastFromMe && <span className="chat-item__me">Você: </span>}
-              {chat.lastText ?? "Sem mensagens"}
+              {chat.lastText ? <WaInline text={chat.lastText} /> : "Sem mensagens"}
             </span>
             {chat.unread > 0 && (
               <span className="count" aria-label={`${chat.unread} não lidas`}>
@@ -418,11 +437,7 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
 }
 
 /** Em grupo, mensagem recebida chega como "Autor: texto". */
-function splitAuthor(m: Message, isGroup: boolean): { author: string | null; body: string } {
-  if (!isGroup || m.fromMe) return { author: null, body: m.text };
-  const i = m.text.indexOf(": ");
-  return i > 0 && i <= 60 ? { author: m.text.slice(0, i), body: m.text.slice(i + 2) } : { author: null, body: m.text };
-}
+const splitAuthor = messageBody;
 
 const AUTHOR_TONES = 6;
 function authorTone(name: string): number {
@@ -431,146 +446,24 @@ function authorTone(name: string): number {
   return h % AUTHOR_TONES;
 }
 
-/** Reações rápidas, as mesmas do WhatsApp. São conteúdo da mensagem, não ícones da interface. */
-const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
-
-const ACK_LABEL: Record<number, string> = { 1: "Enviando", 2: "Enviada", 3: "Entregue", 4: "Lida", 5: "Ouvida" };
-
-/** Tique de entrega das minhas mensagens: ícone + rótulo acessível, não só cor. */
-function AckIcon({ ack }: { ack: number | null }) {
-  if (ack === null || !ACK_LABEL[ack]) return null;
-  const label = ACK_LABEL[ack];
-  const Icon = ack === 1 ? Clock : ack === 2 ? Check : CheckCheck;
-  return (
-    <span className={`bubble__ack${ack >= 4 ? " bubble__ack--read" : ""}`} title={label}>
-      <Icon size={14} aria-hidden />
-      <span className="sr-only">{label}</span>
-    </span>
-  );
-}
-
-/** Reações agrupadas por emoji; a minha fica destacada e sai com um clique. */
-function ReactionList({ m, onReact }: { m: Message; onReact: (m: Message, emoji: string) => void }) {
-  if (!m.reactions.length) return null;
-  const groups = new Map<string, { count: number; mine: boolean }>();
-  for (const r of m.reactions) {
-    const g = groups.get(r.emoji) ?? { count: 0, mine: false };
-    groups.set(r.emoji, { count: g.count + 1, mine: g.mine || r.fromMe });
-  }
-  return (
-    <ul className="reactions" aria-label="Reações">
-      {[...groups].map(([emoji, g]) => (
-        <li key={emoji}>
-          <button
-            type="button"
-            className={`reaction${g.mine ? " reaction--mine" : ""}`}
-            aria-label={g.mine ? `Tirar sua reação ${emoji}` : `${emoji}, ${g.count} ${g.count === 1 ? "reação" : "reações"}`}
-            title={g.mine ? "Tirar sua reação" : undefined}
-            disabled={!g.mine}
-            onClick={() => onReact(m, "")}
-          >
-            <span aria-hidden>{emoji}</span>
-            {g.count > 1 && <span className="reaction__count">{g.count}</span>}
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** Prazos do WhatsApp (mesmos do servidor, server/text.ts). */
-const EDIT_WINDOW_MS = 15 * 60_000;
-const REVOKE_WINDOW_MS = 60 * 3600_000;
-
-type MessageHandlers = {
-  reply: (m: Message) => void;
-  react: (m: Message, emoji: string) => void;
-  forward: (m: Message) => void;
-  edit: (m: Message) => void;
-  revoke: (m: Message) => void;
-};
-
-/** Responder e reagir à vista; encaminhar, editar e apagar no menu "Mais". Aparecem ao passar o mouse ou com foco. */
-function MessageActions({ m, on, disabled }: { m: Message; on: MessageHandlers; disabled: boolean }) {
-  const [open, setOpen] = useState<"react" | "more" | null>(null);
-  const mine = m.reactions.find((r) => r.fromMe)?.emoji ?? null;
-  const age = Date.now() - m.at;
-  const canEdit = m.fromMe && m.kind === "text" && age <= EDIT_WINDOW_MS;
-  const canRevoke = m.fromMe && age <= REVOKE_WINDOW_MS;
-  const toggle = (menu: "react" | "more") => setOpen((v) => (v === menu ? null : menu));
-  const closeOnLeave = (e: FocusEvent<HTMLDivElement>) => !e.currentTarget.contains(e.relatedTarget) && setOpen(null);
-  const pick = (fn: () => void) => {
-    setOpen(null);
-    fn();
-  };
-  return (
-    <div className={`message-actions${open ? " is-open" : ""}`} onBlur={closeOnLeave} onKeyDown={(e) => e.key === "Escape" && setOpen(null)}>
-      <button type="button" className="message-actions__button" aria-label="Responder citando" title="Responder citando" disabled={disabled} onClick={() => on.reply(m)}>
-        <Reply size={16} aria-hidden />
-      </button>
-      <button type="button" className="message-actions__button" aria-label="Reagir" title="Reagir" aria-expanded={open === "react"} disabled={disabled} onClick={() => toggle("react")}>
-        <SmilePlus size={16} aria-hidden />
-      </button>
-      <button type="button" className="message-actions__button" aria-label="Mais ações" title="Mais ações" aria-expanded={open === "more"} disabled={disabled} onClick={() => toggle("more")}>
-        <MoreHorizontal size={16} aria-hidden />
-      </button>
-      {open === "react" && (
-        <div className="reaction-picker" role="menu" aria-label="Escolher reação">
-          {REACTIONS.map((emoji, i) => (
-            <button
-              key={emoji}
-              type="button"
-              role="menuitem"
-              className={`reaction-picker__item${mine === emoji ? " is-selected" : ""}`}
-              aria-label={mine === emoji ? `Tirar reação ${emoji}` : `Reagir com ${emoji}`}
-              autoFocus={i === 0}
-              onClick={() => pick(() => on.react(m, mine === emoji ? "" : emoji))}
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
-      )}
-      {open === "more" && (
-        <div className="message-menu" role="menu" aria-label="Mais ações">
-          <button type="button" role="menuitem" className="message-menu__item" autoFocus onClick={() => pick(() => on.forward(m))}>
-            <Forward size={16} aria-hidden /> Encaminhar
-          </button>
-          {canEdit && (
-            <button type="button" role="menuitem" className="message-menu__item" onClick={() => pick(() => on.edit(m))}>
-              <Pencil size={16} aria-hidden /> Editar
-            </button>
-          )}
-          {canRevoke && (
-            <button type="button" role="menuitem" className="message-menu__item message-menu__item--danger" onClick={() => pick(() => on.revoke(m))}>
-              <Trash2 size={16} aria-hidden /> Apagar para todos
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Rola até a mensagem citada, se ela já estiver carregada. */
-function jumpTo(id: string) {
-  const el = document.getElementById(`msg-${id}`);
-  if (!el) return;
-  el.scrollIntoView({ block: "center", behavior: "smooth" });
-  el.classList.remove("is-flash");
-  void el.offsetWidth;
-  el.classList.add("is-flash");
-}
-
 /** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, on, connected }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit }: {
   messages: Message[];
   isGroup: boolean;
   hasMore: boolean;
   onMore: () => void;
   loadingMore: boolean;
-  on: MessageHandlers;
-  connected: boolean;
+  chatName: string;
+  /** WhatsApp conectado: responder e apagar dependem dele. */
+  canAct: boolean;
+  onReply: (m: Message) => void;
+  onDelete: (m: Message) => void;
+  onCopy: (m: Message) => void;
+  onAuthor: (jid: string, name: string) => void;
+  onJump: (id: string) => void;
+  onReact: (m: Message, emoji: string) => void;
+  onForward: (m: Message) => void;
+  onEdit: (m: Message) => void;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
   return (
@@ -591,51 +484,83 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         // Documento: o texto começa pelo nome do arquivo, que já aparece no cartão.
         const fileName = m.media?.fileName;
         if (fileName && caption.startsWith(fileName)) caption = caption.slice(fileName.length).trim();
-        const deleted = m.deletedAt !== null;
+        const sender = m.sender;
         return (
-          <div key={m.id} id={`msg-${m.id}`} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}`}>
+          <div key={m.id} data-message-id={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
             <div className="message-line">
-              {isGroup && !m.fromMe && (
-                <span className={`avatar avatar--author tone-${authorTone(author ?? "?")}`} aria-hidden>
-                  {continues ? "" : initials(author ?? "?")}
-                </span>
-              )}
-              <div className="bubble-wrap">
-                <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" && !deleted ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" && !deleted ? " bubble--sticker" : ""}`}>
-                  {author && !continues && <span className={`bubble__author tone-${authorTone(author)}`}>{author}</span>}
-                  {m.quoted && !deleted && (
-                    <button type="button" className="bubble__quote" onClick={() => jumpTo(m.quoted!.id)} title="Ir para a mensagem citada">
-                      {m.quoted.text || "Mensagem"}
-                    </button>
-                  )}
-                  {deleted ? (
-                    <>
-                      <p className="bubble__text bubble__text--deleted">
-                        <Ban size={14} aria-hidden /> Mensagem apagada
-                      </p>
-                      <details className="bubble__original">
-                        <summary>Ver original</summary>
-                        <p className="bubble__text">{body}</p>
-                      </details>
-                    </>
-                  ) : (
-                    <>
-                      {m.media && <MediaView m={m} caption={caption} />}
-                      {(!m.media || caption) && <p className="bubble__text">{caption}</p>}
-                    </>
-                  )}
-                  <span className="bubble__meta">
-                    {m.editedAt !== null && !deleted && <span className="bubble__edited">Editada</span>}
-                    <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
-                      {formatTime(m.at)}
-                    </time>
-                    {m.fromMe && <AckIcon ack={m.ack} />}
+              {isGroup && !m.fromMe &&
+                (sender && !continues ? (
+                  <button type="button" className="author-button" aria-label={`Ver perfil de ${author ?? "participante"}`} onClick={() => onAuthor(sender, author ?? "Participante")}>
+                    <Avatar jid={sender} name={author ?? "?"} className={`avatar--author tone-${authorTone(author ?? "?")}`} />
+                  </button>
+                ) : (
+                  <span className={`avatar avatar--author tone-${authorTone(author ?? "?")}`} aria-hidden>
+                    {continues ? "" : initials(author ?? "?")}
                   </span>
-                </div>
-                <ReactionList m={m} onReact={on.react} />
+                ))}
+              <div className="bubble-wrap">
+              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}${m.deleted ? " bubble--deleted" : ""}`}>
+                {author && !continues &&
+                  (sender ? (
+                    <button type="button" className={`bubble__author bubble__author--link tone-${authorTone(author)}`} onClick={() => onAuthor(sender, author)}>
+                      {author}
+                    </button>
+                  ) : (
+                    <span className={`bubble__author tone-${authorTone(author)}`}>{author}</span>
+                  ))}
+                {m.quoted && (
+                  <button type="button" className="quote" onClick={() => onJump(m.quoted!.id)} title="Ir para a mensagem respondida">
+                    <span className="quote__author">{quoteAuthor(m.quoted, chatName)}</span>
+                    <span className="quote__text"><WaInline text={m.quoted.text} /></span>
+                  </button>
+                )}
+                {m.deleted ? (
+                  <p className="bubble__text bubble__text--deleted">
+                    <Ban size={14} aria-hidden /> {m.fromMe ? "Você apagou esta mensagem" : "Esta mensagem foi apagada"}
+                  </p>
+                ) : (
+                  <>
+                    {m.media && <MediaView m={m} caption={caption} />}
+                    {(!m.media || caption) && <p className="bubble__text"><WaText text={caption} /></p>}
+                  </>
+                )}
+                <span className="bubble__meta">
+                  {m.editedAt !== null && !m.deleted && <span className="bubble__edited">Editada</span>}
+                  <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
+                    {formatTime(m.at)}
+                  </time>
+                  {m.fromMe && !m.deleted && <AckIcon ack={m.ack} />}
+                </span>
               </div>
-              {!deleted && <MessageActions m={m} on={on} disabled={!connected} />}
+              <ReactionList m={m} onReact={onReact} />
+              </div>
+              <div className="message-actions" role="group" aria-label="Ações da mensagem">
+                {!m.deleted && (
+                  <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Responder" title="Responder" disabled={!canAct} onClick={() => onReply(m)}>
+                    <Reply size={16} aria-hidden />
+                  </button>
+                )}
+                {!m.deleted && <ReactButton m={m} onReact={onReact} disabled={!canAct} />}
+                {!m.deleted && (!m.media || caption) && (
+                  <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Copiar texto" title="Copiar texto" onClick={() => onCopy(m)}>
+                    <Copy size={16} aria-hidden />
+                  </button>
+                )}
+                {!m.deleted && (
+                  <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Encaminhar" title="Encaminhar" disabled={!canAct} onClick={() => onForward(m)}>
+                    <Forward size={16} aria-hidden />
+                  </button>
+                )}
+                {canEdit(m) && (
+                  <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Editar mensagem" title="Editar" disabled={!canAct} onClick={() => onEdit(m)}>
+                    <Pencil size={16} aria-hidden />
+                  </button>
+                )}
+                <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Apagar mensagem" title="Apagar" onClick={() => onDelete(m)}>
+                  <Trash2 size={16} aria-hidden />
+                </button>
+              </div>
             </div>
           </div>
         );
@@ -664,16 +589,32 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [classifying, setClassifying] = useState(false);
-  const [notesOpen, setNotesOpen] = useState(false);
-  const [quickActive, setQuickActive] = useState(0);
-  const [quickOpen, setQuickOpen] = useState(false);
-  const composer = useRef<HTMLTextAreaElement>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Um painel lateral por vez: notas e lembretes ou perfil.
+  const [side, setSide] = useState<"notes" | "profile" | null>(null);
+  const notesOpen = side === "notes";
+  const [profileTarget, setProfileTarget] = useState<ProfileTarget | null>(null);
+  const openProfile = useCallback((target: ProfileTarget) => {
+    setProfileTarget(target);
+    setSide("profile");
+  }, []);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [forwarding, setForwarding] = useState<Message | null>(null);
   const [presence, setPresence] = useState<"composing" | "recording" | null>(null);
+  const [deleting, setDeleting] = useState<Message | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  // Menções: participantes carregados no primeiro "@"; escolhas valem até enviar.
+  const [participants, setParticipants] = useState<Participant[] | null>(null);
+  const [caret, setCaret] = useState(0);
+  const [mentionActive, setMentionActive] = useState(0);
+  const [mentionClosed, setMentionClosed] = useState(false);
+  const picks = useRef<MentionPick[]>([]);
+  const [quickActive, setQuickActive] = useState(0);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const mirror = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
   const recorder = useRecorder((text) => notify("error", text));
   const addFiles = (files: Iterable<File>) => {
@@ -701,6 +642,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setEditing(null);
     setForwarding(null);
     setPresence(null);
+    setParticipants(null);
+    picks.current = [];
   }, [chat.jid]);
   useEffect(() => {
     const id = requestAnimationFrame(() => composer.current?.focus());
@@ -754,96 +697,32 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       stickToBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
       setMessages((list) => (list && !list.some((x) => x.id === m.id) ? [...list, m] : list));
     };
-    window.addEventListener("inbox:message", onMessage);
-    return () => window.removeEventListener("inbox:message", onMessage);
-  }, [chat.jid]);
-
-  // Mensagem já mostrada mudou: entregue/lida, editada, apagada ou reação.
-  useEffect(() => {
+    // Apagada, editada, reação ou status de entrega: troca no lugar.
     const onUpdate = (e: Event) => {
       const m = (e as CustomEvent<Message>).detail;
       if (m.chatJid !== chat.jid) return;
-      setMessages((list) => (list?.some((x) => x.id === m.id) ? list.map((x) => (x.id === m.id ? m : x)) : list));
-      setReplyTo((r) => (r?.id === m.id && m.deletedAt !== null ? null : r));
+      setMessages((list) => list && list.map((x) => (x.id === m.id ? m : x)));
+      if (m.deleted) {
+        setReplyTo((r) => (r?.id === m.id ? null : r));
+        setEditing((r) => (r?.id === m.id ? null : r));
+      }
     };
-    window.addEventListener("inbox:message-update", onUpdate);
-    return () => window.removeEventListener("inbox:message-update", onUpdate);
-  }, [chat.jid]);
-
-  const replaceMessage = (updated: Message) => setMessages((list) => list?.map((x) => (x.id === updated.id ? updated : x)) ?? list);
-  // Estável entre renders para o memo de <Messages>.
-  const handlers = useMemo<MessageHandlers>(
-    () => ({
-      reply: (m) => {
-        setEditing(null);
-        setReplyTo(m);
-        requestAnimationFrame(() => composer.current?.focus());
-      },
-      react: async (m, emoji) => {
-        try {
-          replaceMessage(await api.react(chat.jid, m.id, emoji));
-        } catch (e) {
-          notify("error", `Reação não enviada. ${(e as Error).message}`);
-        }
-      },
-      forward: (m) => setForwarding(m),
-      edit: (m) => {
-        setReplyTo(null);
-        setEditing(m);
-        setDraft(m.text);
-        requestAnimationFrame(() => composer.current?.focus());
-      },
-      revoke: async (m) => {
-        if (!window.confirm("Apagar esta mensagem para todos? O contato deixa de vê-la; aqui ela continua guardada.")) return;
-        try {
-          replaceMessage(await api.revokeMessage(chat.jid, m.id));
-        } catch (e) {
-          notify("error", `Mensagem não apagada. ${(e as Error).message}`);
-        }
-      },
-    }),
-    [chat.jid, notify],
-  );
-
-  // "digitando" do contato: assina ao abrir a conversa e limpa sozinho se o aviso de parada não vier.
-  useEffect(() => {
-    if (connected) api.watch(chat.jid).catch(() => undefined);
-  }, [chat.jid, connected]);
-  useEffect(() => {
-    let timer = 0;
-    const onPresence = (e: Event) => {
-      const p = (e as CustomEvent<{ jid: string; state: "composing" | "recording" | null }>).detail;
-      if (p.jid !== chat.jid) return;
-      setPresence(p.state);
-      window.clearTimeout(timer);
-      if (p.state) timer = window.setTimeout(() => setPresence(null), 25_000);
+    // Apagada para mim: sai da lista.
+    const onRemove = (e: Event) => {
+      const { chatJid, id } = (e as CustomEvent<{ chatJid: string; id: string }>).detail;
+      if (chatJid !== chat.jid) return;
+      setMessages((list) => list && list.filter((x) => x.id !== id));
+      setReplyTo((r) => (r?.id === id ? null : r));
     };
-    window.addEventListener("inbox:presence", onPresence);
+    window.addEventListener("inbox:message", onMessage);
+    window.addEventListener("inbox:update", onUpdate);
+    window.addEventListener("inbox:remove", onRemove);
     return () => {
-      window.removeEventListener("inbox:presence", onPresence);
-      window.clearTimeout(timer);
+      window.removeEventListener("inbox:message", onMessage);
+      window.removeEventListener("inbox:update", onUpdate);
+      window.removeEventListener("inbox:remove", onRemove);
     };
   }, [chat.jid]);
-
-  // Meu "digitando": no máximo um aviso a cada 8 s; para depois de 4 s sem digitar.
-  const typingAt = useRef(0);
-  const typingStop = useRef(0);
-  const stopTyping = useCallback(() => {
-    window.clearTimeout(typingStop.current);
-    if (!typingAt.current) return;
-    typingAt.current = 0;
-    api.typing(chat.jid, "paused").catch(() => undefined);
-  }, [chat.jid]);
-  const noteTyping = () => {
-    if (!sendTyping || !connected) return;
-    if (Date.now() - typingAt.current > 8000) {
-      typingAt.current = Date.now();
-      api.typing(chat.jid, "composing").catch(() => undefined);
-    }
-    window.clearTimeout(typingStop.current);
-    typingStop.current = window.setTimeout(stopTyping, 4000);
-  };
-  useEffect(() => stopTyping, [stopTyping]);
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -898,17 +777,22 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
     setSending(true);
     stickToBottom.current = true;
+    const quotedId = replyTo?.id;
     try {
-      const quotedId = replyTo?.id;
-      // A legenda e a citação vão no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
+      // A legenda vai no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
+      // A resposta (citação) vai só no primeiro.
       for (const [i, a] of attachments.entries()) {
-        const file = await fileToOutgoing(a.file, i === 0 && text ? text : undefined);
+        const file = a.voice ?? (await fileToOutgoing(a.file, i === 0 && text ? text : undefined));
         onChat(await api.sendMedia(chat.jid, i === 0 && quotedId ? { ...file, quotedId } : file));
         removeAttachment(a.id);
       }
-      if (text && !attachments.length) onChat(await api.send(chat.jid, text, quotedId));
+      if (text && !attachments.length) {
+        const withMentions = applyMentions(text, picks.current);
+        onChat(await api.send(chat.jid, withMentions.text, { quotedId, mentions: withMentions.mentions.length ? withMentions.mentions : undefined }));
+      }
       setDraft("");
       setReplyTo(null);
+      picks.current = [];
     } catch (e) {
       notify("error", `Mensagem não enviada. ${(e as Error).message}`);
     } finally {
@@ -919,13 +803,21 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const sendVoice = async () => {
     setSending(true);
     stickToBottom.current = true;
+    let voice: OutgoingMedia | null = null;
     try {
-      const voice = await recorder.finish();
+      voice = await recorder.finish();
       if (!voice) return notify("error", "Gravação curta demais; segure por pelo menos meio segundo.");
       onChat(await api.sendMedia(chat.jid, replyTo ? { ...voice, quotedId: replyTo.id } : voice));
       setReplyTo(null);
     } catch (e) {
-      notify("error", `Áudio não enviado. ${(e as Error).message}`);
+      // Não perde a gravação: volta para a bandeja de anexos, pronta para reenviar.
+      if (voice) {
+        const ready = voice;
+        const bytes = Uint8Array.from(atob(voice.data), (c) => c.charCodeAt(0));
+        const name = `Mensagem de voz (${clock(voice.seconds ?? 0)}).ogg`;
+        setAttachments((list) => [...list, { ...toAttachment(new File([bytes], name, { type: "audio/ogg" })), voice: ready }]);
+      }
+      notify("error", `Áudio não enviado${voice ? "; ele ficou nos anexos para reenviar" : ""}. ${(e as Error).message}`);
     } finally {
       setSending(false);
     }
@@ -942,6 +834,163 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setDraft(fillQuickReply(q.text, chat.name));
     setQuickOpen(false);
     requestAnimationFrame(() => composer.current?.focus());
+  };
+
+  // "@" abre a lista de quem mencionar: participantes do grupo ou o próprio contato.
+  const mention = showQuick ? null : mentionQuery(draft, caret);
+  useEffect(() => {
+    if (mention === null || participants !== null) return;
+    if (!chat.isGroup) {
+      setParticipants([{ jid: chat.jid, name: chat.name, phone: chat.phone, admin: false, me: false }]);
+      return;
+    }
+    if (!connected) return;
+    let alive = true;
+    api
+      .participants(chat.jid)
+      .then((list) => alive && setParticipants(list))
+      .catch((e: Error) => {
+        if (!alive) return;
+        setParticipants([]);
+        notify("error", `Não foi possível carregar os participantes. ${e.message}`);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [mention !== null, participants, chat, connected, notify]);
+  const mentionItems = mention !== null && participants && !mentionClosed ? filterParticipants(participants, mention) : [];
+  const showMention = mentionItems.length > 0;
+  useEffect(() => {
+    setMentionActive(0);
+    setMentionClosed(false);
+  }, [mention]);
+  const pickMention = (p: Participant) => {
+    const label = mentionLabel(p);
+    const next = insertMention(draft, caret, label);
+    if (!picks.current.some((x) => x.jid === p.jid)) picks.current.push({ label, jid: p.jid });
+    setDraft(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => {
+      composer.current?.focus();
+      composer.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+
+  // ---- ações da mensagem (callbacks estáveis para o memo de <Messages>)
+
+  const reply = useCallback((m: Message) => {
+    setReplyTo(m);
+    requestAnimationFrame(() => composer.current?.focus());
+  }, []);
+  const copy = useCallback(
+    (m: Message) => {
+      const { body } = splitAuthor(m, chat.isGroup);
+      // Mídia: copia só a legenda, sem o "[Imagem]" do começo.
+      const text = m.media ? body.replace(/^\[[^\]]+\]\s*/, "") : body;
+      navigator.clipboard.writeText(text).then(
+        () => notify("success", "Texto copiado."),
+        () => notify("error", "Não foi possível copiar."),
+      );
+    },
+    [chat.isGroup, notify],
+  );
+  const askDelete = useCallback((m: Message) => setDeleting(m), []);
+  const replaceMessage = (updated: Message) => setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
+  const react = useCallback(
+    async (m: Message, emoji: string) => {
+      try {
+        const updated = await api.react(chat.jid, m.id, emoji);
+        setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
+      } catch (e) {
+        notify("error", `Reação não enviada. ${(e as Error).message}`);
+      }
+    },
+    [chat.jid, notify],
+  );
+  const forward = useCallback((m: Message) => setForwarding(m), []);
+  const edit = useCallback((m: Message) => {
+    setReplyTo(null);
+    setEditing(m);
+    setDraft(m.text);
+    requestAnimationFrame(() => composer.current?.focus());
+  }, []);
+  const cancelEdit = () => {
+    setEditing(null);
+    setDraft("");
+  };
+
+  // "digitando" do contato: assina ao abrir a conversa e limpa sozinho se o aviso de parada não vier.
+  useEffect(() => {
+    if (connected) api.watch(chat.jid).catch(() => undefined);
+  }, [chat.jid, connected]);
+  useEffect(() => {
+    let timer = 0;
+    const onPresence = (e: Event) => {
+      const p = (e as CustomEvent<{ jid: string; state: "composing" | "recording" | null }>).detail;
+      if (p.jid !== chat.jid) return;
+      setPresence(p.state);
+      window.clearTimeout(timer);
+      if (p.state) timer = window.setTimeout(() => setPresence(null), 25_000);
+    };
+    window.addEventListener("inbox:presence", onPresence);
+    return () => {
+      window.removeEventListener("inbox:presence", onPresence);
+      window.clearTimeout(timer);
+    };
+  }, [chat.jid]);
+
+  // Meu "digitando": no máximo um aviso a cada 8 s; para depois de 4 s sem digitar.
+  const typingAt = useRef(0);
+  const typingStop = useRef(0);
+  const stopTyping = useCallback(() => {
+    window.clearTimeout(typingStop.current);
+    if (!typingAt.current) return;
+    typingAt.current = 0;
+    api.typing(chat.jid, "paused").catch(() => undefined);
+  }, [chat.jid]);
+  const noteTyping = () => {
+    if (!sendTyping || !connected) return;
+    if (Date.now() - typingAt.current > 8000) {
+      typingAt.current = Date.now();
+      api.typing(chat.jid, "composing").catch(() => undefined);
+    }
+    window.clearTimeout(typingStop.current);
+    typingStop.current = window.setTimeout(stopTyping, 4000);
+  };
+  useEffect(() => stopTyping, [stopTyping]);
+  const showAuthor = useCallback(
+    (jid: string, name: string) => openProfile({ jid, name, phone: jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : null, isGroup: false }),
+    [openProfile],
+  );
+  const jump = useCallback(
+    (id: string) => {
+      const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
+      if (!row) return notify("error", "A mensagem respondida é mais antiga. Use Carregar mensagens anteriores.");
+      row.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      row.classList.remove("message-row--flash");
+      void row.offsetWidth;
+      row.classList.add("message-row--flash");
+    },
+    [notify],
+  );
+  const confirmDelete = async (mode: "everyone" | "me") => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    try {
+      const { chat: updated, synced } = await api.deleteMessage(chat.jid, deleting.id, mode);
+      onChat(updated);
+      if (mode === "me") setMessages((list) => list && list.filter((x) => x.id !== deleting.id));
+      if (replyTo?.id === deleting.id) setReplyTo(null);
+      notify(
+        synced ? "success" : "error",
+        mode === "everyone" ? "Mensagem apagada para todos." : synced ? "Mensagem apagada para você." : "Mensagem apagada neste computador. O celular não confirmou; apague lá também se precisar.",
+      );
+      setDeleting(null);
+    } catch (e) {
+      notify("error", `Mensagem não apagada. ${(e as Error).message}`);
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   const change = async (patch: { status?: Status; label?: string | null }) => {
@@ -995,31 +1044,46 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           <button className="icon-button chat-pane__back" aria-label="Voltar para a lista" onClick={onBack}>
             <ArrowLeft size={18} aria-hidden />
           </button>
-          <span className="avatar" aria-hidden>
-            {initials(chat.name)}
-          </span>
-          <div className="chat-pane__name">
-            <h2 className="heading-card">{chat.name}</h2>
-            {presence ? (
-              <span className="hint chat-pane__presence" role="status">
-                {presence === "recording" ? "gravando áudio…" : chat.isGroup ? "alguém está digitando…" : "digitando…"}
+          <button
+            type="button"
+            className="chat-pane__who"
+            aria-pressed={side === "profile" && profileTarget?.jid === chat.jid}
+            title={chat.isGroup ? "Ver dados do grupo" : "Ver perfil do contato"}
+            onClick={() =>
+              side === "profile" && profileTarget?.jid === chat.jid
+                ? setSide(null)
+                : openProfile({ jid: chat.jid, name: chat.name, phone: chat.phone, isGroup: chat.isGroup })
+            }
+          >
+            <Avatar jid={chat.jid} name={chat.name} />
+            <span className="chat-pane__name">
+              <span className="heading-card" role="heading" aria-level={2}>
+                {chat.name}
               </span>
-            ) : (
-              <>
-                {chat.phone && <span className="hint">+{chat.phone}</span>}
-                {chat.isGroup && <span className="hint">Grupo</span>}
-              </>
-            )}
-          </div>
+              {presence ? (
+                <span className="hint chat-pane__presence" role="status">
+                  {presence === "recording" ? "gravando áudio…" : chat.isGroup ? "alguém está digitando…" : "digitando…"}
+                </span>
+              ) : (
+                <>
+                  {chat.phone && <span className="hint">+{chat.phone}</span>}
+                  {chat.isGroup && <span className="hint">Grupo · ver participantes</span>}
+                </>
+              )}
+            </span>
+          </button>
         </div>
-        <button
-          className={`button button--secondary button--compact chat-pane__notes-toggle${chat.note || chat.reminderAt !== null ? " has-content" : ""}`}
-          aria-pressed={notesOpen}
-          onClick={() => setNotesOpen((v) => !v)}
-        >
-          <StickyNote size={16} aria-hidden /> Notas e lembretes
-          {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
-        </button>
+        <div className="cluster chat-pane__tools">
+          <button
+            className={`button button--secondary button--compact chat-pane__notes-toggle${chat.note || chat.reminderAt !== null ? " has-content" : ""}`}
+            aria-pressed={notesOpen}
+            onClick={() => setSide((v) => (v === "notes" ? null : "notes"))}
+          >
+            <StickyNote size={16} aria-hidden /> Notas e lembretes
+            {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
+          </button>
+          <AiQuickPicker onMore={onSetupAi} />
+        </div>
         <ClassificationBar
           chat={chat}
           labels={labels}
@@ -1044,10 +1108,28 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             <p className="hint">As próximas mensagens desta conversa aparecem aqui.</p>
           </div>
         ) : (
-          <Messages messages={messages} isGroup={chat.isGroup} hasMore={hasMore} onMore={loadMore} loadingMore={loadingMore} on={handlers} connected={connected} />
+          <Messages
+            messages={messages}
+            isGroup={chat.isGroup}
+            hasMore={hasMore}
+            onMore={loadMore}
+            loadingMore={loadingMore}
+            chatName={chat.name}
+            canAct={connected}
+            onReply={reply}
+            onDelete={askDelete}
+            onCopy={copy}
+            onAuthor={showAuthor}
+            onJump={jump}
+            onReact={react}
+            onForward={forward}
+            onEdit={edit}
+          />
         )}
       </div>
-      {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setNotesOpen(false)} />}
+      {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
+      {side === "profile" && profileTarget && <ProfilePanel target={profileTarget} connected={connected} onClose={() => setSide(null)} />}
+      </div>
       {forwarding && (
         <ForwardDialog
           message={forwarding}
@@ -1058,7 +1140,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }}
         />
       )}
-      </div>
+      {deleting && <DeleteDialog message={deleting} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
       <form
         className="composer"
         onSubmit={(e) => {
@@ -1070,38 +1152,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           Mensagem
         </label>
         {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
-        {editing && (
-          <div className="reply-bar">
-            <Pencil size={16} aria-hidden />
-            <div className="reply-bar__body">
-              <span className="reply-bar__title">Editando mensagem</span>
-              <span className="reply-bar__text">{editing.text}</span>
-            </div>
-            <button
-              type="button"
-              className="icon-button icon-button--small"
-              aria-label="Cancelar edição"
-              onClick={() => {
-                setEditing(null);
-                setDraft("");
-              }}
-            >
-              <X size={16} aria-hidden />
-            </button>
-          </div>
-        )}
-        {replyTo && (
-          <div className="reply-bar">
-            <Reply size={16} aria-hidden />
-            <div className="reply-bar__body">
-              <span className="reply-bar__title">{replyTo.fromMe ? "Respondendo a você" : `Respondendo a ${splitAuthor(replyTo, chat.isGroup).author ?? chat.name}`}</span>
-              <span className="reply-bar__text">{splitAuthor(replyTo, chat.isGroup).body}</span>
-            </div>
-            <button type="button" className="icon-button icon-button--small" aria-label="Cancelar resposta" onClick={() => setReplyTo(null)}>
-              <X size={16} aria-hidden />
-            </button>
-          </div>
-        )}
+        {showMention && <MentionMenu items={mentionItems} active={mentionActive} onPick={pickMention} onHover={setMentionActive} />}
+        {editing && <EditBar message={editing} onCancel={cancelEdit} />}
+        {replyTo && <ReplyBar message={replyTo} isGroup={chat.isGroup} chatName={chat.name} onCancel={() => setReplyTo(null)} />}
         {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} disabled={sending} />}
         <input
           ref={fileInput}
@@ -1114,7 +1167,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }}
         />
         {recorder.recording ? (
-          <RecordingBar elapsed={recorder.elapsed} onCancel={recorder.cancel} />
+          <RecordingBar recorder={recorder} />
         ) : (
           <>
         <button
@@ -1149,21 +1202,38 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         >
           {drafting ? <LoaderCircle className="spin" size={18} aria-hidden /> : <WandSparkles size={18} aria-hidden />}
         </button>
+        <div className="composer__field">
+        <div className="composer__mirror" ref={mirror} aria-hidden>
+          <WaLive text={draft} />
+        </div>
         <textarea
           ref={composer}
           id="composer-text"
           rows={1}
           role="combobox"
-          aria-expanded={showQuick}
-          aria-controls={showQuick ? "quick-menu" : undefined}
-          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : undefined}
+          aria-expanded={showQuick || showMention}
+          aria-controls={showQuick ? "quick-menu" : showMention ? "mention-menu" : undefined}
+          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : showMention ? `mention-${mentionActive}` : undefined}
           aria-autocomplete="list"
           value={draft}
           disabled={!connected}
-          placeholder={!connected ? "Conecte o WhatsApp para responder." : attachments.length ? "Legenda (opcional). Enter envia." : "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha."}
+          placeholder={
+            !connected
+              ? "Conecte o WhatsApp para responder."
+              : attachments.length
+                ? "Legenda (opcional). Enter envia."
+                : chat.isGroup
+                  ? "Escreva uma mensagem. @ menciona, / respostas rápidas."
+                  : "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha."
+          }
           onChange={(e) => {
             setDraft(e.target.value);
+            setCaret(e.target.selectionStart ?? e.target.value.length);
             noteTyping();
+          }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+          onScroll={(e) => {
+            if (mirror.current) mirror.current.scrollTop = e.currentTarget.scrollTop;
           }}
           onPaste={(e) => {
             const files = [...e.clipboardData.files];
@@ -1172,6 +1242,39 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             addFiles(files);
           }}
           onKeyDown={(e) => {
+            const marker = formatShortcut(e);
+            if (marker) {
+              e.preventDefault();
+              const el = e.currentTarget;
+              const next = toggleWa(draft, el.selectionStart, el.selectionEnd, marker);
+              setDraft(next.text);
+              requestAnimationFrame(() => el.setSelectionRange(next.start, next.end));
+              return;
+            }
+            if (showMention) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                setMentionActive((i) => (i + step + mentionItems.length) % mentionItems.length);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                pickMention(mentionItems[mentionActive] ?? mentionItems[0]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setMentionClosed(true);
+                return;
+              }
+            }
+            if (e.key === "Escape" && (replyTo || editing) && !showQuick) {
+              e.preventDefault();
+              if (editing) cancelEdit();
+              setReplyTo(null);
+              return;
+            }
             if (showQuick) {
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
@@ -1191,19 +1294,13 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
                 return;
               }
             }
-            if (e.key === "Escape" && (replyTo || editing)) {
-              e.preventDefault();
-              if (editing) setDraft("");
-              setReplyTo(null);
-              setEditing(null);
-              return;
-            }
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               void send();
             }
           }}
         />
+        </div>
           </>
         )}
         {recorder.recording || draft.trim() || attachments.length || sending ? (
@@ -1230,6 +1327,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       )}
     </section>
   );
+}
+
+/** Atalhos do WhatsApp Desktop: Ctrl+B negrito, Ctrl+I itálico, Ctrl+Shift+X tachado, Ctrl+Shift+M monoespaçado. */
+function formatShortcut(e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean; key: string }): string | null {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  const k = e.key.toLowerCase();
+  if (!e.shiftKey) return k === "b" ? "*" : k === "i" ? "_" : null;
+  return k === "x" ? "~" : k === "m" ? "```" : null;
 }
 
 function App() {
@@ -1300,16 +1405,21 @@ function App() {
       upsert(chat);
       push("success", `Lembrete: ${chat.name}. A conversa voltou para Abertas.`);
     });
-    es.addEventListener("presence", (e) => window.dispatchEvent(new CustomEvent("inbox:presence", { detail: JSON.parse((e as MessageEvent).data) })));
-    es.addEventListener("message-update", (e) => {
-      const { message, chat } = JSON.parse((e as MessageEvent).data) as { message: Message; chat: Chat | null };
-      if (chat) upsert(chat);
-      window.dispatchEvent(new CustomEvent("inbox:message-update", { detail: message }));
-    });
     es.addEventListener("message", (e) => {
       const { message, chat } = JSON.parse((e as MessageEvent).data) as { message: Message; chat: Chat };
       upsert(chat);
       window.dispatchEvent(new CustomEvent("inbox:message", { detail: message }));
+    });
+    es.addEventListener("presence", (e) => window.dispatchEvent(new CustomEvent("inbox:presence", { detail: JSON.parse((e as MessageEvent).data) })));
+    es.addEventListener("update", (e) => {
+      const { message, chat } = JSON.parse((e as MessageEvent).data) as { message: Message; chat: Chat | null };
+      upsert(chat);
+      window.dispatchEvent(new CustomEvent("inbox:update", { detail: message }));
+    });
+    es.addEventListener("remove", (e) => {
+      const { chatJid, id, chat } = JSON.parse((e as MessageEvent).data) as { chatJid: string; id: string; chat: Chat | null };
+      upsert(chat);
+      window.dispatchEvent(new CustomEvent("inbox:remove", { detail: { chatJid, id } }));
     });
     return () => es.close();
   }, [reload, upsert]);
@@ -1331,8 +1441,16 @@ function App() {
   const showConnect = connection.status === "qr" && !skipConnect;
 
   useEffect(() => {
-    if (connection.status === "conectado") setSkipConnect(false);
+    if (connection.status !== "conectado") return;
+    setSkipConnect(false);
+    // Fotos que falharam offline são buscadas de novo.
+    refreshAvatars();
   }, [connection.status]);
+
+  const theme = state?.prefs.theme;
+  useEffect(() => {
+    if (theme) applyTheme(theme);
+  }, [theme]);
 
   // Clique na notificação abre a conversa; "Configurações" na bandeja abre o painel.
   useEffect(() => {

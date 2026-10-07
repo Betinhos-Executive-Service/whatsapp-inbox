@@ -14,6 +14,8 @@ export const prefsSchema = z.object({
   startMinimized: z.boolean(),
   /** Mostrar "digitando..." ao contato enquanto você escreve. */
   sendTyping: z.boolean(),
+  /** Aparência: segue o Windows, claro ou escuro. */
+  theme: z.enum(["system", "light", "dark"]),
 });
 
 export type Prefs = z.infer<typeof prefsSchema>;
@@ -27,6 +29,7 @@ export const DEFAULT_PREFS: Prefs = {
   startWithWindows: false,
   startMinimized: true,
   sendTyping: false,
+  theme: "system",
 };
 
 export function readPrefs(store: Store): Prefs {

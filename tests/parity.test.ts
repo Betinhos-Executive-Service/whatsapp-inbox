@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Store, type IncomingMessage } from "../server/db.ts";
-import { EDIT_WINDOW_MS, extractAction, extractQuote, REVOKE_WINDOW_MS, sentChangeError } from "../server/text.ts";
+import { EDIT_WINDOW_MS, extractAction, REVOKE_WINDOW_MS, sentChangeError } from "../server/text.ts";
 
 const PN = "5511999990000@s.whatsapp.net";
 const GROUP = "120363000000000000@g.us";
@@ -16,8 +16,8 @@ const msg = (over: Partial<IncomingMessage> = {}): IncomingMessage => ({
   ...over,
 });
 
-test("extractAction reconhece apagar, editar e reagir", () => {
-  assert.deepEqual(extractAction({ protocolMessage: { type: 0, key: { id: "A" } } }), { type: "revoke", id: "A" });
+test("extractAction reconhece editar e reagir (apagar fica com revokedId)", () => {
+  assert.equal(extractAction({ protocolMessage: { type: 0, key: { id: "A" } } }), null);
   assert.deepEqual(
     extractAction({ protocolMessage: { type: 14, key: { id: "A" }, editedMessage: { conversation: "novo" } } }),
     { type: "edit", id: "A", text: "novo" },
@@ -27,12 +27,6 @@ test("extractAction reconhece apagar, editar e reagir", () => {
   // Outros protocolos (ex.: sincronização de chaves) continuam ignorados.
   assert.equal(extractAction({ protocolMessage: { type: 6, key: { id: "A" } } }), null);
   assert.equal(extractAction({ conversation: "oi" }), null);
-});
-
-test("extractQuote pega id e texto da mensagem citada", () => {
-  const content = { extendedTextMessage: { text: "sim", contextInfo: { stanzaId: "Q1", quotedMessage: { imageMessage: { caption: "foto" } } } } };
-  assert.deepEqual(extractQuote(content), { id: "Q1", text: "[Imagem] foto" });
-  assert.equal(extractQuote({ conversation: "oi" }), null);
 });
 
 test("status de entrega só avança e só vale para as minhas", () => {
@@ -46,14 +40,15 @@ test("status de entrega só avança e só vale para as minhas", () => {
   assert.equal(s.getMessage(PN, "ele")?.ack, null);
 });
 
-test("apagar para todos guarda o original e troca a prévia", () => {
+test("apagada para todos some com as reações; apagada para mim leva as reações junto", () => {
   const s = new Store(":memory:");
-  s.addMessage(msg({ id: "a", at: 1000, text: "segredo" }), true);
-  const r = s.revokeMessage(PN, "a", 2000);
-  assert.equal(r?.message.deletedAt, 2000);
-  assert.equal(r?.message.text, "segredo");
-  assert.equal(s.getChat(PN)?.lastText, "Mensagem apagada");
-  assert.equal(s.revokeMessage(PN, "a"), null, "segunda vez não muda nada");
+  s.addMessage(msg({ id: "a", text: "segredo" }), true);
+  s.setReaction(PN, "a", PN, "👍");
+  assert.deepEqual(s.markRevoked(PN, "a")?.reactions, []);
+  s.addMessage(msg({ id: "b" }), true);
+  s.setReaction(PN, "b", "me", "❤️");
+  assert.ok(s.deleteMessage(PN, "b"));
+  assert.equal(s.db.prepare("select count(*) n from reactions where message_id = 'b'").get()?.n, 0);
 });
 
 test("edição troca o texto, marca editada e mantém o autor no grupo", () => {
@@ -82,14 +77,6 @@ test("reações: uma por pessoa, trocar e tirar", () => {
   ]);
   s.setReaction(PN, "a", "me", "");
   assert.deepEqual(s.listMessages(PN, null)[0].reactions, [{ emoji: "😂", fromMe: false }]);
-});
-
-test("citação é gravada e volta na mensagem", () => {
-  const s = new Store(":memory:");
-  s.addMessage(msg({ id: "a", text: "valor?" }), true);
-  s.addMessage(msg({ id: "b", fromMe: true, text: "R$ 300", quoted: { id: "a", text: "valor?" } }), true);
-  assert.deepEqual(s.getMessage(PN, "b")?.quoted, { id: "a", text: "valor?" });
-  assert.deepEqual(s.messageKey(PN, "a"), { id: "a", rawJid: PN, participant: null, fromMe: false });
 });
 
 test("markRead devolve exatamente as não lidas, mesmo fora de ordem", () => {

@@ -55,7 +55,7 @@ export function extractMedia(content: Content): MediaRef | null {
   };
 }
 
-/** Tipos que não são mensagem para o usuário. Apagar, editar e reagir saem por extractAction. */
+/** Tipos que não são mensagem para o usuário. Apagar sai por revokedId; editar e reagir por extractAction. */
 const IGNORED = new Set([
   "protocolMessage",
   "reactionMessage",
@@ -75,28 +75,12 @@ const IGNORED = new Set([
   "secretEncryptedMessage",
 ]);
 
-/** Mensagem citada (resposta): id e texto curto da original. */
-export type Quote = { id: string; text: string };
-
-export function extractQuote(content: Content): Quote | null {
-  if (!content) return null;
-  for (const value of Object.values(content)) {
-    const ctx = value && typeof value === "object" ? (value as Record<string, any>).contextInfo : null;
-    if (!ctx?.stanzaId) continue;
-    const quoted = extractText(ctx.quotedMessage);
-    return { id: String(ctx.stanzaId), text: (quoted?.text ?? "Mensagem").slice(0, 300) };
-  }
-  return null;
-}
-
-/** Mensagem que muda outra: apagar para todos, editar ou reagir. */
+/** Mensagem que muda outra: editar ou reagir (apagar para todos sai por revokedId). */
 export type Action =
-  | { type: "revoke"; id: string }
   | { type: "edit"; id: string; text: string }
   | { type: "reaction"; id: string; emoji: string };
 
-/** Tipos do protocolo do WhatsApp (proto.Message.ProtocolMessage.Type). */
-const REVOKE = 0;
+/** Tipo de edição no protocolo do WhatsApp (proto.Message.ProtocolMessage.Type). */
 const MESSAGE_EDIT = 14;
 
 export function extractAction(content: Content): Action | null {
@@ -105,7 +89,6 @@ export function extractAction(content: Content): Action | null {
   if (reaction?.key?.id) return { type: "reaction", id: String(reaction.key.id), emoji: typeof reaction.text === "string" ? reaction.text : "" };
   const p = content.protocolMessage;
   if (!p?.key?.id) return null;
-  if (p.type === REVOKE) return { type: "revoke", id: String(p.key.id) };
   if (p.type === MESSAGE_EDIT) {
     const edited = extractText(p.editedMessage);
     return edited ? { type: "edit", id: String(p.key.id), text: edited.text } : null;
@@ -192,4 +175,32 @@ export function extractText(content: Content): Extracted | null {
       // O tipo fica no `kind` para diagnóstico (ex.: other:fooMessage).
       return { text: "[Mensagem não suportada]", kind: `other:${type}` };
   }
+}
+
+/** Mensagem citada (resposta) e menções, tiradas do contextInfo da mensagem. */
+export type MessageContext = {
+  quoted: { id: string; participant: string | null; text: string } | null;
+  mentions: string[];
+};
+
+export function extractContext(content: Content): MessageContext {
+  const out: MessageContext = { quoted: null, mentions: [] };
+  if (!content) return out;
+  const type = Object.keys(content).find((k) => !IGNORED.has(k) && content[k] != null);
+  const m = type ? content[type] : null;
+  const info = m && typeof m === "object" ? m.contextInfo : null;
+  if (!info) return out;
+  if (Array.isArray(info.mentionedJid)) out.mentions = info.mentionedJid.filter((j: unknown): j is string => typeof j === "string");
+  if (info.stanzaId && info.quotedMessage) {
+    const quotedText = extractText(info.quotedMessage)?.text ?? "[Mensagem]";
+    out.quoted = { id: String(info.stanzaId), participant: typeof info.participant === "string" ? info.participant : null, text: quotedText.slice(0, 500) };
+  }
+  return out;
+}
+
+/** Apagada para todos: devolve o id da mensagem revogada. */
+export function revokedId(content: Content): string | null {
+  const p = content?.protocolMessage;
+  // type 0 = REVOKE no protocolo do WhatsApp.
+  return p && (p.type === 0 || p.type === "REVOKE") && p.key?.id ? String(p.key.id) : null;
 }
