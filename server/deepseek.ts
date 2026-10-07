@@ -4,7 +4,7 @@
 import { z } from "zod";
 import type { Label, LabelExample, Message } from "./db.ts";
 import type { TokenUsage } from "./pricing.ts";
-import { draftPrompt, guardDraft, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
+import { audioSummaryPrompt, parseAudioSummary, type AudioSummary, draftPrompt, guardDraft, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
 import { buildState, PRIORITIES, PRIORITY_CRITERIA, type Classification } from "./jev.ts";
 
 /** Modelos da DeepSeek que o app oferece. Os dois têm contexto de 1M tokens. */
@@ -140,6 +140,11 @@ export class DeepSeekAI {
   async summarize(apiKey: string, contactName: string, messages: Message[]): Promise<{ summary: Summary; usage: TokenUsage }> {
     const { text, usage } = await this.complete(apiKey, summaryPrompt(contactName, messages, true, this.window), "summary");
     return { summary: parseSummary(text), usage };
+  }
+
+  async summarizeAudio(apiKey: string, contactName: string, transcript: string): Promise<{ summary: AudioSummary; usage: TokenUsage }> {
+    const { text, usage } = await this.complete(apiKey, audioSummaryPrompt(contactName, transcript), "summary", true);
+    return { summary: parseAudioSummary(text), usage };
   }
 
   /** Mesmas respostas do Jev (etiqueta, espera resposta, urgência, prioridade) mais o motivo em uma frase. */

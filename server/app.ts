@@ -9,7 +9,8 @@ import { cacheMedia, loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
 import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPTIONS, findClaudeBin, isClaudeModel, parseClaudeOptions, runClaude, type ClaudeModel } from "./claude.ts";
 import { PhotoCache } from "./photos.ts";
-import { cachedTranscript, saveTranscript, transcribeAudio } from "./groq.ts";
+import { cachedAudioSummary, cachedTranscript, saveAudioSummary, saveTranscript, transcribeAudio } from "./groq.ts";
+import type { AudioSummary } from "./ai.ts";
 import { DeepSeekAI, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL, DEFAULT_DEEPSEEK_OPTIONS, isDeepSeekModel, parseDeepSeekOptions, type DeepSeekModel } from "./deepseek.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import { DEFAULT_USD_BRL, estimateCostUsd, type Provider as UsageProvider, type TokenUsage, type UsageKind } from "./pricing.ts";
@@ -316,6 +317,22 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     return text;
   }
 
+  /** Resumo organizado do áudio (assunto, pontos, tratativa e prioridade), pela IA escolhida em Rascunho e resumo. */
+  async function summarizeAudio(jid: string, id: string): Promise<AudioSummary> {
+    const dir = join(options.dataDir, "transcripts");
+    const cached = await cachedAudioSummary<AudioSummary>(dir, jid, id);
+    if (cached) return cached;
+    const transcript = await transcribe(jid, id);
+    if (!transcript.trim()) throw new Error("O áudio não tem fala reconhecida para resumir.");
+    const name = store.getChat(jid)?.name ?? "o contato";
+    const p = provider();
+    const { summary } = await tracked(p, "resumo", jid, () =>
+      p === "claude" ? claude.summarizeAudio(name, transcript) : deepseek.summarizeAudio(requireDeepseekKey(), name, transcript),
+    );
+    await saveAudioSummary(dir, jid, id, summary);
+    return summary;
+  }
+
   async function sendMedia(jid: string, file: OutgoingFile, quotedId?: string) {
     const id = await connected().sendMedia(jid, file, { quoted: quotedId ? store.messageKey(jid, quotedId) : null });
     if (id) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
@@ -488,7 +505,12 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       if (!key) return Promise.reject(new Error("Configure a chave da Groq em Configurações › IA para transcrever."));
       return transcribeAudio(fetch, key, body, mimetype);
     },
-    cachedTranscript: (jid, id) => cachedTranscript(join(options.dataDir, "transcripts"), jid, id),
+    cachedTranscript: async (jid, id) => {
+      const dir = join(options.dataDir, "transcripts");
+      const [text, summary] = await Promise.all([cachedTranscript(dir, jid, id), cachedAudioSummary(dir, jid, id)]);
+      return { text, summary };
+    },
+    summarizeAudio,
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
       store.db.prepare("vacuum into ?").run(file);

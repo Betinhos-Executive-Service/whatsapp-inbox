@@ -32,8 +32,8 @@ export async function transcribeAudio(fetcher: Fetch, key: string, body: Buffer,
   return (data?.text ?? "").trim();
 }
 
-const cacheFile = (dir: string, chatJid: string, id: string) =>
-  join(dir, `${createHash("sha256").update(`${chatJid}|${id}`).digest("hex").slice(0, 32)}.txt`);
+const cacheFile = (dir: string, chatJid: string, id: string, ext = "txt") =>
+  join(dir, `${createHash("sha256").update(`${chatJid}|${id}`).digest("hex").slice(0, 32)}.${ext}`);
 
 export async function cachedTranscript(dir: string, chatJid: string, id: string): Promise<string | null> {
   return readFile(cacheFile(dir, chatJid, id), "utf8").catch(() => null);
@@ -43,5 +43,22 @@ export async function saveTranscript(dir: string, chatJid: string, id: string, t
   const file = cacheFile(dir, chatJid, id);
   mkdirSync(dir, { recursive: true });
   await writeFile(`${file}.part`, text, "utf8");
+  await rename(`${file}.part`, file);
+}
+
+/** Resumo do áudio (JSON), guardado junto da transcrição. */
+export async function cachedAudioSummary<T>(dir: string, chatJid: string, id: string): Promise<T | null> {
+  const raw = await readFile(cacheFile(dir, chatJid, id, "summary.json"), "utf8").catch(() => null);
+  try {
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveAudioSummary(dir: string, chatJid: string, id: string, summary: unknown): Promise<void> {
+  const file = cacheFile(dir, chatJid, id, "summary.json");
+  mkdirSync(dir, { recursive: true });
+  await writeFile(`${file}.part`, JSON.stringify(summary), "utf8");
   await rename(`${file}.part`, file);
 }

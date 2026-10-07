@@ -1,6 +1,6 @@
 import { Download, FileText, LoaderCircle, Mic, Pause, Play, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, mediaUrl, type Message, type OutgoingMedia } from "./api.ts";
+import { api, mediaUrl, type AudioSummary, type Message, type OutgoingMedia } from "./api.ts";
 import { webmToOgg } from "./ogg.ts";
 
 /** "1:05" a partir de segundos. */
@@ -134,13 +134,44 @@ function Lightbox({ src, download, onClose }: { src: string; download: string; o
   );
 }
 
-/** Transcrição sob demanda (Groq). O texto fica em cache no app; aqui só na sessão. */
+/** Transcrição sob demanda (Groq) e resumo pela IA. Ficam em cache no app; aqui só na sessão. */
 const transcripts = new Map<string, string>();
+const summaries = new Map<string, AudioSummary>();
+const PRIORITY_LABEL = { alta: "Prioridade alta", media: "Prioridade média", baixa: "Prioridade baixa" } as const;
+const PRIORITY_BADGE = { alta: "badge--danger", media: "badge--warning", baixa: "badge--neutral" } as const;
+
+function AudioSummaryView({ s }: { s: AudioSummary }) {
+  return (
+    <div className="audio-summary">
+      <p className="audio-summary__head">
+        <span className={`badge ${PRIORITY_BADGE[s.prioridade]}`} title={s.motivo || undefined}>
+          {PRIORITY_LABEL[s.prioridade]}
+        </span>
+        <strong>{s.assunto}</strong>
+      </p>
+      {s.pontos.length > 0 && (
+        <ul className="audio-summary__points">
+          {s.pontos.map((p, i) => (
+            <li key={i}>{p}</li>
+          ))}
+        </ul>
+      )}
+      {s.tratativa && (
+        <p className="audio-summary__action">
+          <span>Tratativa:</span> {s.tratativa}
+        </p>
+      )}
+    </div>
+  );
+}
 
 function Transcript({ m }: { m: Message }) {
   const cacheKey = `${m.chatJid}|${m.id}`;
   const [text, setText] = useState<string | null>(() => transcripts.get(cacheKey) ?? null);
-  const [busy, setBusy] = useState(false);
+  const [summary, setSummary] = useState<AudioSummary | null>(() => summaries.get(cacheKey) ?? null);
+  /** Com resumo, ele aparece primeiro; o botão alterna para a transcrição original. */
+  const [view, setView] = useState<"resumo" | "texto">("resumo");
+  const [busy, setBusy] = useState<"transcrever" | "resumir" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const show = useCallback(
     (value: string) => {
@@ -150,13 +181,25 @@ function Transcript({ m }: { m: Message }) {
     },
     [cacheKey],
   );
-  // Já transcrito (manual ou automático): vem do cache do app, sem chamar a Groq.
+  const showSummary = useCallback(
+    (value: AudioSummary) => {
+      summaries.set(cacheKey, value);
+      setSummary(value);
+      setView("resumo");
+    },
+    [cacheKey],
+  );
+  // Já transcrito/resumido (manual ou automático): vem do cache do app, sem chamar a IA.
   useEffect(() => {
     if (transcripts.has(cacheKey)) return;
     let alive = true;
     api
       .cachedTranscript(m.chatJid, m.id)
-      .then(({ text }) => alive && text !== null && show(text))
+      .then(({ text, summary }) => {
+        if (!alive) return;
+        if (text !== null) show(text);
+        if (summary) showSummary(summary);
+      })
       .catch(() => undefined);
     const onTranscript = (e: Event) => {
       const d = (e as CustomEvent<{ chatJid: string; id: string; text: string }>).detail;
@@ -167,26 +210,59 @@ function Transcript({ m }: { m: Message }) {
       alive = false;
       window.removeEventListener("inbox:transcript", onTranscript);
     };
-  }, [cacheKey, m.chatJid, m.id, show]);
-  const run = async () => {
-    setBusy(true);
+  }, [cacheKey, m.chatJid, m.id, show, showSummary]);
+  const run = async (what: "transcrever" | "resumir") => {
+    setBusy(what);
     setError(null);
     try {
-      const { text } = await api.transcribe(m.chatJid, m.id);
-      show(text);
+      if (what === "transcrever") show((await api.transcribe(m.chatJid, m.id)).text);
+      else showSummary((await api.summarizeAudio(m.chatJid, m.id)).summary);
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
-  if (text !== null) return <p className="transcript">{text}</p>;
+  const errorLine = error && (
+    <span className="transcript__error" role="alert">
+      {error}
+    </span>
+  );
+  if (text === null) {
+    return (
+      <div className="transcript-bar">
+        <button type="button" className="transcript__action" onClick={() => void run("transcrever")} disabled={busy !== null} aria-busy={busy !== null || undefined}>
+          {busy ? "Transcrevendo…" : "Transcrever"}
+        </button>
+        {errorLine}
+      </div>
+    );
+  }
+  const hasSpeech = text !== "(sem fala reconhecida)";
   return (
-    <div className="transcript-bar">
-      <button type="button" className="transcript__action" onClick={() => void run()} disabled={busy} aria-busy={busy || undefined}>
-        {busy ? "Transcrevendo…" : "Transcrever"}
-      </button>
-      {error && <span className="transcript__error" role="alert">{error}</span>}
+    <div className="transcript-box">
+      {summary && view === "resumo" ? <AudioSummaryView s={summary} /> : <p className="transcript">{text}</p>}
+      {hasSpeech && (
+        <div className="transcript-bar">
+          {summary ? (
+            <button type="button" className="transcript__action" onClick={() => setView((v) => (v === "resumo" ? "texto" : "resumo"))}>
+              {view === "resumo" ? "Ver transcrição" : "Ver resumo"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="transcript__action"
+              onClick={() => void run("resumir")}
+              disabled={busy !== null}
+              aria-busy={busy !== null || undefined}
+              title="Resumo com os pontos principais, a tratativa e a prioridade"
+            >
+              <Sparkles size={12} aria-hidden /> {busy ? "Resumindo…" : "Resumir"}
+            </button>
+          )}
+          {errorLine}
+        </div>
+      )}
     </div>
   );
 }

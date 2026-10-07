@@ -29,3 +29,12 @@ test("trava do rascunho: nunca sugere pedir cartão, senha ou CPF", () => {
   const g = guardDraft("Vamos confirmar o valor. Por favor, forneça o número do seu cartão de crédito.", conv);
   assert.ok(!/cart/i.test(g));
 });
+
+test("parseAudioSummary lê JSON com texto em volta e corrige prioridade inválida", async () => {
+  const { parseAudioSummary } = await import("../server/ai.ts");
+  const s = parseAudioSummary('Aqui: {"assunto":"Reserva amanhã","pontos":["GRU 8h"," "],"tratativa":"Confirmar motorista","prioridade":"urgente","motivo":"x"}');
+  assert.equal(s.assunto, "Reserva amanhã");
+  assert.deepEqual(s.pontos, ["GRU 8h"]);
+  assert.equal(s.prioridade, "media");
+  assert.throws(() => parseAudioSummary("sem json"), /resumo legível/);
+});
