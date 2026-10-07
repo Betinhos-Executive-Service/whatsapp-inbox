@@ -18,7 +18,7 @@ import makeWASocket, {
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, Store } from "./db.ts";
-import { extractAction, extractMedia, extractQuote, extractText, type Action } from "./text.ts";
+import { extractAction, extractMedia, extractQuote, extractText, sentChangeError, type Action } from "./text.ts";
 
 export type ConnectionStatus = "iniciando" | "qr" | "conectado" | "reconectando" | "desconectado";
 export type ConnectionState = { status: ConnectionStatus; qr: string | null; me: string | null; error: string | null };
@@ -40,6 +40,8 @@ export class WhatsApp extends EventEmitter<{
   chat: [Chat];
   /** Mensagem já existente mudou: status de entrega, edição, apagada ou reação. */
   update: [{ message: Message; chat: Chat | null }];
+  /** Contato digitando ou gravando áudio; null = parou. */
+  presence: [{ jid: string; state: "composing" | "recording" | null }];
   reload: [];
 }> {
   state: ConnectionState = { status: "iniciando", qr: null, me: null, error: null };
@@ -282,6 +284,12 @@ export class WhatsApp extends EventEmitter<{
     sock.ev.on("messages.upsert", ({ messages, type }) => {
       for (const m of messages) this.ingest(m, type === "notify" || type === "append");
     });
+    sock.ev.on("presence.update", ({ id, presences }) => {
+      if (!isConversation(id)) return;
+      const states = Object.values(presences).map((p) => p.lastKnownPresence);
+      const state = states.includes("recording") ? "recording" : states.includes("composing") ? "composing" : null;
+      this.emit("presence", { jid: this.canonical(id), state });
+    });
     // Recibos das minhas mensagens: entregue, lida, ouvida.
     sock.ev.on("messages.update", (list) => {
       for (const { key, update } of list) {
@@ -339,6 +347,40 @@ export class WhatsApp extends EventEmitter<{
     const sock = this.connectedSock();
     const sent = await sock.sendMessage(jid, { text }, { quoted: this.quotedMessage(jid, quotedId) });
     if (sent) this.ingest(sent, true);
+  }
+
+  /** Chave de uma mensagem minha, depois de conferir o prazo do WhatsApp para mudá-la. */
+  private sentKey(jid: string, id: string, change: "edit" | "revoke") {
+    const message = this.store.getMessage(jid, id);
+    const key = this.store.messageKey(jid, id);
+    if (!message || !key) throw new Error("Mensagem não encontrada.");
+    const error = sentChangeError(message, change);
+    if (error) throw new Error(error);
+    return { remoteJid: key.rawJid, id, fromMe: true };
+  }
+
+  async editSent(jid: string, id: string, text: string): Promise<void> {
+    const sock = this.connectedSock();
+    await sock.sendMessage(jid, { text, edit: this.sentKey(jid, id, "edit") });
+    const result = this.store.editMessage(jid, id, text);
+    if (result) this.emit("update", result);
+  }
+
+  /** Apaga para todos. */
+  async revokeSent(jid: string, id: string): Promise<void> {
+    const sock = this.connectedSock();
+    await sock.sendMessage(jid, { delete: this.sentKey(jid, id, "revoke") });
+    const result = this.store.revokeMessage(jid, id);
+    if (result) this.emit("update", result);
+  }
+
+  /** Passa a receber "digitando" deste contato. Cortesia: falha não atrapalha. */
+  async watchPresence(jid: string): Promise<void> {
+    await this.sock?.presenceSubscribe(jid).catch(() => undefined);
+  }
+
+  async typing(jid: string, state: "composing" | "paused"): Promise<void> {
+    await this.sock?.sendPresenceUpdate(state, jid).catch(() => undefined);
   }
 
   /** Emoji vazio tira a reação. */

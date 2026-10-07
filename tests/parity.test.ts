@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Store, type IncomingMessage } from "../server/db.ts";
-import { extractAction, extractQuote } from "../server/text.ts";
+import { EDIT_WINDOW_MS, extractAction, extractQuote, REVOKE_WINDOW_MS, sentChangeError } from "../server/text.ts";
 
 const PN = "5511999990000@s.whatsapp.net";
 const GROUP = "120363000000000000@g.us";
@@ -106,4 +106,18 @@ test("mensagem enviada guarda o proto para retry", () => {
   s.addMessage(msg({ id: "eu", fromMe: true, raw: new Uint8Array([1, 2, 3]) }), true);
   assert.deepEqual([...(s.rawMessage("eu") ?? [])], [1, 2, 3]);
   assert.equal(s.rawMessage("outra"), null);
+});
+
+test("prazos do WhatsApp para editar e apagar mensagem enviada", () => {
+  const now = 10 * REVOKE_WINDOW_MS;
+  const mine = { fromMe: true, kind: "text", at: now - 60_000, deletedAt: null };
+  assert.equal(sentChangeError(mine, "edit", now), null);
+  assert.equal(sentChangeError(mine, "revoke", now), null);
+  assert.match(sentChangeError({ ...mine, fromMe: false }, "revoke", now) ?? "", /enviadas por você/);
+  assert.match(sentChangeError({ ...mine, kind: "image" }, "edit", now) ?? "", /texto/);
+  assert.equal(sentChangeError({ ...mine, kind: "image" }, "revoke", now), null, "mídia pode ser apagada");
+  assert.match(sentChangeError({ ...mine, at: now - EDIT_WINDOW_MS - 1 }, "edit", now) ?? "", /15 minutos/);
+  assert.equal(sentChangeError({ ...mine, at: now - EDIT_WINDOW_MS - 1 }, "revoke", now), null);
+  assert.match(sentChangeError({ ...mine, at: now - REVOKE_WINDOW_MS - 1 }, "revoke", now) ?? "", /60 horas/);
+  assert.match(sentChangeError({ ...mine, deletedAt: now }, "revoke", now) ?? "", /já foi apagada/);
 });

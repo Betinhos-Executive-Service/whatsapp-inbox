@@ -12,6 +12,8 @@ export const prefsSchema = z.object({
   quietEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable(),
   startWithWindows: z.boolean(),
   startMinimized: z.boolean(),
+  /** Mostrar "digitando..." ao contato enquanto você escreve. */
+  sendTyping: z.boolean(),
 });
 
 export type Prefs = z.infer<typeof prefsSchema>;
@@ -24,6 +26,7 @@ export const DEFAULT_PREFS: Prefs = {
   quietEnd: null,
   startWithWindows: false,
   startMinimized: true,
+  sendTyping: false,
 };
 
 export function readPrefs(store: Store): Prefs {

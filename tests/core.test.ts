@@ -179,6 +179,11 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       state: () => ({}),
       send: async () => undefined,
       react: async () => undefined,
+      editMessage: async () => undefined,
+      revokeMessage: async () => undefined,
+      forward: async () => undefined,
+      watch: async () => undefined,
+      typing: async () => undefined,
       sendMedia: async (_jid, file) => void sentMedia.push(file),
       markRead: async () => undefined,
       classify: async () => null,
@@ -234,6 +239,12 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
     assert.equal(media.status, 200);
     assert.equal(sentMedia[0].body.toString(), "abc");
     assert.equal(sentMedia[0].ptt, true);
+    const post = (action: string, body: unknown) =>
+      fetch(`${base}/api/chats/${encodeURIComponent(PN)}/${action}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+    assert.equal((await post("forward", { id: "x", to: "nao-existe@s.whatsapp.net" })).status, 404, "destino precisa existir");
+    assert.equal((await post("forward", { id: "nao-existe", to: PN })).status, 404, "mensagem precisa existir");
+    assert.equal((await post("typing", { state: "gritando" })).status, 400);
+    assert.equal((await post("edit", { id: "x", text: "   " })).status, 400);
   } finally {
     server.close();
   }

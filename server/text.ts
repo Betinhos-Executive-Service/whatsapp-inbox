@@ -113,6 +113,24 @@ export function extractAction(content: Content): Action | null {
   return null;
 }
 
+/** Prazos do WhatsApp para mudar uma mensagem já enviada. */
+export const EDIT_WINDOW_MS = 15 * 60_000;
+export const REVOKE_WINDOW_MS = 60 * 3600_000;
+
+/** Motivo de não poder editar ou apagar a mensagem; null = pode. */
+export function sentChangeError(
+  m: { fromMe: boolean; kind: string; at: number; deletedAt: number | null },
+  change: "edit" | "revoke",
+  now = Date.now(),
+): string | null {
+  if (!m.fromMe) return "Só dá para mudar mensagens enviadas por você.";
+  if (m.deletedAt !== null) return "Esta mensagem já foi apagada.";
+  if (change === "edit" && m.kind !== "text") return "Só mensagens de texto podem ser editadas.";
+  if (change === "edit" && now - m.at > EDIT_WINDOW_MS) return "O WhatsApp só permite editar até 15 minutos depois do envio.";
+  if (change === "revoke" && now - m.at > REVOKE_WINDOW_MS) return "O WhatsApp só permite apagar para todos até 60 horas depois do envio.";
+  return null;
+}
+
 function withCaption(label: string, caption: unknown): string {
   const c = typeof caption === "string" ? caption.trim() : "";
   return c ? `${label} ${c}` : label;

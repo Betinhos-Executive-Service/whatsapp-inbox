@@ -12,7 +12,7 @@ import { DeepSeekAI, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL, DEFAULT_DEEPSEEK_O
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import { DEFAULT_USD_BRL, estimateCostUsd, type Provider as UsageProvider, type TokenUsage, type UsageKind } from "./pricing.ts";
 import { JEV_MODEL, type Jev } from "./jev.ts";
-import type { ConnectionState, WhatsApp } from "./whatsapp.ts";
+import type { ConnectionState, OutgoingFile, WhatsApp } from "./whatsapp.ts";
 
 // A libsignal (dependência do Baileys) escreve no console o conteúdo das sessões
 // criptográficas ("Closing session: SessionEntry {...}"). Isso não pode ir para log.
@@ -237,6 +237,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     client.on("connection", (s) => broadcast("connection", s));
     client.on("chat", (chat) => broadcast("chat", chat));
     client.on("update", (u) => broadcast("message-update", u));
+    client.on("presence", (p) => broadcast("presence", p));
     client.on("reload", () => broadcast("reload", null));
     client.on("message", ({ message, chat, live }) => {
       broadcast("message", { message, chat });
@@ -254,6 +255,17 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     return wa;
   }
 
+  async function readMedia(jid: string, id: string) {
+    const ref = store.getMediaRef(jid, id);
+    if (!ref) throw new Error("Esta mensagem não tem mídia salva. Mídias recebidas antes desta versão não podem ser abertas.");
+    return loadMedia(join(options.dataDir, "media"), jid, id, ref);
+  }
+
+  async function sendMedia(jid: string, file: OutgoingFile, quotedId?: string) {
+    const id = await connected().sendMedia(jid, file, quotedId);
+    if (id) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
+  }
+
   // ---- HTTP
 
   const handler = createHandler({
@@ -265,9 +277,30 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     state: publicState,
     send: (jid, text, quotedId) => connected().send(jid, text, quotedId),
     react: (jid, id, emoji) => connected().react(jid, id, emoji),
-    sendMedia: async (jid, file, quotedId) => {
-      const id = await connected().sendMedia(jid, file, quotedId);
-      if (id) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
+    editMessage: (jid, id, text) => connected().editSent(jid, id, text),
+    revokeMessage: (jid, id) => connected().revokeSent(jid, id),
+    sendMedia,
+    forward: async (from, id, to) => {
+      const m = store.getMessage(from, id);
+      if (!m || m.deletedAt !== null) throw new Error("Esta mensagem não pode ser encaminhada.");
+      const text = store.messageText(from, id) ?? "";
+      if (!m.media) return connected().send(to, text);
+      // Mídia: baixa (ou lê do cache) e envia de novo, com a mesma legenda.
+      const file = await readMedia(from, id);
+      let caption = text.replace(/^\[[^\]]+\]\s*/, "");
+      if (m.media.fileName && caption.startsWith(m.media.fileName)) caption = caption.slice(m.media.fileName.length).trim();
+      await sendMedia(to, {
+        body: file.body,
+        mimetype: file.mimetype,
+        fileName: file.fileName ?? m.media.fileName ?? "arquivo",
+        caption: caption || undefined,
+        ptt: m.media.ptt,
+        seconds: m.media.seconds ?? undefined,
+      });
+    },
+    watch: async (jid) => wa?.watchPresence(jid),
+    typing: async (jid, state) => {
+      if (readPrefs(store).sendTyping) await wa?.typing(jid, state);
     },
     markRead: async (jid) => {
       const keys = store.markRead(jid);
@@ -340,11 +373,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         broadcast("ai", aiState());
       },
     },
-    media: async (jid, id) => {
-      const ref = store.getMediaRef(jid, id);
-      if (!ref) throw new Error("Esta mensagem não tem mídia salva. Mídias recebidas antes desta versão não podem ser abertas.");
-      return loadMedia(join(options.dataDir, "media"), jid, id, ref);
-    },
+    media: readMedia,
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
       store.db.prepare("vacuum into ?").run(file);
