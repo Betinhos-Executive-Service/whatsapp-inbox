@@ -289,6 +289,16 @@ export class WhatsApp extends EventEmitter<{
     if (sent) this.ingest(sent, true);
   }
 
+  /** Miniatura da foto de perfil. Sem conexão lança; sem foto ou com privacidade devolve null. */
+  async profilePhotoUrl(jid: string): Promise<string | null> {
+    if (!this.sock || this.state.status !== "conectado") throw new Error("O WhatsApp não está conectado.");
+    try {
+      return (await this.sock.profilePictureUrl(jid, "preview")) ?? null;
+    } catch {
+      return null; // o WhatsApp responde erro quando não há foto visível para você
+    }
+  }
+
   /** Envia anexo; o tipo da mensagem (imagem, vídeo, voz, documento) sai do mimetype. Devolve o id enviado. */
   async sendMedia(jid: string, file: OutgoingFile): Promise<string | null> {
     if (!this.sock || this.state.status !== "conectado") throw new Error("O WhatsApp não está conectado.");

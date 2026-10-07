@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Store, type Chat, type Message, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { cacheMedia, loadMedia } from "./media.ts";
+import { avatarCache } from "./avatars.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
 import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, findClaudeBin, isClaudeModel, type ClaudeModel } from "./claude.ts";
 import { DeepSeekAI, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL, DEFAULT_DEEPSEEK_OPTIONS, isDeepSeekModel, parseDeepSeekOptions, type DeepSeekModel } from "./deepseek.ts";
@@ -47,6 +48,7 @@ export type RunningApp = {
   prefs: () => Prefs;
   send: (jid: string, text: string) => Promise<void>;
   markRead: (jid: string) => Promise<void>;
+  avatar: (jid: string) => Promise<string | null>;
   close: () => Promise<void>;
 };
 
@@ -272,6 +274,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     options.onRead?.(jid);
     await wa?.markRead(keys).catch(() => undefined); // recibo de leitura é cortesia, não bloqueia
   };
+  const avatar = avatarCache(join(options.dataDir, "avatars"), (jid) => connected().profilePhotoUrl(jid));
 
   const handler = createHandler({
     store,
@@ -395,6 +398,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     prefs: () => readPrefs(store),
     send,
     markRead,
+    avatar,
     close: async () => {
       clearInterval(heartbeat);
       clearInterval(reminderTimer);

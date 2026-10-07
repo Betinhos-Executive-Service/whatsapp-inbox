@@ -38,3 +38,12 @@ test("markRead avisa onRead e send sem WhatsApp falha com mensagem clara", async
     await app.close();
   }
 });
+
+test("avatar sem WhatsApp devolve null sem travar", async () => {
+  const app = await startApp({ port: 0, dataDir: mkdtempSync(join(tmpdir(), "wi-av-app-")), distDir: "dist", waDisabled: true });
+  try {
+    assert.equal(await app.avatar("5511999999999@s.whatsapp.net"), null);
+  } finally {
+    await app.close();
+  }
+});
