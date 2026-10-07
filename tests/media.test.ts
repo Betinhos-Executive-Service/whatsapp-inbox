@@ -15,7 +15,7 @@ test("mídia: referência guardada no banco, sem chave na mensagem que vai para 
   assert.equal(extractMedia({ conversation: "oi" }), null);
   const s = new Store(":memory:");
   const r = s.addMessage({ chatJid: PN, id: "a", rawJid: PN, fromMe: false, at: 1, text: "[Imagem]", kind: "image", media: JSON.stringify(ref) }, true);
-  assert.deepEqual(r?.message.media, { type: "image", mimetype: "image/jpeg", fileName: null, size: 10 });
+  assert.deepEqual(r?.message.media, { type: "image", mimetype: "image/jpeg", fileName: null, size: 10, seconds: null, ptt: false });
   assert.ok(!JSON.stringify(r?.message).includes("mediaKey"));
   assert.ok(s.getMediaRef(PN, "a")?.includes("mediaKey"));
 });

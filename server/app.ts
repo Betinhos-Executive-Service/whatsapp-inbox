@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, type Chat, type Message, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
-import { loadMedia } from "./media.ts";
+import { cacheMedia, loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS, LocalAI, MODELS, type ModelId } from "./ai.ts";
 import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, findClaudeBin, isClaudeModel, type ClaudeModel } from "./claude.ts";
 import { DeepSeekAI, DEEPSEEK_CONTEXT_MESSAGES, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL, isDeepSeekModel, type DeepSeekModel } from "./deepseek.ts";
@@ -283,6 +283,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     distDir: options.distDir,
     state: publicState,
     send: (jid, text) => connected().send(jid, text),
+    sendMedia: async (jid, file) => {
+      const id = await connected().sendMedia(jid, file);
+      if (id) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
+    },
     markRead: async (jid) => {
       const keys = store.markRead(jid);
       broadcast("chat", store.getChat(jid));

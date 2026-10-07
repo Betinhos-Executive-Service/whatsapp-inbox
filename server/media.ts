@@ -12,8 +12,24 @@ const EXT: Record<string, string> = {
   "audio/ogg": "ogg",
   "audio/mpeg": "mp3",
   "audio/mp4": "m4a",
+  "audio/webm": "webm",
+  "image/gif": "gif",
+  "video/webm": "webm",
   "application/pdf": "pdf",
 };
+
+function mediaFile(dir: string, chatJid: string, id: string, mimetype: string): string {
+  const name = createHash("sha256").update(`${chatJid}|${id}`).digest("hex").slice(0, 32);
+  return join(dir, `${name}.${EXT[mimetype.split(";")[0]] ?? "bin"}`);
+}
+
+/** Guarda no disco a mídia que o próprio app enviou: abrir depois não baixa de novo. */
+export async function cacheMedia(dir: string, chatJid: string, id: string, mimetype: string, body: Buffer): Promise<void> {
+  const file = mediaFile(dir, chatJid, id, mimetype);
+  mkdirSync(dir, { recursive: true });
+  await writeFile(`${file}.part`, body);
+  await rename(`${file}.part`, file);
+}
 
 /**
  * Baixa e decifra a mídia uma vez e guarda em data/media; as próximas aberturas vêm do disco.
@@ -21,8 +37,7 @@ const EXT: Record<string, string> = {
  */
 export async function loadMedia(dir: string, chatJid: string, id: string, refJson: string): Promise<{ body: Buffer; mimetype: string; fileName: string | null }> {
   const ref = JSON.parse(refJson) as MediaRef;
-  const name = createHash("sha256").update(`${chatJid}|${id}`).digest("hex").slice(0, 32);
-  const file = join(dir, `${name}.${EXT[ref.mimetype] ?? "bin"}`);
+  const file = mediaFile(dir, chatJid, id, ref.mimetype);
   try {
     return { body: await readFile(file), mimetype: ref.mimetype, fileName: ref.fileName };
   } catch {
