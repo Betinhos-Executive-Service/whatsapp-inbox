@@ -11,6 +11,7 @@ export type Api = {
   port: number;
   state: () => unknown;
   send: (jid: string, text: string) => Promise<void>;
+  sendMedia: (jid: string, file: { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number }) => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   classify: (jid: string) => Promise<unknown>;
   saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
@@ -97,12 +98,23 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
+/** Limite de anexo enviado pelo app (o JSON leva base64, ~33% maior). */
+const MAX_MEDIA = 32 * 1024 * 1024;
+const sendMediaSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  mimetype: z.string().trim().min(1).max(128),
+  data: z.string().min(1),
+  caption: z.string().max(4096).optional(),
+  ptt: z.boolean().optional(),
+  seconds: z.number().positive().max(24 * 3600).optional(),
+});
+
+async function readJson(req: IncomingMessage, limit = 64 * 1024): Promise<unknown> {
   let size = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 64 * 1024) throw new HttpError(413, "Conteúdo grande demais.");
+    if (size > limit) throw new HttpError(413, "Conteúdo grande demais.");
     chunks.push(chunk as Buffer);
   }
   try {
@@ -154,7 +166,7 @@ export function createHandler(api: Api) {
     const url = new URL(req.url ?? "/", "http://local");
     const path = url.pathname;
     const method = req.method ?? "GET";
-    const chatMatch = path.match(/^\/api\/chats\/([^/]+)(\/[a-z]+)?$/);
+    const chatMatch = path.match(/^\/api\/chats\/([^/]+)(\/[a-z-]+)?$/);
     const jid = chatMatch ? decodeURIComponent(chatMatch[1]) : null;
     const action = chatMatch?.[2] ?? "";
 
@@ -178,6 +190,14 @@ export function createHandler(api: Api) {
       }
       if (action === "/read" && method === "POST") {
         await api.markRead(jid);
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/send-media" && method === "POST") {
+        const { data, ...file } = parse(sendMediaSchema, await readJson(req, Math.ceil((MAX_MEDIA * 4) / 3) + 64 * 1024));
+        const body = Buffer.from(data, "base64");
+        if (!body.length) throw new HttpError(400, "Arquivo vazio.");
+        if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
+        await api.sendMedia(jid, { ...file, body });
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/send" && method === "POST") {

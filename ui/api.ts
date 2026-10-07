@@ -70,8 +70,11 @@ export type Message = {
   at: number;
   text: string;
   kind: string;
-  media: { type: string; mimetype: string; fileName: string | null; size: number | null } | null;
+  media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
 };
+
+/** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
+export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number };
 
 export const mediaUrl = (m: Message, download = false) =>
   `/api/media/${encodeURIComponent(m.chatJid)}/${encodeURIComponent(m.id)}${download ? "?download=1" : ""}`;
@@ -120,6 +123,7 @@ export const api = {
     request<Message[]>("GET", `${chatPath(jid)}/messages${before ? `?before=${before}` : ""}`),
   read: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/read`, {}),
   send: (jid: string, text: string) => request<Chat>("POST", `${chatPath(jid)}/send`, { text }),
+  sendMedia: (jid: string, file: OutgoingMedia) => request<Chat>("POST", `${chatPath(jid)}/send-media`, file),
   update: (jid: string, patch: { status?: Status; label?: string | null; note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
   reminders: (jid: string) => request<Reminder[]>("GET", `${chatPath(jid)}/reminders`),
   addReminder: (jid: string, dueAt: number, text: string) => request<Reminder>("POST", `${chatPath(jid)}/reminders`, { dueAt, text }),

@@ -2,11 +2,12 @@ import {
   AlarmClock,
   ArrowLeft,
   CheckCircle2,
-  Download,
   CircleDot,
   Clock,
   Inbox,
   LoaderCircle,
+  Mic,
+  Paperclip,
   MessageSquareText,
   Search,
   SendHorizontal,
@@ -25,6 +26,7 @@ import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type AppState, type Chat, type Connection, type Message, type QuickReply, type Status } from "./api.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
+import { AttachmentTray, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
@@ -405,53 +407,23 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
   );
 }
 
-function MediaView({ m }: { m: Message }) {
-  const [failed, setFailed] = useState(false);
-  const [zoom, setZoom] = useState(false);
-  const media = m.media!;
-  const src = mediaUrl(m);
-  if (failed) {
-    return (
-      <p className="media-error">
-        <TriangleAlert size={14} aria-hidden /> Não foi possível abrir. A mídia pode ter expirado no WhatsApp.
-      </p>
-    );
-  }
-  if (media.type === "image" || media.type === "sticker") {
-    return (
-      <>
-        <button className="media-thumb" onClick={() => setZoom(true)} aria-label="Ampliar imagem">
-          <img src={src} alt={m.text.replace(/^\[[^\]]+\]\s*/, "") || "Imagem recebida"} loading="lazy" onError={() => setFailed(true)} className={media.type === "sticker" ? "media-sticker" : undefined} />
-        </button>
-        {zoom && (
-          <div className="lightbox" role="dialog" aria-modal="true" aria-label="Imagem ampliada" onClick={() => setZoom(false)} onKeyDown={(e) => e.key === "Escape" && setZoom(false)}>
-            <img src={src} alt="" />
-            <div className="lightbox__actions">
-              <a className="button button--secondary" href={mediaUrl(m, true)} download onClick={(e) => e.stopPropagation()}>
-                Baixar
-              </a>
-              <button className="button button--primary" autoFocus onClick={() => setZoom(false)}>
-                Fechar
-              </button>
-            </div>
-          </div>
-        )}
-      </>
-    );
-  }
-  if (media.type === "video") return <video className="media-video" src={src} controls preload="none" onError={() => setFailed(true)} />;
-  if (media.type === "audio") return <audio className="media-audio" src={src} controls preload="none" onError={() => setFailed(true)} />;
-  return (
-    <a className="media-doc" href={mediaUrl(m, true)} download>
-      <Download size={16} aria-hidden />
-      <span>{media.fileName ?? "Documento"}</span>
-      {media.size ? <span className="hint">{Math.max(1, Math.round(media.size / 1024))} KB</span> : null}
-    </a>
-  );
+/** Em grupo, mensagem recebida chega como "Autor: texto". */
+function splitAuthor(m: Message, isGroup: boolean): { author: string | null; body: string } {
+  if (!isGroup || m.fromMe) return { author: null, body: m.text };
+  const i = m.text.indexOf(": ");
+  return i > 0 && i <= 60 ? { author: m.text.slice(0, i), body: m.text.slice(i + 2) } : { author: null, body: m.text };
+}
+
+const AUTHOR_TONES = 6;
+function authorTone(name: string): number {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h % AUTHOR_TONES;
 }
 
 /** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
-const Messages = memo(function Messages({ messages, hasMore, onMore, loadingMore }: { messages: Message[]; hasMore: boolean; onMore: () => void; loadingMore: boolean }) {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore }: { messages: Message[]; isGroup: boolean; hasMore: boolean; onMore: () => void; loadingMore: boolean }) {
+  const parts = messages.map((m) => splitAuthor(m, isGroup));
   return (
     <>
       {hasMore && (
@@ -460,20 +432,37 @@ const Messages = memo(function Messages({ messages, hasMore, onMore, loadingMore
           Carregar mensagens anteriores
         </button>
       )}
-      {messages.map((m, i) => (
-        <div key={m.id} className="message-row">
-          {(i === 0 || !sameDay(messages[i - 1].at, m.at)) && <div className="day">{dayLabel(m.at)}</div>}
-          <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}`}>
-            {m.media && <MediaView m={m} />}
-            {(!m.media || m.text.replace(/^\[[^\]]+\]\s*/, "")) && (
-              <p className="bubble__text">{m.media ? m.text.replace(/^\[[^\]]+\]\s*/, "") : m.text}</p>
-            )}
-            <time className="bubble__time" dateTime={new Date(m.at).toISOString()}>
-              {formatTime(m.at)}
-            </time>
+      {messages.map((m, i) => {
+        const prev = messages[i - 1];
+        const newDay = i === 0 || !sameDay(prev.at, m.at);
+        const { author, body } = parts[i];
+        // Sequência do mesmo remetente em até 5 min vira um bloco: nome e "rabicho" só na primeira.
+        const continues = !newDay && prev.fromMe === m.fromMe && parts[i - 1].author === author && m.at - prev.at < 5 * 60_000;
+        let caption = m.media ? body.replace(/^\[[^\]]+\]\s*/, "") : body;
+        // Documento: o texto começa pelo nome do arquivo, que já aparece no cartão.
+        const fileName = m.media?.fileName;
+        if (fileName && caption.startsWith(fileName)) caption = caption.slice(fileName.length).trim();
+        return (
+          <div key={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}`}>
+            {newDay && <div className="day">{dayLabel(m.at)}</div>}
+            <div className="message-line">
+              {isGroup && !m.fromMe && (
+                <span className={`avatar avatar--author tone-${authorTone(author ?? "?")}`} aria-hidden>
+                  {continues ? "" : initials(author ?? "?")}
+                </span>
+              )}
+              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}`}>
+                {author && !continues && <span className={`bubble__author tone-${authorTone(author)}`}>{author}</span>}
+                {m.media && <MediaView m={m} caption={caption} />}
+                {(!m.media || caption) && <p className="bubble__text">{caption}</p>}
+                <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
+                  {formatTime(m.at)}
+                </time>
+              </div>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </>
   );
 });
@@ -500,6 +489,32 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [quickActive, setQuickActive] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const recorder = useRecorder((text) => notify("error", text));
+  const addFiles = (files: Iterable<File>) => {
+    const ok: Attachment[] = [];
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT) notify("error", `${file.name} passa de 32 MB e não pode ser enviado por aqui.`);
+      else if (file.size > 0) ok.push(toAttachment(file));
+    }
+    if (ok.length) setAttachments((list) => [...list, ...ok].slice(0, 10));
+    requestAnimationFrame(() => composer.current?.focus());
+  };
+  const removeAttachment = (id: number) =>
+    setAttachments((list) => {
+      const gone = list.find((a) => a.id === id);
+      if (gone?.preview) URL.revokeObjectURL(gone.preview);
+      return list.filter((a) => a.id !== id);
+    });
+  useEffect(() => {
+    setAttachments((list) => {
+      list.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
+      return [];
+    });
+    recorder.cancel();
+  }, [chat.jid]);
   useEffect(() => {
     const id = requestAnimationFrame(() => composer.current?.focus());
     return () => cancelAnimationFrame(id);
@@ -592,14 +607,33 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    if ((!text && !attachments.length) || sending) return;
     setSending(true);
     stickToBottom.current = true;
     try {
-      onChat(await api.send(chat.jid, text));
+      // A legenda vai no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
+      for (const [i, a] of attachments.entries()) {
+        onChat(await api.sendMedia(chat.jid, await fileToOutgoing(a.file, i === 0 && text ? text : undefined)));
+        removeAttachment(a.id);
+      }
+      if (text && !attachments.length) onChat(await api.send(chat.jid, text));
       setDraft("");
     } catch (e) {
       notify("error", `Mensagem não enviada. ${(e as Error).message}`);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const sendVoice = async () => {
+    setSending(true);
+    stickToBottom.current = true;
+    try {
+      const voice = await recorder.finish();
+      if (!voice) return notify("error", "Gravação curta demais; segure por pelo menos meio segundo.");
+      onChat(await api.sendMedia(chat.jid, voice));
+    } catch (e) {
+      notify("error", `Áudio não enviado. ${(e as Error).message}`);
     } finally {
       setSending(false);
     }
@@ -640,7 +674,30 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   };
 
   return (
-    <section className="chat-pane" aria-label={`Conversa com ${chat.name}`}>
+    <section
+      className={`chat-pane${dragging ? " chat-pane--drop" : ""}`}
+      aria-label={`Conversa com ${chat.name}`}
+      onDragOver={(e) => {
+        if (!connected || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.files.length) return;
+        e.preventDefault();
+        setDragging(false);
+        addFiles(e.dataTransfer.files);
+      }}
+    >
+      {dragging && (
+        <div className="drop-hint" aria-hidden>
+          <Paperclip size={24} />
+          <span>Solte para anexar</span>
+        </div>
+      )}
       <header className="chat-pane__header">
         <div className="chat-pane__title">
           <button className="icon-button chat-pane__back" aria-label="Voltar para a lista" onClick={onBack}>
@@ -687,7 +744,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             <p className="hint">As próximas mensagens desta conversa aparecem aqui.</p>
           </div>
         ) : (
-          <Messages messages={messages} hasMore={hasMore} onMore={loadMore} loadingMore={loadingMore} />
+          <Messages messages={messages} isGroup={chat.isGroup} hasMore={hasMore} onMore={loadMore} loadingMore={loadingMore} />
         )}
       </div>
       {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setNotesOpen(false)} />}
@@ -703,6 +760,31 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           Mensagem
         </label>
         {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
+        {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} disabled={sending} />}
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files) addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        {recorder.recording ? (
+          <RecordingBar elapsed={recorder.elapsed} onCancel={recorder.cancel} />
+        ) : (
+          <>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Anexar arquivo"
+          title="Anexar imagem, vídeo ou documento (ou arraste para a conversa, ou cole com Ctrl+V)"
+          disabled={!connected || sending}
+          onClick={() => fileInput.current?.click()}
+        >
+          <Paperclip size={18} aria-hidden />
+        </button>
         <button
           type="button"
           className="icon-button"
@@ -736,8 +818,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           aria-autocomplete="list"
           value={draft}
           disabled={!connected}
-          placeholder={connected ? "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha." : "Conecte o WhatsApp para responder."}
+          placeholder={!connected ? "Conecte o WhatsApp para responder." : attachments.length ? "Legenda (opcional). Enter envia." : "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha."}
           onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => {
+            const files = [...e.clipboardData.files];
+            if (!files.length) return;
+            e.preventDefault();
+            addFiles(files);
+          }}
           onKeyDown={(e) => {
             if (showQuick) {
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -764,10 +852,24 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             }
           }}
         />
-        <button className="button button--primary" type="submit" disabled={!connected || !draft.trim() || sending} aria-busy={sending || undefined}>
-          {sending ? <LoaderCircle className="spin" size={18} aria-hidden /> : <SendHorizontal size={18} aria-hidden />}
-          <span className="composer__label">Enviar</span>
-        </button>
+          </>
+        )}
+        {recorder.recording || draft.trim() || attachments.length || sending ? (
+          <button
+            className="button button--primary"
+            type={recorder.recording ? "button" : "submit"}
+            onClick={recorder.recording ? () => void sendVoice() : undefined}
+            disabled={!connected || sending}
+            aria-busy={sending || undefined}
+          >
+            {sending ? <LoaderCircle className="spin" size={18} aria-hidden /> : <SendHorizontal size={18} aria-hidden />}
+            <span className="composer__label">Enviar</span>
+          </button>
+        ) : (
+          <button type="button" className="button button--primary composer__mic" disabled={!connected} aria-label="Gravar mensagem de voz" title="Gravar mensagem de voz" onClick={() => void recorder.start()}>
+            <Mic size={18} aria-hidden />
+          </button>
+        )}
       </form>
       {chat.aiUsage.calls > 0 && (
         <p className="ai-usage-line" title="Tokens e custo estimado de toda a IA usada nesta conversa (classificação, rascunho e resumo)">
