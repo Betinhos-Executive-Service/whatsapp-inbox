@@ -2,6 +2,7 @@ import { LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type AiUsageSummary } from "./api.ts";
 import { publishUsdBrl } from "./ai-state.ts";
+import { Alert, Button, Input, SegmentedControl } from "./ds/index.ts";
 import { formatBrl, formatCount, formatTokens, formatUsd, percent } from "./format.ts";
 
 type Period = 7 | 30 | null;
@@ -100,20 +101,20 @@ export function AiUsagePanel({ notify }: { notify: (kind: "error" | "success", t
   return (
     <div className="stack">
       <div className="split">
-        <div className="segmented" role="radiogroup" aria-label="Período">
-          {PERIODS.map((p) => (
-            <button key={String(p.id)} type="button" role="radio" aria-checked={period === p.id} className="segmented__item" onClick={() => setPeriod(p.id)}>
-              {p.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          aria-label="Período"
+          size="compact"
+          options={PERIODS.map((p) => ({ value: String(p.id), label: p.label }))}
+          value={String(period)}
+          onChange={(v) => setPeriod(PERIODS.find((p) => String(p.id) === v)!.id)}
+        />
         {!data && !error && <LoaderCircle className="spin" size={16} aria-hidden />}
       </div>
 
       {error && (
-        <p className="alert alert--danger" role="alert">
+        <Alert tone="danger" role="alert">
           {error}
-        </p>
+        </Alert>
       )}
 
       {data && t && cls && (
@@ -179,12 +180,11 @@ export function AiUsagePanel({ notify }: { notify: (kind: "error" | "success", t
             <div className="notes__custom">
               <label className="field">
                 <span className="sr-only">Cotação US$ em R$</span>
-                <input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} aria-describedby="usd-brl-help" />
+                <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} aria-describedby="usd-brl-help" />
               </label>
-              <button type="button" className="button button--secondary button--compact" disabled={savingRate} aria-busy={savingRate || undefined} onClick={() => void saveRate()}>
-                {savingRate && <LoaderCircle className="spin" size={16} aria-hidden />}
+              <Button variant="secondary" size="compact" loading={savingRate} onClick={() => void saveRate()}>
                 Salvar
-              </button>
+              </Button>
             </div>
             <p id="usd-brl-help" className="hint">
               Estimativa com a tabela pública: Jev US$ 0,042 por milhão de tokens de entrada; DeepSeek US$ 0,15 por milhão na entrada, US$ 0,003 em cache e US$ 0,60 na saída (dobra no horário de pico, de madrugada no Brasil). O valor exato é o da fatura de cada serviço.

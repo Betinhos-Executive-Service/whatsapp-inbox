@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type AiStatus, type ClaudeEffort, type ClaudeOptions, type DeepSeekOptions, type DeepSeekTask, type Thinking } from "./api.ts";
 import { EFFORT_LABELS } from "./ai-quick.tsx";
+import { Button, Input, SegmentedControl } from "./ds/index.ts";
 
 const EFFORT_HINTS: Record<ClaudeEffort, string> = {
   default: "Usa o esforço configurado no Claude Code deste PC.",
@@ -39,7 +40,7 @@ export function NumberField({ label, value, min, max, step, hint, disabled, onCo
   return (
     <label className="field">
       <span className={`field__label${hideLabel ? " sr-only" : ""}`}>{label}</span>
-      <input
+      <Input
         type="number"
         inputMode="decimal"
         min={min}
@@ -78,13 +79,13 @@ export function DeepSeekOptionsPanel({ ai, onChange }: { ai: AiStatus; onChange:
     <div className="stack ai-options">
       <div className="field">
         <span className="field__label">Thinking (raciocínio)</span>
-        <div className="segmented" role="radiogroup" aria-label="Esforço de raciocínio">
-          {THINKING.map((t) => (
-            <button key={t.id} type="button" role="radio" aria-checked={o.thinking === t.id} className="segmented__item" disabled={saving} onClick={() => o.thinking !== t.id && patch({ thinking: t.id })}>
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl<Thinking>
+          aria-label="Esforço de raciocínio"
+          size="compact"
+          options={THINKING.map((t) => ({ value: t.id, label: t.label, disabled: saving }))}
+          value={o.thinking}
+          onChange={(id) => o.thinking !== id && patch({ thinking: id })}
+        />
         <span className="hint">
           {thinking.hint}
           {o.thinking !== "off" && " Com thinking ligado, a temperatura é ignorada pela DeepSeek."}
@@ -143,9 +144,9 @@ export function DeepSeekOptionsPanel({ ai, onChange }: { ai: AiStatus; onChange:
       </span>
       {error && <p className="hint hint--warning" role="alert">{error}</p>}
       <div>
-        <button type="button" className="button button--secondary button--compact" disabled={saving || isDefault} onClick={() => void save(null)}>
+        <Button variant="secondary" size="compact" disabled={saving || isDefault} onClick={() => void save(null)}>
           Restaurar padrão
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -173,13 +174,13 @@ export function ClaudeOptionsPanel({ ai, onChange }: { ai: AiStatus; onChange: (
     <div className="stack ai-options">
       <div className="field">
         <span className="field__label">Esforço (raciocínio)</span>
-        <div className="segmented" role="radiogroup" aria-label="Esforço do Claude">
-          {(Object.keys(EFFORT_LABELS) as ClaudeEffort[]).map((id) => (
-            <button key={id} type="button" role="radio" aria-checked={o.effort === id} className="segmented__item" disabled={saving} onClick={() => o.effort !== id && patch({ effort: id })}>
-              {EFFORT_LABELS[id]}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl<ClaudeEffort>
+          aria-label="Esforço do Claude"
+          size="compact"
+          options={(Object.keys(EFFORT_LABELS) as ClaudeEffort[]).map((id) => ({ value: id, label: EFFORT_LABELS[id], disabled: saving }))}
+          value={o.effort}
+          onChange={(id) => o.effort !== id && patch({ effort: id })}
+        />
         <span className="hint">{EFFORT_HINTS[o.effort]}</span>
       </div>
       <div className="ai-options__grid">
@@ -206,9 +207,9 @@ export function ClaudeOptionsPanel({ ai, onChange }: { ai: AiStatus; onChange: (
       </div>
       {error && <p className="hint hint--warning" role="alert">{error}</p>}
       <div>
-        <button type="button" className="button button--secondary button--compact" disabled={saving || isDefault} onClick={() => void save(null)}>
+        <Button variant="secondary" size="compact" disabled={saving || isDefault} onClick={() => void save(null)}>
           Restaurar padrão
-        </button>
+        </Button>
       </div>
     </div>
   );

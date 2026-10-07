@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Chat, type Reminder, type Summary } from "./api.ts";
 import { aiName, isAiReady, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { ResizeHandle } from "./resize.tsx";
+import { Button, Input, Textarea } from "./ds/index.ts";
 import { dayLabel, formatBrl, formatTime, formatTokens, formatUsd } from "./format.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
-/** Valor de <input type="datetime-local"> no horário deste computador. */
+/** Valor de <Input type="datetime-local"> no horário deste computador. */
 const toLocalInput = (ms: number) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -130,16 +131,16 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
         <h3 className="heading-card notes__heading">
           <StickyNote size={18} aria-hidden /> Notas e lembretes
         </h3>
-        <button
-          className="icon-button icon-button--plain"
+        <Button
+          variant="ghost"
+          size="compact"
+          icon={<X size={16} aria-hidden />}
           aria-label="Fechar notas e lembretes"
           onClick={() => {
             void saveNote(note);
             onClose();
           }}
-        >
-          <X size={16} aria-hidden />
-        </button>
+        />
       </header>
       <div className="notes__body">
         <section className="notes__section" aria-labelledby="notes-note">
@@ -254,10 +255,9 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
             <p className="hint">{isAiReady(ai) ? (ai?.provider === "deepseek" ? "Gera um resumo das últimas mensagens com a DeepSeek." : ai?.provider === "claude" ? "Gera um resumo com o Claude do seu plano. Pode levar mais de um minuto." : "Gera um resumo das últimas mensagens.") : "Ative a IA em Configurações › IA para usar."}</p>
           )}
           <div className="cluster">
-            <button className="button button--secondary button--compact" disabled={!isAiReady(ai) || summarizing} aria-busy={summarizing || undefined} onClick={() => void summarize()}>
-              {summarizing ? <LoaderCircle className="spin" size={16} aria-hidden /> : <WandSparkles size={16} aria-hidden />}
+            <Button variant="secondary" size="compact" disabled={!isAiReady(ai)} loading={summarizing} icon={<WandSparkles size={16} aria-hidden />} onClick={() => void summarize()}>
               {summary ? "Resumir de novo" : "Resumir conversa"}
-            </button>
+            </Button>
           </div>
           <p className="hint notes__usage">
             {chat.aiUsage.calls === 0

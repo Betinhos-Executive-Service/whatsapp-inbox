@@ -1,0 +1,15 @@
+/* Menu de ações: painel pequeno na camada superior. */
+.bt-menu { display: inline-flex; }
+.bt-menu__panel { position: fixed; inset: auto; z-index: var(--bt-z-index-popover); min-width: 180px; max-width: 280px; margin: 0; padding: var(--bt-space-1); border: var(--bt-border-width-default) solid var(--bt-color-border); border-radius: var(--bt-radius-md); background-color: var(--bt-color-surface); color: var(--bt-color-text-primary); box-shadow: var(--bt-shadow-popover); font-family: var(--bt-font-family-sans); animation: bt-menu-in var(--bt-duration-instant) var(--bt-ease-out); }
+@keyframes bt-menu-in { from { opacity: 0; transform: translateY(-2px); } }
+.bt-menu__item { display: flex; align-items: center; gap: var(--bt-space-2); width: 100%; min-height: 36px; padding: 0 var(--bt-space-2-5); border: 0; border-radius: var(--bt-radius-sm); background: transparent; color: inherit; font: inherit; font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-semibold); text-align: left; cursor: pointer; }
+.bt-menu__item:focus-visible, .bt-menu__item:focus { outline: 0; background-color: var(--bt-color-surface-soft); }
+.bt-menu__item:disabled { opacity: var(--bt-opacity-disabled); cursor: not-allowed; }
+.bt-menu__item--danger { color: var(--bt-color-danger); }
+.bt-menu__item--danger:focus { background-color: var(--bt-color-danger-soft); }
+.bt-menu__icon { display: grid; place-items: center; color: var(--bt-color-text-secondary); }
+.bt-menu__item--danger .bt-menu__icon { color: inherit; }
+.bt-menu__icon > svg { width: 16px; height: 16px; }
+@media (hover: hover) and (pointer: fine) { .bt-menu__item:hover:not(:disabled) { background-color: var(--bt-color-surface-soft); } .bt-menu__item--danger:hover:not(:disabled) { background-color: var(--bt-color-danger-soft); } }
+@media (pointer: coarse) { .bt-menu__item { min-height: var(--bt-control-height-touch); } }
+@media (prefers-reduced-motion: reduce) { .bt-menu__panel { animation: none; } }

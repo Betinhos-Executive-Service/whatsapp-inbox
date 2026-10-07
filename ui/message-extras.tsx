@@ -1,6 +1,7 @@
 import { Check, CheckCheck, Clock, Copy, Pencil, SmilePlus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Message } from "./api.ts";
+import { Button } from "./ds/index.ts";
 
 /** Reações rápidas, as mesmas do WhatsApp. São conteúdo da mensagem, não ícones da interface. */
 export const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -58,9 +59,10 @@ export function CopyButton({ m, onCopy }: { m: Message; onCopy: (m: Message, qui
   const timer = useRef(0);
   useEffect(() => () => clearTimeout(timer.current), []);
   return (
-    <button
-      type="button"
-      className={`icon-button icon-button--plain icon-button--small copy-button${done ? " is-done" : ""}`}
+    <Button
+      variant="ghost"
+      size="compact"
+      className={`copy-button${done ? " is-done" : ""}`}
       aria-label={done ? "Texto copiado" : "Copiar texto"}
       title={done ? "Copiado" : "Copiar texto"}
       onClick={async () => {
@@ -69,11 +71,14 @@ export function CopyButton({ m, onCopy }: { m: Message; onCopy: (m: Message, qui
         clearTimeout(timer.current);
         timer.current = window.setTimeout(() => setDone(false), 1400);
       }}
-    >
-      <Copy className="copy-button__icon copy-button__icon--copy" size={16} aria-hidden />
-      <Check className="copy-button__icon copy-button__icon--check" size={16} aria-hidden />
-      <span className="sr-only" aria-live="polite">{done ? "Texto copiado" : ""}</span>
-    </button>
+      icon={
+        <>
+          <Copy className="copy-button__icon copy-button__icon--copy" size={16} aria-hidden />
+          <Check className="copy-button__icon copy-button__icon--check" size={16} aria-hidden />
+          <span className="sr-only" aria-live="polite">{done ? "Texto copiado" : ""}</span>
+        </>
+      }
+    />
   );
 }
 
@@ -87,17 +92,16 @@ export function ReactButton({ m, onReact, disabled }: { m: Message; onReact: (m:
       onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}
       onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
     >
-      <button
-        type="button"
-        className="icon-button icon-button--plain icon-button--small"
+      <Button
+        variant="ghost"
+        size="compact"
+        icon={<SmilePlus size={16} aria-hidden />}
         aria-label="Reagir"
         title="Reagir"
         aria-expanded={open}
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-      >
-        <SmilePlus size={16} aria-hidden />
-      </button>
+      />
       {open && (
         <span className="reaction-picker" role="menu" aria-label="Escolher reação">
           {REACTIONS.map((emoji, i) => (
@@ -131,9 +135,7 @@ export function EditBar({ message, onCancel }: { message: Message; onCancel: () 
         <span className="quote__author">Editando mensagem</span>
         <span className="quote__text">{message.text}</span>
       </div>
-      <button type="button" className="icon-button icon-button--plain" aria-label="Cancelar edição" onClick={onCancel}>
-        <X size={16} aria-hidden />
-      </button>
+      <Button variant="ghost" size="compact" icon={<X size={16} aria-hidden />} aria-label="Cancelar edição" onClick={onCancel} />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { Download, FileText, LoaderCircle, Mic, Pause, Play, RefreshCw, Reply, S
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, mediaUrl, type AudioSummary, type Message, type OutgoingMedia } from "./api.ts";
 import { webmToOgg } from "./ogg.ts";
+import { Button, Select } from "./ds/index.ts";
 
 /** "1:05" a partir de segundos. */
 export function clock(seconds: number): string {
@@ -126,9 +127,9 @@ function Lightbox({ src, download, onClose }: { src: string; download: string; o
         <a className="button button--secondary" href={download} download>
           <Download size={16} aria-hidden /> Baixar
         </a>
-        <button ref={close} className="button button--primary" onClick={onClose}>
-          <X size={16} aria-hidden /> Fechar
-        </button>
+        <Button ref={close} variant="primary" icon={<X size={16} aria-hidden />} onClick={onClose}>
+          Fechar
+        </Button>
       </div>
     </div>
   );
@@ -249,9 +250,9 @@ function Transcript({ m }: { m: Message }) {
   if (text === null) {
     return (
       <div className="transcript-bar">
-        <button type="button" className="transcript__action" onClick={() => void run("transcrever")} disabled={busy !== null} aria-busy={busy !== null || undefined}>
+        <Button variant="ghost" size="compact" onClick={() => void run("transcrever")} loading={busy !== null}>
           {busy ? "Transcrevendo…" : "Transcrever"}
-        </button>
+        </Button>
         {errorLine}
       </div>
     );
@@ -274,28 +275,27 @@ function Transcript({ m }: { m: Message }) {
         <div className="transcript-bar">
           {summary ? (
             <>
-              <button type="button" className="transcript__action" onClick={() => setView((v) => (v === "resumo" ? "texto" : "resumo"))}>
+              <Button variant="ghost" size="compact" onClick={() => setView((v) => (v === "resumo" ? "texto" : "resumo"))}>
                 {view === "resumo" ? "Ver transcrição" : "Ver resumo"}
-              </button>
+              </Button>
               {!m.fromMe && (
-                <button type="button" className="transcript__action" onClick={() => window.dispatchEvent(new CustomEvent("inbox:suggest", { detail: { chatJid: m.chatJid } }))} title="Gerar um rascunho de resposta com base no áudio">
-                  <Reply size={12} aria-hidden /> Responder
-                </button>
+                <Button variant="ghost" size="compact" icon={<Reply size={14} aria-hidden />} onClick={() => window.dispatchEvent(new CustomEvent("inbox:suggest", { detail: { chatJid: m.chatJid } }))} title="Gerar um rascunho de resposta com base no áudio">
+                  Responder
+                </Button>
               )}
-              <button type="button" className="transcript__action transcript__action--quiet" onClick={() => void run("resumir", true)} disabled={busy !== null} aria-label="Gerar o resumo de novo" title="Gerar o resumo de novo">
-                <RefreshCw size={12} aria-hidden />
-              </button>
+              <Button variant="ghost" size="compact" icon={<RefreshCw size={14} aria-hidden />} onClick={() => void run("resumir", true)} disabled={busy !== null} aria-label="Gerar o resumo de novo" title="Gerar o resumo de novo" />
             </>
           ) : (
-            <button
-              type="button"
-              className="transcript__action"
+            <Button
+              variant="ghost"
+              size="compact"
+              icon={<Sparkles size={14} aria-hidden />}
               onClick={() => void run("resumir")}
               disabled={busy !== null}
               title="Resumo com os pontos principais, a tratativa e a prioridade"
             >
-              <Sparkles size={12} aria-hidden /> Resumir
-            </button>
+              Resumir
+            </Button>
           )}
           {errorLine}
         </div>
@@ -397,9 +397,7 @@ export function AttachmentTray({ items, onRemove, disabled }: { items: Attachmen
             <span className="attachment__name">{a.file.name}</span>
             <span className="hint">{fileSize(a.file.size)}</span>
           </span>
-          <button type="button" className="icon-button icon-button--small" aria-label={`Remover ${a.file.name}`} disabled={disabled} onClick={() => onRemove(a.id)}>
-            <X size={14} aria-hidden />
-          </button>
+          <Button variant="ghost" size="compact" icon={<X size={14} aria-hidden />} aria-label={`Remover ${a.file.name}`} disabled={disabled} onClick={() => onRemove(a.id)} />
         </li>
       ))}
     </ul>
@@ -710,9 +708,7 @@ export function RecordingBar({ recorder, onTranscript, onError }: { recorder: Re
         }
       }}
     >
-      <button type="button" className="icon-button" aria-label="Descartar gravação (Esc)" title="Descartar gravação (Esc)" onClick={recorder.cancel}>
-        <Trash2 size={18} aria-hidden />
-      </button>
+      <Button variant="ghost" icon={<Trash2 size={18} aria-hidden />} aria-label="Descartar gravação (Esc)" title="Descartar gravação (Esc)" onClick={recorder.cancel} />
       <span className="recording__status" aria-live="polite">
         <span className="recording__dot" aria-hidden />
         <span className="recording__time">{clock(elapsed)}</span>
@@ -731,42 +727,41 @@ export function RecordingBar({ recorder, onTranscript, onError }: { recorder: Re
         </div>
       )}
       {devices.length > 1 && (
-        <label className="recording__mic" title={current?.label || "Microfone"}>
+        <span className="recording__mic" title={current?.label || "Microfone"}>
           <Mic size={16} aria-hidden />
-          <span className="sr-only">Microfone</span>
-          <select value={deviceId} onChange={(e) => void recorder.chooseDevice(e.target.value)}>
-            {!deviceId && <option value="">Padrão do sistema</option>}
-            {devices.map((d, i) => (
-              <option key={d.deviceId} value={d.deviceId}>
-                {d.label || `Microfone ${i + 1}`}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Select
+            aria-label="Microfone"
+            size="compact"
+            searchable={false}
+            clearable={false}
+            placeholder="Padrão do sistema"
+            value={deviceId || null}
+            onChange={(v) => void recorder.chooseDevice(v ?? "")}
+            options={devices.map((d, i) => ({ value: d.deviceId, label: d.label || `Microfone ${i + 1}` }))}
+          />
+        </span>
       )}
       {paused && (
-        <button
-          type="button"
-          className="icon-button recording__ai"
+        <Button
+          variant="ghost"
+          className="recording__ai"
           aria-label="Transcrever com IA e escrever como texto"
           title="Transcrever com IA (vira texto no campo da mensagem)"
-          disabled={transcribing || !preview}
-          aria-busy={transcribing || undefined}
+          disabled={!preview}
+          loading={transcribing}
+          icon={<Sparkles size={18} aria-hidden />}
           onClick={() => void transcribe()}
-        >
-          {transcribing ? <LoaderCircle size={18} className="spin" aria-hidden /> : <Sparkles size={18} aria-hidden />}
-        </button>
+        />
       )}
-      <button
+      <Button
         ref={toggle}
-        type="button"
-        className="icon-button recording__toggle"
+        variant="action"
+        className="recording__toggle"
         aria-label={paused ? "Continuar gravando" : "Pausar gravação"}
         title={paused ? "Continuar gravando" : "Pausar (ouça antes de enviar)"}
+        icon={paused ? <Mic size={18} aria-hidden /> : <Pause size={18} aria-hidden />}
         onClick={paused ? recorder.resume : recorder.pause}
-      >
-        {paused ? <Mic size={18} aria-hidden /> : <Pause size={18} aria-hidden />}
-      </button>
+      />
     </div>
   );
 }

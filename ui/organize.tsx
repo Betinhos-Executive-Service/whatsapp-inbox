@@ -2,6 +2,7 @@ import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, Clock, Keybo
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Chat, ChatPatch, SearchHit } from "./api.ts";
 import { dayLabel, formatTime, listTime } from "./format.ts";
+import { Button, Dialog, Select } from "./ds/index.ts";
 
 /** Silenciar "sempre": maior data que o JavaScript representa. */
 const FOREVER = 8_640_000_000_000_000;
@@ -174,40 +175,19 @@ export function ChatItemMenu({ chat, x, y, onChange, onClose }: { chat: Chat; x:
 
 /** Etiquetas extras da conversa, além da principal. */
 export function ExtraLabelsPicker({ chat, labels, onChange }: { chat: Chat; labels: string[]; onChange: (patch: ChatPatch) => void }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  useDismiss(open, setOpen, root);
   const options = labels.filter((l) => l !== chat.label);
   if (!options.length) return null;
-  const toggle = (label: string) => {
-    const has = chat.extraLabels.includes(label);
-    onChange({ extraLabels: has ? chat.extraLabels.filter((l) => l !== label) : [...chat.extraLabels, label] });
-  };
   return (
-    <div className="org-menu" ref={root}>
-      <button
-        type="button"
-        className="button button--secondary button--compact"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        title="Etiquetas extras desta conversa"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <Tags size={16} aria-hidden />
-        {chat.extraLabels.length ? `+${chat.extraLabels.length} etiqueta${chat.extraLabels.length > 1 ? "s" : ""}` : "Mais etiquetas"}
-      </button>
-      {open && (
-        <div className="org-menu__panel" role="dialog" aria-label="Etiquetas extras">
-          <p className="org-menu__label">Além da etiqueta principal</p>
-          {options.map((l) => (
-            <label key={l} className="check org-menu__check">
-              <input type="checkbox" checked={chat.extraLabels.includes(l)} onChange={() => toggle(l)} />
-              <span>{l}</span>
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
+    <Select
+      multiple
+      size="compact"
+      searchable={options.length > 8}
+      aria-label="Etiquetas extras desta conversa"
+      placeholder="Mais etiquetas"
+      options={options.map((l) => ({ value: l, label: l }))}
+      value={chat.extraLabels.filter((l) => options.includes(l))}
+      onChange={(extraLabels) => onChange({ extraLabels })}
+    />
   );
 }
 
@@ -274,46 +254,27 @@ const SHORTCUTS: [string, string][] = [
 
 /** Lista de atalhos de teclado. Fecha por X, Esc ou clique fora. */
 export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
-  const close = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    close.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" || e.key === "Tab") {
-        e.preventDefault();
-        if (e.key === "Escape") onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previous?.focus();
-    };
-  }, [onClose]);
   return (
-    <div className="modal">
-      <div className="modal__overlay" onClick={onClose} />
-      <div className="modal__panel surface shortcuts" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
-        <div className="shortcuts__head">
-          <h2 id="shortcuts-title" className="heading-card">
-            <Keyboard size={18} aria-hidden /> Atalhos de teclado
-          </h2>
-          <button ref={close} type="button" className="icon-button icon-button--plain" aria-label="Fechar" onClick={onClose}>
-            <X size={18} aria-hidden />
-          </button>
-        </div>
-        <dl className="shortcuts__list">
-          {SHORTCUTS.map(([keys, what]) => (
-            <div key={keys} className="shortcuts__row">
-              <dt>
-                <kbd>{keys}</kbd>
-              </dt>
-              <dd>{what}</dd>
-            </div>
-          ))}
-        </dl>
-      </div>
-    </div>
+    <Dialog
+      open
+      onClose={onClose}
+      title={
+        <>
+          <Keyboard size={18} aria-hidden /> Atalhos de teclado
+        </>
+      }
+    >
+      <dl className="shortcuts__list">
+        {SHORTCUTS.map(([keys, what]) => (
+          <div key={keys} className="shortcuts__row">
+            <dt>
+              <kbd>{keys}</kbd>
+            </dt>
+            <dd>{what}</dd>
+          </div>
+        ))}
+      </dl>
+    </Dialog>
   );
 }
 
