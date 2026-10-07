@@ -623,7 +623,6 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [forwarding, setForwarding] = useState<Message | null>(null);
   const [presence, setPresence] = useState<"composing" | "recording" | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
-  const [deleteBusy, setDeleteBusy] = useState(false);
   // Menções: participantes carregados no primeiro "@"; escolhas valem até enviar.
   const [participants, setParticipants] = useState<Participant[] | null>(null);
   const [caret, setCaret] = useState(0);
@@ -761,7 +760,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, [messages]);
 
   useEffect(() => {
-    if (chat.unread > 0) api.read(chat.jid).then(onChat).catch(() => undefined);
+    if (chat.unread <= 0) return;
+    onChat({ ...chat, unread: 0 });
+    api.read(chat.jid).then(onChat).catch(() => undefined);
   }, [chat.jid, chat.unread, onChat]);
 
   // Estável entre renders para o memo de <Messages>; lê a lista atual pela ref.
@@ -820,14 +821,17 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     if ((!text && !attachments.length) || sending) return;
     stopTyping();
     if (editing) {
-        try {
-        if (text !== editing.text) replaceMessage(await api.editMessage(chat.jid, editing.id, text));
-        setEditing(null);
-        setDraft("");
+      // Otimista: o texto novo aparece na hora; volta ao original se o servidor recusar.
+      const original = editing;
+      setEditing(null);
+      setDraft("");
+      if (text === original.text) return;
+      replaceMessage({ ...original, text, editedAt: Date.now() });
+      try {
+        replaceMessage(await api.editMessage(chat.jid, original.id, text));
       } catch (e) {
+        replaceMessage(original);
         notify("error", `Mensagem não editada. ${(e as Error).message}`);
-      } finally {
-        setSending(false);
       }
       return;
     }
@@ -968,10 +972,13 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const replaceMessage = (updated: Message) => setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
   const react = useCallback(
     async (m: Message, emoji: string) => {
+      const reactions = [...m.reactions.filter((r) => !r.fromMe), ...(emoji ? [{ emoji, fromMe: true }] : [])];
+      setMessages((list) => list && list.map((x) => (x.id === m.id ? { ...x, reactions } : x)));
       try {
         const updated = await api.react(chat.jid, m.id, emoji);
         setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
       } catch (e) {
+        setMessages((list) => list && list.map((x) => (x.id === m.id ? { ...x, reactions: m.reactions } : x)));
         notify("error", `Reação não enviada. ${(e as Error).message}`);
       }
     },
@@ -1045,28 +1052,35 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   );
   const confirmDelete = async (mode: "everyone" | "me") => {
     if (!deleting) return;
-    setDeleteBusy(true);
+    const target = deleting;
+    const index = messages?.findIndex((x) => x.id === target.id) ?? -1;
+    setDeleting(null);
+    if (replyTo?.id === target.id) setReplyTo(null);
+    if (mode === "me") setMessages((list) => list && list.filter((x) => x.id !== target.id));
+    else replaceMessage({ ...target, deleted: true });
     try {
-      const { chat: updated, synced } = await api.deleteMessage(chat.jid, deleting.id, mode);
+      const { chat: updated, synced } = await api.deleteMessage(chat.jid, target.id, mode);
       onChat(updated);
-      if (mode === "me") setMessages((list) => list && list.filter((x) => x.id !== deleting.id));
-      if (replyTo?.id === deleting.id) setReplyTo(null);
-      notify(
-        synced ? "success" : "error",
-        mode === "everyone" ? "Mensagem apagada para todos." : synced ? "Mensagem apagada para você." : "Mensagem apagada neste computador. O celular não confirmou; apague lá também se precisar.",
-      );
-      setDeleting(null);
+      if (!synced) notify("error", "Mensagem apagada neste computador. O celular não confirmou; apague lá também se precisar.");
     } catch (e) {
+      setMessages((list) => {
+        if (!list) return list;
+        if (mode === "everyone") return list.map((x) => (x.id === target.id ? target : x));
+        if (list.some((x) => x.id === target.id)) return list;
+        const at = index < 0 ? list.length : Math.min(index, list.length);
+        return [...list.slice(0, at), target, ...list.slice(at)];
+      });
       notify("error", `Mensagem não apagada. ${(e as Error).message}`);
-    } finally {
-      setDeleteBusy(false);
     }
   };
 
   const change = async (patch: { status?: Status; label?: string | null }) => {
+    const before = chat;
+    onChat({ ...chat, ...patch, ...("label" in patch ? { labelSource: patch.label ? "manual" : null } : {}) });
     try {
       onChat(await api.update(chat.jid, patch));
     } catch (e) {
+      onChat(before);
       notify("error", `Não foi possível atualizar a conversa. ${(e as Error).message}`);
     }
   };
@@ -1212,7 +1226,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }}
         />
       )}
-      {deleting && <DeleteDialog message={deleting} busy={deleteBusy} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
+      {deleting && <DeleteDialog message={deleting} busy={false} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
       <form
         className="composer"
         onSubmit={(e) => {
