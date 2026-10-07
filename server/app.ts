@@ -7,6 +7,7 @@ import { Store, type Chat, type Message, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS, LocalAI, MODELS, type ModelId } from "./ai.ts";
+import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, findClaudeBin, isClaudeModel, type ClaudeModel } from "./claude.ts";
 import { DeepSeekAI, DEEPSEEK_CONTEXT_MESSAGES, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL, isDeepSeekModel, type DeepSeekModel } from "./deepseek.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import { DEFAULT_USD_BRL, estimateCostUsd, type Provider as UsageProvider, type TokenUsage, type UsageKind } from "./pricing.ts";
@@ -75,7 +76,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   const reminderTimer = setInterval(fireReminders, 30000);
   reminderTimer.unref();
 
-  // ---- IA: DeepSeek (nuvem, padrão quando há chave) ou local (modelo em data/models, offline)
+  // ---- IA: DeepSeek (nuvem, padrão quando há chave), Claude pelo plano (Claude Code local) ou local (data/models, offline)
 
   const deepseekModel = (): DeepSeekModel => {
     const saved = store.getSetting("deepseek_model");
@@ -83,10 +84,16 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   };
   const deepseek = new DeepSeekAI(fetch, deepseekModel);
   const deepseekKey = () => process.env.DEEPSEEK_API_KEY || store.getSetting("deepseek_api_key");
-  type Provider = "deepseek" | "local";
+  const claudeModel = (): ClaudeModel => {
+    const saved = store.getSetting("claude_model");
+    return isClaudeModel(saved) ? saved : DEFAULT_CLAUDE_MODEL;
+  };
+  // Pasta própria: a pessoa pode pôr ali um CLAUDE.md só de atendimento.
+  const claude = new ClaudePlanAI(join(options.dataDir, "claude"), claudeModel);
+  type Provider = "deepseek" | "local" | "claude";
   const provider = (): Provider => {
     const saved = store.getSetting("ai_provider");
-    if (saved === "deepseek" || saved === "local") return saved;
+    if (saved === "deepseek" || saved === "local" || saved === "claude") return saved;
     return deepseekKey() ? "deepseek" : "local";
   };
 
@@ -109,6 +116,12 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       model: deepseekModel(),
       models: (Object.keys(DEEPSEEK_MODELS) as DeepSeekModel[]).map((id) => ({ id, ...DEEPSEEK_MODELS[id] })),
     },
+    claude: {
+      configured: !!findClaudeBin(),
+      model: claudeModel(),
+      models: (Object.keys(CLAUDE_MODELS) as ClaudeModel[]).map((id) => ({ id, ...CLAUDE_MODELS[id] })),
+      folder: join(options.dataDir, "claude"),
+    },
     modelId: localAi.model_,
     model: MODELS[localAi.model_].name,
     size: MODELS[localAi.model_].size,
@@ -129,7 +142,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   function recordUsage(provider: UsageProvider, kind: UsageKind, jid: string | null, usage: TokenUsage | null, extra: UsageExtra = {}) {
     const at = Date.now();
     const u = usage ?? { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
-    const model = provider === "deepseek" ? deepseekModel() : provider === "jev" ? JEV_MODEL : MODELS[localAi.model_].file;
+    const model = provider === "deepseek" ? deepseekModel() : provider === "claude" ? `claude-${claudeModel()}` : provider === "jev" ? JEV_MODEL : MODELS[localAi.model_].file;
     store.recordAiUsage({
       at, provider, kind, chatJid: jid, model,
       usage: u, costUsd: estimateCostUsd(provider, u, new Date(at), model),
@@ -160,7 +173,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     const chat = store.getChat(jid);
     if (!chat) throw new Error("Conversa não encontrada.");
     // A nuvem recebe mais histórico; o modelo local recorta as últimas 25 por conta própria.
-    const messages = store.listMessages(jid, null, provider() === "deepseek" ? DEEPSEEK_CONTEXT_MESSAGES : 40);
+    const messages = store.listMessages(jid, null, provider() === "local" ? 40 : DEEPSEEK_CONTEXT_MESSAGES);
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto suficiente.");
     return { chat, messages };
   };
@@ -305,7 +318,11 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         const { chat, messages } = chatOrThrow(jid);
         const p = provider();
         const { text } = await tracked(p, "rascunho", jid, () =>
-          p === "local" ? localAi.draft(chat.name, messages, aiInstructions()) : deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions()),
+          p === "local"
+            ? localAi.draft(chat.name, messages, aiInstructions())
+            : p === "claude"
+              ? claude.draft(chat.name, messages, aiInstructions())
+              : deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions()),
         );
         return text;
       },
@@ -313,7 +330,11 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         const { chat, messages } = chatOrThrow(jid);
         const p = provider();
         const { summary } = await tracked(p, "resumo", jid, () =>
-          p === "local" ? localAi.summarize(chat.name, messages) : deepseek.summarize(requireDeepseekKey(), chat.name, messages),
+          p === "local"
+            ? localAi.summarize(chat.name, messages)
+            : p === "claude"
+              ? claude.summarize(chat.name, messages)
+              : deepseek.summarize(requireDeepseekKey(), chat.name, messages),
         );
         return summary;
       },
@@ -325,6 +346,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       },
       setDeepseekModel: (model) => {
         store.setSetting("deepseek_model", model);
+        broadcast("ai", aiState());
+      },
+      setClaudeModel: (model) => {
+        store.setSetting("claude_model", model);
         broadcast("ai", aiState());
       },
       select: async (id) => {

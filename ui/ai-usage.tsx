@@ -11,7 +11,7 @@ const PERIODS: { id: Period; label: string }[] = [
   { id: null, label: "Tudo" },
 ];
 const KIND_LABEL = { classificar: "Classificação (Jev)", rascunho: "Rascunho de resposta", resumo: "Resumo da conversa" } as const;
-const PROVIDER_LABEL = { jev: "Jev (TypeSafe)", deepseek: "DeepSeek", local: "IA local" } as const;
+const PROVIDER_LABEL = { jev: "Jev (TypeSafe)", deepseek: "DeepSeek", local: "IA local", claude: "Claude (plano)" } as const;
 
 const dayShort = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" });
 const dayOf = (key: string) => dayShort.format(new Date(`${key}T12:00:00-03:00`));

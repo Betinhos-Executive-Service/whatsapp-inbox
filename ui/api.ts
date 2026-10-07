@@ -2,6 +2,7 @@ export type Status = "aberta" | "aguardando" | "resolvida";
 export type Priority = "alta" | "media" | "baixa";
 export type Classifier = "jev" | "deepseek";
 export type DeepSeekModel = "deepseek-v4-pro" | "deepseek-flash";
+export type ClaudeModel = "sonnet" | "opus" | "haiku";
 
 export type Chat = {
   jid: string;
@@ -24,7 +25,7 @@ export type Chat = {
 };
 
 export type UsageKind = "classificar" | "rascunho" | "resumo";
-export type UsageProvider = "jev" | "deepseek" | "local";
+export type UsageProvider = "jev" | "deepseek" | "local" | "claude";
 export type AiUsageSummary = {
   sinceAt: number | null;
   usdBrl: number;
@@ -55,8 +56,9 @@ export type AiStatus = (
   models: { id: "leve" | "melhor"; name: string; size: number; installed: boolean; partial: boolean }[];
   instructions: string;
   customInstructions: boolean;
-  provider: "deepseek" | "local";
+  provider: "deepseek" | "local" | "claude";
   deepseek: { configured: boolean; fromEnv: boolean; model: DeepSeekModel; models: { id: DeepSeekModel; name: string; hint: string }[] };
+  claude: { configured: boolean; model: ClaudeModel; models: { id: ClaudeModel; name: string; hint: string }[]; folder: string };
 };
 export type Summary = { resumo: string; pedido: string; proximoPasso: string };
 
@@ -130,8 +132,9 @@ export const api = {
   cancelAiDownload: () => request<AiStatus>("POST", "/api/ai/download/cancel", {}),
   selectAi: (id: "leve" | "melhor") => request<AiStatus>("PUT", "/api/ai/model", { id }),
   removeAi: (id: "leve" | "melhor") => request<AiStatus>("POST", "/api/ai/remove", { id }),
-  setAiProvider: (provider: "deepseek" | "local") => request<AiStatus>("PUT", "/api/ai/provider", { provider }),
+  setAiProvider: (provider: AiStatus["provider"]) => request<AiStatus>("PUT", "/api/ai/provider", { provider }),
   setDeepseekModel: (model: DeepSeekModel) => request<AiStatus>("PUT", "/api/ai/deepseek-model", { model }),
+  setClaudeModel: (model: ClaudeModel) => request<AiStatus>("PUT", "/api/ai/claude-model", { model }),
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
   aiUsage: (days: number | null) => request<AiUsageSummary>("GET", `/api/ai/usage?days=${days ?? "all"}`),
   setAiUsageRate: (rate: number) => request<{ ok: true }>("PUT", "/api/ai/usage/rate", { rate }),

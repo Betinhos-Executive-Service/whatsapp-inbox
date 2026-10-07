@@ -1,7 +1,7 @@
 // Preço estimado de cada chamada de IA, calculado na hora da chamada com a tabela pública
 // de cada provedor. É estimativa: a fatura real vem da conta na DeepSeek / TypeSafe.
 
-export type Provider = "jev" | "deepseek" | "local";
+export type Provider = "jev" | "deepseek" | "local" | "claude";
 export type UsageKind = "classificar" | "rascunho" | "resumo";
 
 export type TokenUsage = {
@@ -18,6 +18,8 @@ export const RATES = {
   // DeepSeek deepseek-v4-pro (padrão), tarifa fora de pico. No pico (seg–sex 01–04h e 06–10h UTC) dobra.
   deepseek: { input: 0.66, cached: 0.022, output: 1.98 },
   local: { input: 0, cached: 0, output: 0 },
+  // Claude pelo plano (Claude Code logado): sem cobrança por token, consome o limite do plano.
+  claude: { input: 0, cached: 0, output: 0 },
 } as const satisfies Record<Provider, { input: number; cached: number; output: number }>;
 
 /** Tarifa de cada modelo da DeepSeek (fora de pico). Modelo desconhecido usa RATES.deepseek. */
