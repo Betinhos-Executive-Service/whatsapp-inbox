@@ -1731,6 +1731,7 @@ function App() {
       upsert(chat);
       window.dispatchEvent(new CustomEvent("inbox:message", { detail: message }));
     });
+    es.addEventListener("transcript", (e) => window.dispatchEvent(new CustomEvent("inbox:transcript", { detail: JSON.parse((e as MessageEvent).data) })));
     es.addEventListener("presence", (e) => window.dispatchEvent(new CustomEvent("inbox:presence", { detail: JSON.parse((e as MessageEvent).data) })));
     es.addEventListener("update", (e) => {
       const { message, chat } = JSON.parse((e as MessageEvent).data) as { message: Message; chat: Chat | null };

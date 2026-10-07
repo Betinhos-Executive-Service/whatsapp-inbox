@@ -30,3 +30,13 @@ test("cache de transcrição", async () => {
   await saveTranscript(dir, "j", "1", "texto");
   assert.equal(await cachedTranscript(dir, "j", "1"), "texto");
 });
+
+test("escolha por conversa de transcrição automática persiste", async () => {
+  const { Store } = await import("../server/db.ts");
+  const store = new Store(":memory:");
+  const jid = "5511999999999@s.whatsapp.net";
+  store.ensureChat(jid);
+  assert.equal(store.getChat(jid)?.autoTranscribe, null);
+  assert.equal(store.updateChat(jid, { autoTranscribe: "on" })?.autoTranscribe, "on");
+  assert.equal(store.updateChat(jid, { autoTranscribe: null })?.autoTranscribe, null);
+});

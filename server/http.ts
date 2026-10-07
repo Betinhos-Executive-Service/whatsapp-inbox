@@ -29,12 +29,14 @@ export type Api = {
   typing: (jid: string, state: "composing" | "paused") => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   classify: (jid: string) => Promise<unknown>;
-  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
   media: (jid: string, id: string) => Promise<{ body: Buffer; mimetype: string; fileName: string | null }>;
   transcribe: (jid: string, id: string) => Promise<string>;
+  /** Só o cache: não chama a Groq. */
+  cachedTranscript: (jid: string, id: string) => Promise<string | null>;
   ai: {
     status: () => unknown;
     draft: (jid: string) => Promise<string>;
@@ -90,6 +92,7 @@ const chatPatchSchema = z.object({
   archived: z.boolean().optional(),
   mutedUntil: z.number().int().positive().nullable().optional(),
   snoozedUntil: z.number().int().positive().nullable().optional(),
+  autoTranscribe: z.enum(["on", "off"]).nullable().optional(),
 });
 
 const reminderSchema = z.object({
@@ -112,6 +115,7 @@ const settingsSchema = z.object({
   jevApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   deepseekApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   groqApiKey: z.string().trim().min(10).max(500).nullable().optional(),
+  autoTranscribe: z.boolean().optional(),
   autoClassify: z.boolean().optional(),
   classifyProvider: z.enum(["jev", "deepseek"]).optional(),
 });
@@ -368,6 +372,10 @@ export function createHandler(api: Api) {
       return json(res, 200, api.ai.status());
     }
     const transcribeMatch = path.match(/^\/api\/transcribe\/([^/]+)\/([^/]+)$/);
+    if (transcribeMatch && method === "GET") {
+      const text = await api.cachedTranscript(decodeURIComponent(transcribeMatch[1]), decodeURIComponent(transcribeMatch[2]));
+      return json(res, 200, { text });
+    }
     if (transcribeMatch && method === "POST") {
       await readJson(req);
       const text = await api.transcribe(decodeURIComponent(transcribeMatch[1]), decodeURIComponent(transcribeMatch[2])).catch((error: Error) => {

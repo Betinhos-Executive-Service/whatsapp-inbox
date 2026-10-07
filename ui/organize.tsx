@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Bell, BellOff, ChevronDown, Clock, FolderCog, Keyboard, MessageSquareText, Pin, PinOff, Tags, X } from "lucide-react";
+import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, ChevronDown, Clock, FolderCog, Keyboard, MessageSquareText, Pin, PinOff, Tags, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Chat, ChatPatch, SearchHit } from "./api.ts";
 import { dayLabel, formatTime, listTime } from "./format.ts";
@@ -99,6 +99,18 @@ export function ChatMenu({ chat, onChange }: { chat: Chat; onChange: (patch: Cha
               </MenuItem>
             ))
           )}
+          <p className="org-menu__label">Transcrever áudios recebidos</p>
+          {(
+            [
+              [null, "Seguir a configuração geral"],
+              ["on", "Sempre nesta conversa"],
+              ["off", "Nunca nesta conversa"],
+            ] as const
+          ).map(([value, label]) => (
+            <MenuItem key={label} icon={chat.autoTranscribe === value ? <Check size={16} aria-hidden /> : <AudioLines size={16} aria-hidden />} onClick={() => pick({ autoTranscribe: value })}>
+              {label}
+            </MenuItem>
+          ))}
           <p className="org-menu__label">{snoozed ? `Adiada até ${untilLabel(chat.snoozedUntil!)}` : "Adiar (some das abertas e volta sozinha)"}</p>
           {snoozed ? (
             <MenuItem icon={<X size={16} aria-hidden />} onClick={() => pick({ snoozedUntil: null })}>
