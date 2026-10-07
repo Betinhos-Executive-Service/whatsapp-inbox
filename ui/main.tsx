@@ -24,6 +24,7 @@ import {
   TriangleAlert,
   WifiOff,
   X,
+  Clock3,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -442,8 +443,17 @@ function authorTone(name: string): number {
   return h % AUTHOR_TONES;
 }
 
+/** Junta o fim recarregado do servidor sem perder bolhas otimistas pendentes. */
+function mergeTail(list: Message[], fresh: Message[]): Message[] {
+  const known = new Set(list.map((x) => x.id));
+  const added = fresh.filter((x) => !known.has(x.id));
+  if (!added.length) return list;
+  const pending = list.filter((x) => x.pending);
+  return [...list.filter((x) => !x.pending), ...added].sort((a, b) => a.at - b.at).concat(pending);
+}
+
 /** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, onReply, onDelete, onCopy, onAuthor, onJump }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, onReply, onDelete, onCopy, onAuthor, onJump, onRetry, onDiscard }: {
   messages: Message[];
   isGroup: boolean;
   hasMore: boolean;
@@ -457,6 +467,8 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   onCopy: (m: Message) => void;
   onAuthor: (jid: string, name: string) => void;
   onJump: (id: string) => void;
+  onRetry: (m: Message) => void;
+  onDiscard: (m: Message) => void;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
   return (
@@ -492,7 +504,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                     {continues ? "" : initials(author ?? "?")}
                   </span>
                 ))}
-              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}${m.deleted ? " bubble--deleted" : ""}`}>
+              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}${m.deleted ? " bubble--deleted" : ""}${m.pending ? ` bubble--${m.pending}` : ""}`}>
                 {author && !continues &&
                   (sender ? (
                     <button type="button" className={`bubble__author bubble__author--link tone-${authorTone(author)}`} onClick={() => onAuthor(sender, author)}>
@@ -517,11 +529,21 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                     {(!m.media || caption) && <p className="bubble__text"><WaText text={caption} /></p>}
                   </>
                 )}
-                <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
-                  {formatTime(m.at)}
-                </time>
+                {m.pending === "failed" ? (
+                  <span className="bubble__time bubble__time--failed" role="alert">
+                    Não enviada ·{" "}
+                    <button type="button" className="bubble__retry" onClick={() => onRetry(m)} disabled={!canAct}>Tentar de novo</button>
+                    {" · "}
+                    <button type="button" className="bubble__retry" onClick={() => onDiscard(m)}>Descartar</button>
+                  </span>
+                ) : (
+                  <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
+                    {formatTime(m.at)}
+                    {m.pending === "sending" && <Clock3 className="bubble__pending" size={11} aria-label="Enviando" />}
+                  </time>
+                )}
               </div>
-              <div className="message-actions" role="group" aria-label="Ações da mensagem">
+              {!m.pending && <div className="message-actions" role="group" aria-label="Ações da mensagem">
                 {!m.deleted && (
                   <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Responder" title="Responder" disabled={!canAct} onClick={() => onReply(m)}>
                     <Reply size={16} aria-hidden />
@@ -535,7 +557,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                 <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Apagar mensagem" title="Apagar" onClick={() => onDelete(m)}>
                   <Trash2 size={16} aria-hidden />
                 </button>
-              </div>
+              </div>}
             </div>
           </div>
         );
@@ -662,7 +684,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       if (m.chatJid !== chat.jid) return;
       const el = scroller.current;
       stickToBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-      setMessages((list) => (list && !list.some((x) => x.id === m.id) ? [...list, m] : list));
+      setMessages((list) => {
+        if (!list || list.some((x) => x.id === m.id)) return list;
+        const i = m.fromMe ? list.findIndex((x) => x.pending === "sending" && x.text === m.text) : -1;
+        return i >= 0 ? list.map((x, j) => (j === i ? m : x)) : [...list, m];
+      });
     };
     // Apagada para todos (por mim ou pelo contato): troca no lugar.
     const onUpdate = (e: Event) => {
@@ -722,12 +748,62 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
   }, [chat.jid, notify]);
 
+  type Outgoing = { text: string; quotedId?: string; mentions: string[] };
+  const pendingSeq = useRef(0);
+  // Payload de cada bolha otimista, para "Tentar de novo".
+  const outbox = useRef(new Map<string, Outgoing>());
+  const deliver = useCallback(
+    async (localId: string) => {
+      const out = outbox.current.get(localId);
+      if (!out) return;
+      setMessages((list) => list && list.map((x) => (x.id === localId ? { ...x, pending: "sending" } : x)));
+      try {
+        const updated = await api.send(chat.jid, out.text, { quotedId: out.quotedId, mentions: out.mentions.length ? out.mentions : undefined });
+        outbox.current.delete(localId);
+        onChat(updated);
+        // A versão real chega pelo SSE e já substitui a bolha; se não chegou, recarrega o fim da conversa.
+        setMessages((list) => list && list.filter((x) => x.id !== localId));
+        api.messages(chat.jid).then(
+          (fresh) => setMessages((list) => (list ? mergeTail(list, fresh) : list)),
+          () => undefined,
+        );
+      } catch (e) {
+        setMessages((list) => list && list.map((x) => (x.id === localId ? { ...x, pending: "failed" } : x)));
+        notify("error", `Mensagem não enviada. ${(e as Error).message}`);
+      }
+    },
+    [chat.jid, notify, onChat],
+  );
+  const retry = useCallback((m: Message) => void deliver(m.id), [deliver]);
+  const discard = useCallback((m: Message) => {
+    outbox.current.delete(m.id);
+    setMessages((list) => list && list.filter((x) => x.id !== m.id));
+  }, []);
+
   const send = async () => {
     const text = draft.trim();
     if ((!text && !attachments.length) || sending) return;
-    setSending(true);
     stickToBottom.current = true;
     const quotedId = replyTo?.id;
+    if (!attachments.length) {
+      // Otimista: a bolha aparece na hora e o campo libera; o servidor confirma depois.
+      const withMentions = applyMentions(text, picks.current);
+      const localId = `local-${++pendingSeq.current}`;
+      const quoted = replyTo
+        ? { id: replyTo.id, text: splitAuthor(replyTo, chat.isGroup).body, fromMe: replyTo.fromMe, author: replyTo.fromMe ? null : splitAuthor(replyTo, chat.isGroup).author }
+        : null;
+      outbox.current.set(localId, { text: withMentions.text, quotedId, mentions: withMentions.mentions });
+      setMessages((list) => [
+        ...(list ?? []),
+        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, quoted, deleted: false, sender: null, pending: "sending" },
+      ]);
+      setDraft("");
+      setReplyTo(null);
+      picks.current = [];
+      void deliver(localId);
+      return;
+    }
+    setSending(true);
     try {
       // A legenda vai no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
       // A resposta (citação) vai só no primeiro.
@@ -735,10 +811,6 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         const file = a.voice ?? (await fileToOutgoing(a.file, i === 0 && text ? text : undefined));
         onChat(await api.sendMedia(chat.jid, i === 0 && quotedId ? { ...file, quotedId } : file));
         removeAttachment(a.id);
-      }
-      if (text && !attachments.length) {
-        const withMentions = applyMentions(text, picks.current);
-        onChat(await api.send(chat.jid, withMentions.text, { quotedId, mentions: withMentions.mentions.length ? withMentions.mentions : undefined }));
       }
       setDraft("");
       setReplyTo(null);
@@ -1000,6 +1072,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onCopy={copy}
             onAuthor={showAuthor}
             onJump={jump}
+            onRetry={retry}
+            onDiscard={discard}
           />
         )}
       </div>

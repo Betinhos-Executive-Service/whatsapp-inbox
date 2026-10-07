@@ -82,6 +82,8 @@ export type Message = {
   deleted: boolean;
   /** Autor em grupo (JID do participante), para abrir o perfil. */
   sender: string | null;
+  /** Só no cliente: envio otimista ainda sem confirmação do servidor. */
+  pending?: "sending" | "failed";
 };
 
 /** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
