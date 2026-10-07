@@ -736,7 +736,7 @@ function micError(error: unknown): string {
 }
 
 async function openMic(deviceId: string): Promise<MediaStream> {
-  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
   try {
     return await navigator.mediaDevices.getUserMedia({ audio: deviceId ? { ...audio, deviceId: { exact: deviceId } } : audio });
   } catch (error) {
@@ -836,6 +836,8 @@ export function useRecorder(onError: (text: string) => void) {
     const ctx = new AudioContext();
     await ctx.resume().catch(() => undefined);
     const dest = ctx.createMediaStreamDestination();
+    // Nota de voz do WhatsApp é mono: Opus estéreo não toca no iPhone ("áudio não está mais disponível").
+    dest.channelCount = 1;
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 1024;
     const source = ctx.createMediaStreamSource(stream);
