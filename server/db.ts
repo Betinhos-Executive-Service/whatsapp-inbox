@@ -33,6 +33,30 @@ export type Chat = {
   reminderAt: number | null;
   /** Tokens e custo estimado (US$) de toda a IA usada nesta conversa. */
   aiUsage: { calls: number; tokens: number; costUsd: number };
+  /** Etiquetas extras escolhidas por você (a principal é `label`). */
+  extraLabels: string[];
+  /** Fixada no topo da lista (ms de quando fixou). */
+  pinnedAt: number | null;
+  /** Arquivada: sai das abas até chegar mensagem nova. */
+  archived: boolean;
+  /** Sem notificação até essa hora (ms). */
+  mutedUntil: number | null;
+  /** Adiada: some das abertas até essa hora (ms) e volta como aberta. */
+  snoozedUntil: number | null;
+};
+
+/** Resultado da busca no histórico; `snippet` marca o trecho achado entre \u0002 e \u0003. */
+export type SearchHit = { chatJid: string; id: string; at: number; fromMe: boolean; snippet: string };
+
+/** Ajustes de organização que a tela pode mudar numa conversa. */
+export type ChatPatch = {
+  status?: Status;
+  label?: string | null;
+  extraLabels?: string[];
+  pinned?: boolean;
+  archived?: boolean;
+  mutedUntil?: number | null;
+  snoozedUntil?: number | null;
 };
 
 /** Uma chamada de IA (Jev, DeepSeek ou local) registrada para o painel de gastos. */
@@ -218,6 +242,25 @@ create table if not exists reactions (
   primary key (chat_jid, message_id, sender)
 );
 create table if not exists photos (jid text primary key, file text, fetched_at integer not null);
+create table if not exists chat_labels (
+  chat_jid text not null references chats(jid) on delete cascade on update cascade,
+  label text not null,
+  primary key (chat_jid, label)
+);
+`;
+
+/** Busca no histórico: índice de texto sem acento, mantido por gatilhos. */
+const SEARCH_SCHEMA = `
+create virtual table if not exists messages_fts using fts5(text, chat_jid unindexed, id unindexed, tokenize = 'unicode61 remove_diacritics 2');
+create trigger if not exists messages_fts_ai after insert on messages begin
+  insert into messages_fts (rowid, text, chat_jid, id) values (new.rowid, new.text, new.chat_jid, new.id);
+end;
+create trigger if not exists messages_fts_au after update of text, chat_jid on messages begin
+  update messages_fts set text = new.text, chat_jid = new.chat_jid where rowid = new.rowid;
+end;
+create trigger if not exists messages_fts_ad after delete on messages begin
+  delete from messages_fts where rowid = old.rowid;
+end;
 `;
 
 /** Colunas acrescentadas depois da primeira versão; SQLite não tem "add column if not exists". */
@@ -233,13 +276,18 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
   ["messages", "edited_at", "integer"],
   ["messages", "raw", "blob"],
   ["messages", "unread", "integer not null default 0"],
+  ["chats", "pinned_at", "integer"],
+  ["chats", "archived", "integer not null default 0"],
+  ["chats", "muted_until", "integer"],
+  ["chats", "snoozed_until", "integer"],
 ];
 
 const CHAT_SELECT = `select c.*,
   (select min(due_at) from reminders r where r.chat_jid = c.jid and r.done_at is null) as reminder_at,
   (select count(*) from ai_usage u where u.chat_jid = c.jid) as ai_calls,
   (select coalesce(sum(input_tokens + output_tokens), 0) from ai_usage u where u.chat_jid = c.jid) as ai_tokens,
-  (select coalesce(sum(cost_usd), 0) from ai_usage u where u.chat_jid = c.jid) as ai_cost
+  (select coalesce(sum(cost_usd), 0) from ai_usage u where u.chat_jid = c.jid) as ai_cost,
+  (select group_concat(label, char(31)) from chat_labels l where l.chat_jid = c.jid) as extra_labels
   from chats c`;
 
 type Row = Record<string, unknown>;
@@ -280,6 +328,11 @@ function toChat(r: Row): Chat {
     note: (r.note as string) || null,
     reminderAt: r.reminder_at == null ? null : Number(r.reminder_at),
     aiUsage: { calls: Number(r.ai_calls ?? 0), tokens: Number(r.ai_tokens ?? 0), costUsd: Number(r.ai_cost ?? 0) },
+    extraLabels: typeof r.extra_labels === "string" && r.extra_labels ? r.extra_labels.split("\u001f").sort((a, b) => a.localeCompare(b, "pt-BR")) : [],
+    pinnedAt: r.pinned_at == null ? null : Number(r.pinned_at),
+    archived: r.archived === 1,
+    mutedUntil: r.muted_until == null ? null : Number(r.muted_until),
+    snoozedUntil: r.snoozed_until == null ? null : Number(r.snoozed_until),
   };
 }
 
@@ -346,6 +399,7 @@ export class Store {
       if (!cols.some((c) => c.name === column)) this.db.exec(`alter table ${table} add column ${column} ${ddl}`);
     }
     this.migrateUsageProviders();
+    this.setupSearch();
     const count = this.q("select count(*) n from labels").get() as Row;
     if (Number(count.n) === 0) this.saveLabels(DEFAULT_LABELS);
   }
@@ -361,6 +415,25 @@ export class Store {
       drop table ai_usage_old;
       create index if not exists ai_usage_at on ai_usage(at desc);
       create index if not exists ai_usage_chat on ai_usage(chat_jid);
+      commit;`);
+  }
+
+  /**
+   * Índice de busca: monta na primeira vez e refaz se não bater com as mensagens
+   * (ex.: banco restaurado de backup, onde o rowid pode mudar).
+   */
+  private setupSearch() {
+    this.db.exec(SEARCH_SCHEMA);
+    const counts = this.db
+      .prepare(
+        `select (select count(*) from messages) as messages,
+                (select count(*) from messages_fts f join messages m on m.rowid = f.rowid and m.id = f.id and m.chat_jid = f.chat_jid) as indexed`,
+      )
+      .get() as Row;
+    if (Number(counts.messages) === Number(counts.indexed)) return;
+    this.db.exec(`begin;
+      delete from messages_fts;
+      insert into messages_fts (rowid, text, chat_jid, id) select rowid, text, chat_jid, id from messages;
       commit;`);
   }
 
@@ -443,8 +516,20 @@ export class Store {
     return changed;
   }
 
-  updateChat(jid: string, patch: { status?: Status; label?: string | null }): Chat | null {
+  updateChat(jid: string, patch: ChatPatch): Chat | null {
     if (patch.status) this.q("update chats set status = ? where jid = ?").run(patch.status, jid);
+    if (patch.pinned !== undefined) this.q("update chats set pinned_at = ? where jid = ?").run(patch.pinned ? Date.now() : null, jid);
+    if (patch.archived !== undefined) this.q("update chats set archived = ? where jid = ?").run(patch.archived ? 1 : 0, jid);
+    if (patch.mutedUntil !== undefined) this.q("update chats set muted_until = ? where jid = ?").run(patch.mutedUntil, jid);
+    if (patch.snoozedUntil !== undefined) this.q("update chats set snoozed_until = ? where jid = ?").run(patch.snoozedUntil, jid);
+    if (patch.extraLabels) {
+      const list = [...new Set(patch.extraLabels)];
+      this.tx(() => {
+        this.q("delete from chat_labels where chat_jid = ?").run(jid);
+        const insert = this.q("insert into chat_labels (chat_jid, label) select ?, name from labels where name = ?");
+        for (const label of list) insert.run(jid, label);
+      });
+    }
     if (patch.label) this.recordLabelExample(jid, patch.label);
     if (patch.label !== undefined) {
       this
@@ -514,7 +599,7 @@ export class Store {
         .q("update chats set last_at = ?, last_text = ?, last_from_me = ? where jid = ? and last_at <= ?")
         .run(m.at, m.text, m.fromMe ? 1 : 0, m.chatJid, m.at);
       if (live && !m.fromMe) {
-        this.q("update chats set unread = unread + 1, status = 'aberta' where jid = ?").run(m.chatJid);
+        this.q("update chats set unread = unread + 1, status = 'aberta', archived = 0, snoozed_until = null where jid = ?").run(m.chatJid);
       } else if (live && m.fromMe) {
         this
           .q("update chats set unread = 0, status = case when status = 'aberta' then 'aguardando' else status end where jid = ?")
@@ -528,6 +613,34 @@ export class Store {
   addMessage(m: IncomingMessage, live: boolean): { message: Message; chat: Chat } | null {
     if (!this.insertMessage(m, live)) return null;
     return { message: this.getMessage(m.chatJid, m.id)!, chat: this.getChat(m.chatJid)! };
+  }
+
+  /** Busca no histórico inteiro, mais recentes primeiro. Cada palavra vale como começo de palavra. */
+  search(query: string, limit = 50): SearchHit[] {
+    const terms = query.normalize("NFC").match(/[\p{L}\p{N}]+/gu) ?? [];
+    if (!terms.length) return [];
+    const match = terms.slice(0, 8).map((t) => `"${t}"*`).join(" ");
+    const rows = this
+      .q(
+        `select f.chat_jid, f.id, m.at, m.from_me, snippet(messages_fts, 0, char(2), char(3), '…', 12) as snippet
+         from messages_fts f join messages m on m.rowid = f.rowid
+         where messages_fts match ? and m.deleted_at is null
+         order by m.at desc limit ?`,
+      )
+      .all(match, limit) as Row[];
+    return rows.map((r) => ({ chatJid: String(r.chat_jid), id: String(r.id), at: Number(r.at), fromMe: r.from_me === 1, snippet: String(r.snippet) }));
+  }
+
+  /** Da mensagem achada até a mais nova (com algumas antes), para abrir a conversa nela. */
+  listMessagesAround(jid: string, id: string, before = 20, max = 1000): Message[] | null {
+    const target = this.q("select at from messages where chat_jid = ? and id = ?").get(jid, id) as Row | undefined;
+    if (!target) return null;
+    const at = Number(target.at);
+    const older = this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at < ? order by at desc limit ?`).all(jid, at, before) as Row[];
+    const newer = this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at >= ? order by at asc limit ?`).all(jid, at, max) as Row[];
+    const rows = [...older.reverse(), ...newer];
+    const reactions = this.reactionsOf(jid, rows.map((r) => String(r.id)));
+    return rows.map((r) => toMessage(r, reactions.get(String(r.id))));
   }
 
   getMessage(chatJid: string, id: string): Message | null {
@@ -702,6 +815,7 @@ export class Store {
       }
       this.q("update or ignore messages set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update or ignore reactions set chat_jid = ? where chat_jid = ?").run(pn, lid);
+      this.q("update or ignore chat_labels set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update reminders set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update ai_usage set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update chats set note = coalesce(note, (select note from chats where jid = ?)) where jid = ?").run(lid, pn);
@@ -835,6 +949,15 @@ export class Store {
     });
   }
 
+  /** Conversas adiadas cuja hora chegou: voltam para "Abertas". */
+  wakeSnoozed(now = Date.now()): Chat[] {
+    return this.tx(() => {
+      const due = (this.q("select jid from chats where snoozed_until is not null and snoozed_until <= ?").all(now) as Row[]).map((r) => String(r.jid));
+      for (const jid of due) this.q("update chats set snoozed_until = null, status = 'aberta', archived = 0 where jid = ?").run(jid);
+      return due.map((jid) => this.getChat(jid)!);
+    });
+  }
+
   // ---- respostas rápidas
 
   listQuickReplies(): QuickReply[] {
@@ -894,6 +1017,7 @@ export class Store {
       this
         .q(`update chats set label = null, label_source = null where label is not null and label not in (select name from labels)`)
         .run();
+      this.q("delete from chat_labels where label not in (select name from labels)").run();
     });
     return this.listLabels();
   }
