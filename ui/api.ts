@@ -82,6 +82,10 @@ export type Message = {
   deleted: boolean;
   /** Autor em grupo (JID do participante), para abrir o perfil. */
   sender: string | null;
+  /** Só nas enviadas: 1 pendente, 2 enviada, 3 entregue, 4 lida, 5 ouvida. */
+  ack: number | null;
+  editedAt: number | null;
+  reactions: { emoji: string; fromMe: boolean }[];
 };
 
 /** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
@@ -116,6 +120,7 @@ export type Prefs = {
   startWithWindows: boolean;
   startMinimized: boolean;
   theme: Theme;
+  sendTyping: boolean;
 };
 export type AppState = {
   prefs: Prefs;
@@ -151,6 +156,12 @@ export const api = {
     request<{ chat: Chat; synced: boolean }>("POST", `${chatPath(jid)}/delete`, { id, mode }),
   participants: (jid: string) => request<Participant[]>("GET", `${chatPath(jid)}/participants`),
   profile: (jid: string) => request<Profile>("GET", `/api/profile/${encodeURIComponent(jid)}`),
+  /** Emoji vazio tira a reação. */
+  react: (jid: string, id: string, emoji: string) => request<Message>("POST", `${chatPath(jid)}/react`, { id, emoji }),
+  editMessage: (jid: string, id: string, text: string) => request<Message>("POST", `${chatPath(jid)}/edit`, { id, text }),
+  forward: (jid: string, id: string, to: string) => request<Chat>("POST", `${chatPath(jid)}/forward`, { id, to }),
+  watch: (jid: string) => request<{ ok: true }>("POST", `${chatPath(jid)}/watch`, {}),
+  typing: (jid: string, state: "composing" | "paused") => request<{ ok: true }>("POST", `${chatPath(jid)}/typing`, { state }),
   sendMedia: (jid: string, file: OutgoingMedia) => request<Chat>("POST", `${chatPath(jid)}/send-media`, file),
   update: (jid: string, patch: { status?: Status; label?: string | null; note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
   reminders: (jid: string) => request<Reminder[]>("GET", `${chatPath(jid)}/reminders`),

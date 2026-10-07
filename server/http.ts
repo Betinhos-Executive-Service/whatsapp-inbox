@@ -20,6 +20,13 @@ export type Api = {
   profile: (jid: string) => Promise<unknown>;
   /** Foto de perfil (miniatura em cache ou tamanho cheio); null = sem foto. */
   photo: (jid: string, full: boolean) => Promise<Buffer | null>;
+  /** Emoji vazio tira a reação. */
+  react: (jid: string, id: string, emoji: string) => Promise<void>;
+  editMessage: (jid: string, id: string, text: string) => Promise<void>;
+  forward: (from: string, id: string, to: string) => Promise<void>;
+  /** Conversa aberta na tela: assina o "digitando" do contato. */
+  watch: (jid: string) => Promise<void>;
+  typing: (jid: string, state: "composing" | "paused") => Promise<void>;
   markRead: (jid: string) => Promise<void>;
   classify: (jid: string) => Promise<unknown>;
   saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
@@ -232,6 +239,32 @@ export function createHandler(api: Api) {
         return json(res, 200, { chat: store.getChat(jid), synced });
       }
       if (action === "/participants" && method === "GET") return json(res, 200, await api.participants(jid));
+      if (action === "/edit" && method === "POST") {
+        const { id, text } = parse(z.object({ id: z.string().min(1).max(200), text: z.string().trim().min(1).max(4096) }), await readJson(req));
+        await api.editMessage(jid, id, text);
+        return json(res, 200, store.getMessage(jid, id));
+      }
+      if (action === "/forward" && method === "POST") {
+        const { id, to } = parse(z.object({ id: z.string().min(1).max(200), to: z.string().min(1).max(200) }), await readJson(req));
+        if (!store.hasChat(to)) throw new HttpError(404, "Conversa de destino não encontrada.");
+        if (!store.getMessage(jid, id)) throw new HttpError(404, "Mensagem não encontrada.");
+        await api.forward(jid, id, to);
+        return json(res, 200, store.getChat(to));
+      }
+      if (action === "/watch" && method === "POST") {
+        await api.watch(jid);
+        return json(res, 200, { ok: true });
+      }
+      if (action === "/typing" && method === "POST") {
+        const { state } = parse(z.object({ state: z.enum(["composing", "paused"]) }), await readJson(req));
+        await api.typing(jid, state);
+        return json(res, 200, { ok: true });
+      }
+      if (action === "/react" && method === "POST") {
+        const { id, emoji } = parse(z.object({ id: z.string().min(1).max(200), emoji: z.string().max(16) }), await readJson(req));
+        await api.react(jid, id, emoji);
+        return json(res, 200, store.getMessage(jid, id));
+      }
       if (action === "/reminders" && method === "GET") return json(res, 200, store.listReminders(jid));
       if (action === "/reminders" && method === "POST") {
         const body = parse(reminderSchema, await readJson(req));
