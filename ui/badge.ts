@@ -1,46 +1,69 @@
 // Selo com o total de não lidas, para o ícone da barra de tarefas do Windows.
 // Cores e fonte lidas dos tokens do design system (nada de valor novo).
-// O Windows mostra o selo em 16 px lógicos; desenhamos no tamanho físico exato
+// O Windows mostra o selo em 16 px lógicos; o resultado sai no tamanho físico exato
 // (16 × escala da tela) para não haver reamostragem, que borrava o número.
-export const BADGE_FONT = "800 12px Manrope";
+export const BADGE_FONT = "700 12px Manrope";
+
+const SS = 4; // supersampling: desenha 4× maior e reduz, para bordas e dígitos lisos
+
+// A barra de tarefas não segue o tema do app: lê os tokens do :root claro do
+// design-tokens.css, ignorando a redefinição de :root[data-theme='dark'].
+function lightToken(name: string): string {
+  for (const sheet of document.styleSheets) {
+    let rules: CSSRuleList;
+    try {
+      rules = sheet.cssRules;
+    } catch {
+      continue;
+    }
+    for (const rule of rules) {
+      if (!(rule instanceof CSSStyleRule) || rule.selectorText !== ":root") continue;
+      const value = rule.style.getPropertyValue(name).trim();
+      if (!value) continue;
+      const ref = /^var\((--[\w-]+)\)$/.exec(value);
+      return ref ? lightToken(ref[1]) : value;
+    }
+  }
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
 
 export function badgeImage(total: number, scale = window.devicePixelRatio || 1): string {
   const size = Math.round(16 * Math.min(Math.max(scale, 1), 4));
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext("2d");
+  const big = document.createElement("canvas");
+  big.width = big.height = size * SS;
+  const ctx = big.getContext("2d");
   if (!ctx) return "";
-  const css = getComputedStyle(document.documentElement);
-  const token = (name: string) => css.getPropertyValue(name).trim();
-  const family = token("--bt-font-family-sans") || "sans-serif";
-  const c = size / 2;
-  // Anel branco separa o selo do ícone do app logo abaixo.
-  const ring = Math.max(1, Math.round(size / 16));
-  ctx.fillStyle = token("--bt-color-white");
+  const family = lightToken("--bt-font-family-sans") || "sans-serif";
+  const s = size * SS;
+  const c = s / 2;
+  // Disco navy chapado: contrasta com o ícone azul sem precisar de anel.
+  ctx.fillStyle = lightToken("--bt-color-brand");
   ctx.beginPath();
   ctx.arc(c, c, c, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = token("--bt-color-action");
-  ctx.beginPath();
-  ctx.arc(c, c, c - ring, 0, Math.PI * 2);
-  ctx.fill();
 
-  const inner = size - ring * 2;
   const over = total > 99;
   const digits = over ? "99" : String(total);
-  // Dígitos ocupam o máximo do círculo; com dois, a largura é comprimida se preciso.
-  const px = Math.round(size * (digits.length > 1 ? 0.64 : 0.74));
-  ctx.fillStyle = token("--bt-color-white");
-  ctx.font = `800 ${px}px ${family}`;
+  const px = s * (digits.length > 1 ? 0.6 : 0.7);
+  ctx.fillStyle = lightToken("--bt-color-white");
+  ctx.font = `700 ${px}px ${family}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   // Centraliza pela altura real dos dígitos (sem descendente), não pela caixa da fonte.
   const ascent = ctx.measureText(digits).actualBoundingBoxAscent || px * 0.72;
-  const x = over ? c - size * 0.07 : c;
-  ctx.fillText(digits, x, Math.round(c + ascent / 2), inner * (over ? 0.7 : 0.86));
+  const x = over ? c - s * 0.07 : c;
+  ctx.fillText(digits, x, c + ascent / 2, s * (over ? 0.66 : 0.8));
   if (over) {
-    ctx.font = `800 ${Math.round(size * 0.42)}px ${family}`;
-    ctx.fillText("+", c + size * 0.3, c + size * 0.02, inner * 0.3);
+    ctx.font = `700 ${s * 0.4}px ${family}`;
+    ctx.fillText("+", c + s * 0.3, c + s * 0.02, s * 0.28);
   }
-  return canvas.toDataURL("image/png");
+
+  const out = document.createElement("canvas");
+  out.width = out.height = size;
+  const small = out.getContext("2d");
+  if (!small) return "";
+  small.imageSmoothingEnabled = true;
+  small.imageSmoothingQuality = "high";
+  small.drawImage(big, 0, 0, size, size);
+  return out.toDataURL("image/png");
 }
