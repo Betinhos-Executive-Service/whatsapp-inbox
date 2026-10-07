@@ -21,6 +21,7 @@ import {
   Search,
   SendHorizontal,
   Settings,
+  UserPlus,
   Smartphone,
   Sparkles,
   WandSparkles,
@@ -402,7 +403,12 @@ function ChatList(props: {
             {account && account.count > 1 && <p className="eyebrow">{account.name}</p>}
             <h1 className="heading-page">Conversas</h1>
           </div>
-          <Button variant="ghost" aria-label="Abrir configurações" title="Configurações" icon={<Settings size={18} aria-hidden />} onClick={props.onSettings} />
+          <div className="cluster">
+            {account && account.count < account.max && (
+              <Button variant="ghost" aria-label="Adicionar conta do WhatsApp" title="Adicionar conta do WhatsApp" icon={<UserPlus size={18} aria-hidden />} onClick={() => void desktop()?.addAccount()} />
+            )}
+            <Button variant="ghost" aria-label="Abrir configurações" title="Configurações" icon={<Settings size={18} aria-hidden />} onClick={props.onSettings} />
+          </div>
         </div>
         <ConnectionPill connection={props.connection} online={props.online} />
         <SearchBox
