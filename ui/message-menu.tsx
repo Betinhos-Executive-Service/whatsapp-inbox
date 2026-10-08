@@ -117,16 +117,16 @@ export function MessageMenu({ at, canAct, hasText, author, actions, onClose }: {
   };
 
   return (
-    <div ref={panel} className="message-menu" role="menu" aria-label="Opções da mensagem" style={pos} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}>
+    <div ref={panel} className="bt-menu__panel ctx-menu" role="menu" aria-label="Opções da mensagem" style={pos} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}>
       {!m.deleted && (
-        <div className="message-menu__reactions" role="group" aria-label="Reagir">
+        <div className="ctx-menu__reactions" role="group" aria-label="Reagir">
           {REACTIONS.map((emoji) => (
             <button
               key={emoji}
               type="button"
               role="menuitem"
               data-emoji
-              className="message-menu__emoji"
+              className="ctx-menu__emoji"
               aria-label={mine === emoji ? `Tirar reação ${emoji}` : `Reagir com ${emoji}`}
               aria-pressed={mine === emoji || undefined}
               disabled={!canAct}
@@ -139,21 +139,21 @@ export function MessageMenu({ at, canAct, hasText, author, actions, onClose }: {
       )}
       {items.map((item) =>
         item.href ? (
-          <a key={item.id} role="menuitem" className="message-menu__item" href={item.href} download onClick={() => onClose()}>
-            {item.icon}
-            {item.label}
+          <a key={item.id} role="menuitem" className="bt-menu__item" href={item.href} download onClick={() => onClose()}>
+            <span className="bt-menu__icon">{item.icon}</span>
+            <span>{item.label}</span>
           </a>
         ) : (
           <button
             key={item.id}
             type="button"
             role="menuitem"
-            className={`message-menu__item${item.danger ? " message-menu__item--danger" : ""}`}
+            className={`bt-menu__item${item.danger ? " bt-menu__item--danger" : ""}`}
             disabled={item.disabled}
             onClick={() => pick(item.run)}
           >
-            {item.icon}
-            {item.label}
+            <span className="bt-menu__icon">{item.icon}</span>
+            <span>{item.label}</span>
           </button>
         ),
       )}
