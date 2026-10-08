@@ -7,33 +7,8 @@ import { claudeOptionsSchema, type ClaudeOptions } from "./claude.ts";
 import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
 import { STATUSES, type Store } from "./db.ts";
 import { linkPreview } from "./link-preview.ts";
+import { EXT_BY_TYPE, TYPE_BY_EXT } from "./mime.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
-
-/** Documento sem tipo (octet-stream): deduz pela extensão os formatos que a visualização abre. */
-const TYPE_BY_EXT: Record<string, string> = {
-  ".pdf": "application/pdf",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".txt": "text/plain; charset=utf-8",
-  ".csv": "text/csv; charset=utf-8",
-};
-/** Extensão pelo tipo, para foto, áudio e vídeo (o WhatsApp não manda nome de arquivo para eles). */
-const EXT_BY_TYPE: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/gif": ".gif",
-  "image/webp": ".webp",
-  "video/mp4": ".mp4",
-  "video/3gpp": ".3gp",
-  "audio/ogg": ".ogg",
-  "audio/mpeg": ".mp3",
-  "audio/mp4": ".m4a",
-  "audio/aac": ".aac",
-  "application/pdf": ".pdf",
-};
 
 /** Nome do arquivo baixado: o original, ou "arquivo" + extensão do tipo; sem extensão o Windows não sabe abrir. */
 export function downloadName(mimetype: string, fileName: string | null): string {
