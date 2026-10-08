@@ -663,7 +663,7 @@ export class Store {
     // Bancos antigos não marcavam a mensagem: vale a aproximação das N mais recentes.
     if (!keys.length) {
       keys = this
-        .q("select id, raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc limit ?")
+        .q("select id, raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc, rowid desc limit ?")
         .all(jid, unread) as Row[];
     }
     this.q("update messages set unread = 0 where chat_jid = ? and unread = 1").run(jid);
@@ -755,8 +755,8 @@ export class Store {
     const target = this.q("select at from messages where chat_jid = ? and id = ?").get(jid, id) as Row | undefined;
     if (!target) return null;
     const at = Number(target.at);
-    const older = this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at < ? order by at desc limit ?`).all(jid, at, before) as Row[];
-    const newer = this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at >= ? order by at asc limit ?`).all(jid, at, max) as Row[];
+    const older = this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at < ? order by at desc, rowid desc limit ?`).all(jid, at, before) as Row[];
+    const newer = this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at >= ? order by at asc, rowid asc limit ?`).all(jid, at, max) as Row[];
     return this.decorate(jid, [...older.reverse(), ...newer]);
   }
 
@@ -837,7 +837,7 @@ export class Store {
 
   /** A última mensagem recebida na conversa veio pelo LID? (a conversa já está no endereço novo do WhatsApp) */
   lastIncomingIsLid(chatJid: string): boolean {
-    const r = this.q("select raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc limit 1").get(chatJid) as Row | undefined;
+    const r = this.q("select raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc, rowid desc limit 1").get(chatJid) as Row | undefined;
     return !!r && String(r.participant ?? r.raw_jid).endsWith("@lid");
   }
 
@@ -939,7 +939,7 @@ export class Store {
 
   /** Última mensagem da conversa: o WhatsApp exige ao arquivar, para sincronizar com o celular. */
   lastMessageKey(jid: string): MessageKeyRef | null {
-    const r = this.q("select id from messages where chat_jid = ? order by at desc limit 1").get(jid) as Row | undefined;
+    const r = this.q("select id from messages where chat_jid = ? order by at desc, rowid desc limit 1").get(jid) as Row | undefined;
     return r ? this.messageKey(jid, String(r.id)) : null;
   }
 
@@ -971,15 +971,19 @@ export class Store {
 
   /** Recalcula a prévia da conversa a partir da mensagem mais recente que sobrou. */
   private refreshLast(jid: string) {
-    const r = this.q("select at, text, from_me from messages where chat_jid = ? order by at desc limit 1").get(jid) as Row | undefined;
+    const r = this.q("select at, text, from_me from messages where chat_jid = ? order by at desc, rowid desc limit 1").get(jid) as Row | undefined;
     if (r) this.q("update chats set last_at = ?, last_text = ?, last_from_me = ? where jid = ?").run(Number(r.at), String(r.text), Number(r.from_me), jid);
     else this.q("update chats set last_text = null, last_from_me = 0 where jid = ?").run(jid);
   }
 
+  /**
+   * Mensagens do mesmo segundo empatam em `at`: o rowid (ordem de chegada) desempata. Com `before`,
+   * o corte inclui o próprio segundo para não perder as que empatam com a mais antiga já na tela.
+   */
   listMessages(jid: string, before: number | null, limit = 80): Message[] {
     const rows = (before
-      ? this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at < ? order by at desc limit ?`).all(jid, before, limit)
-      : this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? order by at desc limit ?`).all(jid, limit)) as Row[];
+      ? this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at <= ? order by at desc, rowid desc limit ?`).all(jid, before, limit)
+      : this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? order by at desc, rowid desc limit ?`).all(jid, limit)) as Row[];
     return this.decorate(jid, rows).reverse();
   }
 
@@ -1176,7 +1180,7 @@ export class Store {
    */
   recordLabelExample(jid: string, label: string): void {
     const texts = (this
-      .q("select text from messages where chat_jid = ? and kind = 'text' order by at desc limit 8")
+      .q("select text from messages where chat_jid = ? and kind = 'text' order by at desc, rowid desc limit 8")
       .all(jid) as Row[]).map((r) => String(r.text)).reverse();
     const snippet = texts.join(" / ").slice(-600);
     if (!snippet) return;

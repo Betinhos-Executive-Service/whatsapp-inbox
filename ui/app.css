@@ -347,6 +347,33 @@ ul, ol { margin: 0; padding: 0; }
   background-color: var(--bt-color-surface); border: var(--bt-border-width-default) solid var(--bt-color-border);
   font-size: var(--bt-font-size-11); font-weight: var(--bt-font-weight-extrabold); color: var(--bt-color-text-secondary);
 }
+/* Faixa "N mensagens não lidas": onde a conversa abre quando há não lidas, como no WhatsApp. */
+.unread-divider {
+  align-self: stretch; display: flex; justify-content: center;
+  margin: var(--bt-space-2) calc(-1 * var(--bt-space-5)) var(--bt-space-2);
+  padding: var(--bt-space-1) 0;
+  background-color: var(--bt-color-action-soft);
+}
+.unread-divider span {
+  padding: 2px var(--bt-space-2-5); border-radius: var(--bt-radius-full);
+  background-color: var(--bt-color-surface);
+  font-size: var(--bt-font-size-11); font-weight: var(--bt-font-weight-extrabold); color: var(--bt-color-action);
+}
+/* Seta "ir para o fim": presa ao rodapé da área rolável, sem ocupar espaço na lista. */
+.messages__jump { position: sticky; bottom: 0; align-self: flex-end; height: 0; margin-top: calc(-1 * var(--bt-space-1-5)); z-index: var(--bt-z-index-floating-action); }
+.jump-end {
+  position: absolute; right: 0; bottom: var(--bt-space-3);
+  display: grid; place-items: center; width: 40px; height: 40px; padding: 0;
+  border-radius: var(--bt-radius-full); border: var(--bt-border-width-default) solid var(--bt-color-border);
+  background-color: var(--bt-color-surface); color: var(--bt-color-text-secondary);
+  box-shadow: var(--bt-shadow-popover); cursor: pointer;
+  transition: transform var(--bt-duration-fast) var(--bt-ease-out), color var(--bt-duration-fast) var(--bt-ease-out);
+  animation: jump-end-in var(--bt-duration-normal) var(--bt-ease-out);
+}
+.jump-end:active { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) { .jump-end:hover { color: var(--bt-color-action); } }
+.jump-end .count { position: absolute; top: -6px; left: -6px; }
+@keyframes jump-end-in { from { opacity: 0; transform: translateY(6px) scale(.95); } }
 .bubble {
   align-self: flex-start;
   max-width: min(75%, 640px);
@@ -812,6 +839,7 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
   .app[data-view='chat'] .list-pane, .app[data-view='list'] .chat-pane { display: none; }
   .chat-pane__back { display: inline-grid; }
   .chat-pane__header, .messages { padding-left: var(--bt-space-3); padding-right: var(--bt-space-3); }
+  .unread-divider { margin-left: calc(-1 * var(--bt-space-3)); margin-right: calc(-1 * var(--bt-space-3)); }
   .composer { padding: var(--bt-space-2) var(--bt-space-3) calc(var(--bt-space-5) + env(safe-area-inset-bottom)); }
   .bubble-wrap { max-width: 88%; }
   .notes { position: absolute; inset: 0; width: auto; border-left: 0; z-index: var(--bt-z-index-floating-action); }
@@ -1334,6 +1362,7 @@ kbd {
 .participants__row > .participant { flex: 1; min-width: 0; }
 /* Links e prévia de link */
 .wa-link { color: var(--bt-color-action); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.wa-mention { padding: 0 4px; border-radius: 4px; color: var(--bt-color-action); background-color: var(--bt-color-action-soft); font-weight: var(--bt-font-weight-semibold, 600); white-space: nowrap; }
 .wa-link:hover { text-decoration-thickness: 2px; }
 .wa-link:focus-visible { outline: none; border-radius: 2px; box-shadow: 0 0 0 2px var(--bt-focus-border); }
 .link-card {
