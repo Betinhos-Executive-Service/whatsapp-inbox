@@ -1159,7 +1159,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       try {
         // Sem resposta do servidor em 6 s: confere se saiu mesmo assim antes de marcar falha.
         const timeout = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error("O servidor não confirmou o envio.")), 20_000);
+          timer = setTimeout(() => reject(new Error("O servidor não confirmou o envio.")), 6_000);
         });
         const updated = await Promise.race([
           api.send(chat.jid, out.text, { quotedId: out.quotedId, quotedChat: out.quotedChat, mentions: out.mentions.length ? out.mentions : undefined, mentionAll: out.mentionAll }),
