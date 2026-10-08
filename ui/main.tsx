@@ -1505,39 +1505,42 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       </header>
       {findOpen && (
         <div className="chat-find" role="search">
-          <Search size={16} aria-hidden className="chat-find__icon" />
-          <input
+          <SearchBox
             ref={findInput}
-            className="chat-find__input"
-            type="search"
-            placeholder="Pesquisar nesta conversa"
+            size="compact"
+            className="chat-find__box"
             aria-label="Pesquisar nesta conversa"
+            placeholder="Pesquisar nesta conversa"
             value={findQuery}
             autoFocus
-            onChange={(e) => setFindQuery(e.target.value)}
+            onChange={setFindQuery}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
                 stepFind(e.shiftKey ? -1 : 1);
               } else if (e.key === "Escape") {
-                e.preventDefault();
+                // 1º Esc limpa o texto (SearchBox); com o campo vazio, fecha a barra.
                 e.stopPropagation();
-                closeFind();
+                if (!e.defaultPrevented) {
+                  e.preventDefault();
+                  closeFind();
+                }
               }
             }}
           />
-          <span className="chat-find__count hint" role="status">
+          <span className="chat-find__count" role="status" aria-live="polite">
             {findQuery.trim() ? (findHits.length ? `${Math.min(findIndex, findHits.length - 1) + 1} de ${findHits.length}` : "Nenhum resultado") : ""}
           </span>
-          <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Resultado anterior (Shift+Enter)" title="Anterior (Shift+Enter)" disabled={findHits.length < 2} onClick={() => stepFind(1)}>
-            <ChevronUp size={16} aria-hidden />
-          </button>
-          <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Próximo resultado (Enter)" title="Próximo (Enter)" disabled={findHits.length < 2} onClick={() => stepFind(-1)}>
-            <ChevronDown size={16} aria-hidden />
-          </button>
-          <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Fechar pesquisa (Esc)" title="Fechar (Esc)" onClick={closeFind}>
-            <X size={16} aria-hidden />
-          </button>
+          {findQuery.trim() && !findHits.length && hasMore && (
+            <Button variant="ghost" size="compact" loading={loadingMore} onClick={loadMore}>
+              Buscar em anteriores
+            </Button>
+          )}
+          <div className="chat-find__nav">
+            <Button variant="ghost" size="compact" aria-label="Resultado anterior" title="Anterior (Enter)" icon={<ChevronUp size={16} aria-hidden />} disabled={findHits.length < 2} onClick={() => stepFind(1)} />
+            <Button variant="ghost" size="compact" aria-label="Próximo resultado" title="Próximo (Shift+Enter)" icon={<ChevronDown size={16} aria-hidden />} disabled={findHits.length < 2} onClick={() => stepFind(-1)} />
+            <Button variant="ghost" size="compact" aria-label="Fechar pesquisa" title="Fechar (Esc)" icon={<X size={16} aria-hidden />} onClick={closeFind} />
+          </div>
         </div>
       )}
       <div className="chat-pane__body">
