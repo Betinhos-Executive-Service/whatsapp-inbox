@@ -17,10 +17,12 @@ import {
   LoaderCircle,
   Mic,
   Paperclip,
+  Contact,
   MessageSquareText,
   Search,
   SendHorizontal,
   Settings,
+  UserPlus,
   Smartphone,
   Sparkles,
   WandSparkles,
@@ -30,14 +32,27 @@ import {
   WifiOff,
   X,
   Clock3,
+  ChevronUp,
+  ChevronDown,
+  ListChecks,
+  MapPin,
+  MessageSquarePlus,
+  Plus,
+  Star,
+  Sticker,
+  Timer,
+  UserRoundPlus,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
-import { ChatItemMenu, ChatMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
+import { ChatItemMenu, drafts, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
+import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
+import { LocationDialog, NewChatDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
+import { isRich, PinnedBar, RichContent, type RichActions } from "./rich.tsx";
 import {
   applyMentions,
   canRevoke,
@@ -56,9 +71,11 @@ import { ProfilePanel, type ProfileTarget } from "./profile.tsx";
 import { applyTheme, storedTheme } from "./theme.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
 import { ResizeHandle } from "./resize.tsx";
-import { AttachmentTray, clock, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, type Attachment } from "./media.tsx";
+import { AttachmentTray, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
+import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
+import type { Emoji } from "./emoji-data.ts";
 import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
 // Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
@@ -67,9 +84,14 @@ import { ForwardDialog } from "./forward.tsx";
 import { MessageMenu, type MenuAt } from "./message-menu.tsx";
 import { AckIcon, canEdit, CopyButton, EditBar, ReactButton, ReactionList } from "./message-extras.tsx";
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
-import { toggleWa } from "./wa-text.ts";
-import { desktop } from "./desktop.ts";
+import { firstLink, toggleWa } from "./wa-text.ts";
+import { LinkCard } from "./link-preview.tsx";
+import { ContactCards, ContactPicker } from "./contacts.tsx";
+import { SelectionBar } from "./selection.tsx";
+import { selectionText } from "./selection-text.ts";
+import { desktop, useAccount } from "./desktop.ts";
 import { BADGE_FONT, badgeImage } from "./badge.ts";
+import "./ds/styles.css";
 import "./app.css";
 
 declare const __APP_VERSION__: string;
@@ -78,12 +100,18 @@ declare const __BUILD_DATE__: string;
 // O index.html já pintou o tema salvo; aqui passa a acompanhar o Windows quando for "Sistema".
 applyTheme(storedTheme());
 
+/** Resposta em particular: a mensagem do grupo vai citada na conversa individual `to`. */
+type PrivateReply = { to: string; message: Message; from: { jid: string; name: string; isGroup: boolean } };
+
+/** Prazo das temporárias em palavras (mesma regra do servidor). */
+const ephemeralLabel = (s: number) => (s % 86400 === 0 ? (s === 86400 ? "24 horas" : `${s / 86400} dias`) : `${Math.round(s / 3600)} horas`);
+
 type Tab = Status | "todas";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "aberta", label: "Abertas" },
-  { id: "aguardando", label: "Aguardando" },
-  { id: "resolvida", label: "Resolvidas" },
-  { id: "todas", label: "Todas" },
+const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
+  { id: "aberta", label: "Abertas", icon: <CircleDot size={16} aria-hidden /> },
+  { id: "aguardando", label: "Aguardando", icon: <Clock size={16} aria-hidden /> },
+  { id: "resolvida", label: "Resolvidas", icon: <CheckCircle2 size={16} aria-hidden /> },
+  { id: "todas", label: "Todas", icon: <Inbox size={16} aria-hidden /> },
 ];
 const STATUS_META: Record<Status, { label: string; icon: ReactNode }> = {
   aberta: { label: "Aberta", icon: <CircleDot size={16} aria-hidden /> },
@@ -114,20 +142,18 @@ function Toasts({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number) =>
           {t.kind === "error" ? <TriangleAlert size={18} aria-hidden /> : <CheckCircle2 size={18} aria-hidden />}
           <span>{t.text}</span>
           {t.action && (
-            <button
-              type="button"
-              className="button button--ghost button--compact"
+            <Button
+              variant="ghost"
+              size="compact"
               onClick={() => {
                 dismiss(t.id);
                 t.action!.run();
               }}
             >
               {t.action.label}
-            </button>
+            </Button>
           )}
-          <button className="icon-button icon-button--plain" aria-label="Fechar aviso" onClick={() => dismiss(t.id)}>
-            <X size={16} aria-hidden />
-          </button>
+          <Button variant="ghost" size="compact" aria-label="Fechar aviso" icon={<X size={16} aria-hidden />} onClick={() => dismiss(t.id)} />
         </div>
       ))}
     </div>
@@ -180,9 +206,9 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
         )}
         {connection.error && <p className="hint hint--warning">{connection.error}</p>}
         <p className="hint">O código muda a cada poucos segundos. Ele aparece aqui sozinho.</p>
-        <button className="button button--ghost" onClick={onSkip}>
+        <Button variant="ghost" onClick={onSkip}>
           Ver conversas salvas
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -216,17 +242,19 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu }: { ch
             <span className="chat-item__name">{chat.name}</span>
             {isMuted(chat) && <BellOff className="chat-item__flag" size={14} aria-label="Silenciada" />}
             {chat.pinnedAt && <Pin className="chat-item__flag" size={14} aria-label="Fixada" />}
-            <span className={`chat-item__time${chat.unread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>
+            <span className={`chat-item__time${chat.unread || chat.markedUnread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>
           </span>
           <span className="chat-item__row">
             <span className="chat-item__preview">
               {chat.lastFromMe && <span className="chat-item__me">Você: </span>}
               {chat.lastText ? <WaInline text={chat.lastText} /> : "Sem mensagens"}
             </span>
-            {chat.unread > 0 && (
+            {chat.unread > 0 ? (
               <span className="count" aria-label={`${chat.unread} não lidas`}>
                 {chat.unread > 99 ? "99+" : chat.unread}
               </span>
+            ) : (
+              chat.markedUnread && <span className="count count--dot" role="img" aria-label="Marcada como não lida" />
             )}
           </span>
           {(chat.label || chat.extraLabels.length > 0 || urgent || chat.reminderAt !== null || level || showPriority || isSnoozed(chat)) && (
@@ -290,7 +318,10 @@ function ChatList(props: {
   loaded: boolean;
   /** Arquivar ou fixar pelo clique direito, sem abrir a conversa. */
   onPatch: (jid: string, patch: ChatPatch) => void;
+  onNewChat: () => void;
+  onStarred: () => void;
 }) {
+  const account = useAccount();
   const [tab, setTab] = useState<Tab>("aberta");
   const [menu, setMenu] = useState<{ jid: string; x: number; y: number } | null>(null);
   const openMenu = useCallback((jid: string, x: number, y: number) => setMenu({ jid, x, y }), []);
@@ -397,35 +428,28 @@ function ChatList(props: {
       <ResizeHandle cssVar="--inbox-list-w" storageKey="inbox:list-w" initial={360} min={280} max={520} edge="end" reserve={360} label="Largura da lista de conversas" />
       <header className="list-pane__header">
         <div className="split">
-          <h1 className="heading-page">Conversas</h1>
-          <button className="icon-button" aria-label="Abrir configurações" title="Configurações" onClick={props.onSettings}>
-            <Settings size={18} aria-hidden />
-          </button>
+          <div>
+            {account && account.count > 1 && <p className="eyebrow">{account.name}</p>}
+            <h1 className="heading-page">Conversas</h1>
+          </div>
+          <div className="cluster">
+            <Button variant="ghost" aria-label="Nova conversa ou grupo" title="Nova conversa ou grupo" icon={<MessageSquarePlus size={18} aria-hidden />} disabled={props.connection.status !== "conectado"} onClick={props.onNewChat} />
+            <Button variant="ghost" aria-label="Mensagens favoritas" title="Mensagens favoritas" icon={<Star size={18} aria-hidden />} onClick={props.onStarred} />
+            {account && account.count < account.max && (
+              <Button variant="ghost" aria-label="Adicionar conta do WhatsApp" title="Adicionar conta do WhatsApp" icon={<UserPlus size={18} aria-hidden />} onClick={() => void desktop()?.addAccount()} />
+            )}
+            <Button variant="ghost" aria-label="Abrir configurações" title="Configurações" icon={<Settings size={18} aria-hidden />} onClick={props.onSettings} />
+          </div>
         </div>
         <ConnectionPill connection={props.connection} online={props.online} />
-        <label className={`search${searching ? " search--active" : ""}`}>
-          <Search size={16} aria-hidden />
-          <span className="sr-only">Buscar conversa</span>
-          <input
-            ref={searchInput}
-            id="chat-search"
-            type="search"
-            placeholder="Nome, número ou mensagem (Ctrl+K)"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape" && searching) {
-                e.preventDefault();
-                setQuery("");
-              }
-            }}
-          />
-          {searching && (
-            <button type="button" className="search__clear" aria-label="Limpar busca" title="Limpar busca (Esc)" onClick={clearSearch}>
-              <X size={14} aria-hidden />
-            </button>
-          )}
-        </label>
+        <SearchBox
+          ref={searchInput}
+          id="chat-search"
+          aria-label="Buscar conversa"
+          placeholder="Nome, número ou mensagem (Ctrl+K)"
+          value={query}
+          onChange={setQuery}
+        />
         <div className="segmented" role="tablist" aria-label="Status da conversa">
           {TABS.map((t) => (
             <button
@@ -433,35 +457,45 @@ function ChatList(props: {
               role="tab"
               aria-selected={!showArchived && tab === t.id}
               className="segmented__item"
+              aria-label={`${t.label} (${counts[t.id]})`}
+              title={t.label}
               onClick={() => {
                 setTab(t.id);
                 setShowArchived(false);
               }}
             >
-              {t.label} <span className="segmented__count">{counts[t.id]}</span>
+              <span className="segmented__icon">{t.icon}</span>
+              <span className="segmented__label">{t.label}</span> <span className="segmented__count">{counts[t.id]}</span>
             </button>
           ))}
         </div>
         <div className="list-pane__filters">
-        <label className="field field--inline">
-          <span className="sr-only">Filtrar por etiqueta</span>
-          <select value={label} onChange={(e) => setLabel(e.target.value)}>
-            <option value="">Todas as etiquetas</option>
-            <option value="__none">Sem etiqueta</option>
-            {props.labels.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field field--inline">
-          <span className="sr-only">Ordenar conversas</span>
-          <select value={order} onChange={(e) => chooseOrder(e.target.value as "recentes" | "prioridade")}>
-            <option value="recentes">Mais recentes</option>
-            <option value="prioridade">Responder primeiro</option>
-          </select>
-        </label>
+        <Select
+          aria-label="Filtrar por etiqueta"
+          size="compact"
+          clearable={false}
+          searchable={props.labels.length > 8}
+          // O Select do DS trata "" como vazio (mostra "Selecione"); "__all" representa o filtro sem etiqueta escolhida.
+          value={label || "__all"}
+          onChange={(v) => setLabel(v && v !== "__all" ? v : "")}
+          options={[
+            { value: "__all", label: "Todas as etiquetas" },
+            { value: "__none", label: "Sem etiqueta" },
+            ...props.labels.map((l) => ({ value: l, label: l })),
+          ]}
+        />
+        <Select
+          aria-label="Ordenar conversas"
+          size="compact"
+          clearable={false}
+          searchable={false}
+          value={order}
+          onChange={(v) => v && chooseOrder(v as "recentes" | "prioridade")}
+          options={[
+            { value: "recentes", label: "Mais recentes" },
+            { value: "prioridade", label: "Responder primeiro" },
+          ]}
+        />
         </div>
         {searching && props.loaded && (
           <div className="search-status" role="status">
@@ -469,10 +503,9 @@ function ChatList(props: {
             <p className="search-status__text">
               <strong>{filtered.length}</strong> {filtered.length === 1 ? "resultado" : "resultados"} para <q>{query.trim()}</q>
             </p>
-            <button type="button" className="button button--ghost button--compact" onClick={clearSearch}>
-              <X size={14} aria-hidden />
+            <Button variant="ghost" size="compact" icon={<X size={14} aria-hidden />} onClick={clearSearch}>
               Limpar busca
-            </button>
+            </Button>
           </div>
         )}
       </header>
@@ -510,10 +543,9 @@ function ChatList(props: {
                   : "Troque a aba de status ou a etiqueta."}
             </p>
             {searching && (
-              <button type="button" className="button button--secondary" onClick={clearSearch}>
-                <X size={16} aria-hidden />
+              <Button variant="secondary" icon={<X size={16} aria-hidden />} onClick={clearSearch}>
                 Limpar busca
-              </button>
+              </Button>
             )}
           </div>
         ) : (
@@ -524,9 +556,9 @@ function ChatList(props: {
           </ul>
         )}
         {filtered.length > limit && (
-          <button className="button button--ghost button--full" onClick={() => setLimit((l) => l + PAGE)}>
+          <Button variant="ghost" fullWidth onClick={() => setLimit((l) => l + PAGE)}>
             Mostrar mais {Math.min(PAGE, filtered.length - limit)}
-          </button>
+          </Button>
         )}
         {messageQuery && <MessageHits hits={hits} chats={props.byJid} loading={hitsLoading} onOpen={props.onOpenAt} />}
       </div>
@@ -567,46 +599,55 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
           </button>
         ))}
       </div>
-      <label className="field field--inline field--label">
-        <span className="sr-only">Etiqueta</span>
-        <select value={chat.label ?? ""} onChange={(e) => onChange({ label: e.target.value || null })}>
-          <option value="">Sem etiqueta</option>
-          {labels.map((l) => (
-            <option key={l} value={l}>
-              {l}
-            </option>
-          ))}
-        </select>
-      </label>
-      <ExtraLabelsPicker chat={chat} labels={labels} onChange={onChange} />
-      <button
-        className="button button--secondary button--compact"
-        onClick={onClassify}
-        disabled={classifying || !jevReady}
-        aria-busy={classifying || undefined}
-        title={jevReady ? `Pedir ao ${classifierName} para classificar esta conversa` : "Configure a chave do Jev ou da DeepSeek em Configurações › IA"}
-        aria-label={`Classificar com ${classifierName}`}
-      >
-        {classifying ? <LoaderCircle className="spin" size={16} aria-hidden /> : <Sparkles size={16} aria-hidden />}
-      </button>
-      {chat.ai && (() => {
+      <span className="chat-pane__divider" aria-hidden />
+      {/* Um seletor só: a primeira etiqueta marcada é a principal, as demais são extras. */}
+      <Select
+        multiple
+        aria-label="Etiquetas (a primeira é a principal)"
+        size="compact"
+        className="field--label"
+        placeholder="Sem etiqueta"
+        searchable={labels.length > 8}
+        value={[chat.label, ...chat.extraLabels].filter((l): l is string => !!l && labels.includes(l))}
+        onChange={(list) => onChange({ label: list[0] ?? null, extraLabels: list.slice(1) })}
+        options={labels.map((l) => ({ value: l, label: l }))}
+      />
+      {(() => {
+        // Classificar e o palpite da IA são um controle só: o botão mostra o resultado e refaz ao clicar.
         const ai = chat.ai;
-        const detail = [
-          `IA: ${ai.label} (${percent(ai.confidence)})`,
-          ai.priority && PRIORITY_META[ai.priority].text.toLowerCase(),
-          ai.needsReply >= 0.5 && "espera resposta",
-          ai.urgent >= 0.5 && "urgente",
-          chat.labelSource === "manual" && chat.label !== ai.label && "etiqueta escolhida por você",
-          ai.reason,
-        ].filter(Boolean).join(" · ");
+        const detail = ai
+          ? [
+              `IA: ${ai.label} (${percent(ai.confidence)})`,
+              ai.priority && PRIORITY_META[ai.priority].text.toLowerCase(),
+              ai.needsReply >= 0.5 && "espera resposta",
+              ai.urgent >= 0.5 && "urgente",
+              chat.labelSource === "manual" && chat.label !== ai.label && "etiqueta escolhida por você",
+              ai.reason,
+            ].filter(Boolean).join(" · ")
+          : "";
+        const title = !jevReady
+          ? "Configure a chave do Jev ou da DeepSeek em Configurações › IA"
+          : ai
+            ? `${detail}\nClique para classificar de novo com ${classifierName}.`
+            : `Pedir ao ${classifierName} para classificar esta conversa`;
         return (
-          <p className="classify__ai" title={detail}>
-            <Sparkles size={14} aria-hidden />
-            <span className="sr-only">{detail}</span>
-            <span aria-hidden>
-              <strong>{ai.label}</strong> {percent(ai.confidence)}
-            </span>
-          </p>
+          <Button
+            variant="secondary"
+            size="compact"
+            className="classify__ai-button"
+            onClick={onClassify}
+            disabled={classifying || !jevReady}
+            aria-busy={classifying || undefined}
+            title={title}
+            aria-label={ai ? `Classificado pela IA: ${detail}. Classificar de novo com ${classifierName}` : `Classificar com ${classifierName}`}
+            icon={classifying ? <LoaderCircle className="spin" size={16} aria-hidden /> : <Sparkles size={16} aria-hidden />}
+          >
+            {ai && (
+              <span className="classify__ai-text" aria-hidden>
+                {ai.label} <span className="classify__ai-pct">{percent(ai.confidence)}</span>
+              </span>
+            )}
+          </Button>
         );
       })()}
       {chat.aiError && (
@@ -648,7 +689,9 @@ function captionOf(m: Message, body: string): string {
   return caption;
 }
 
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText, rich }: {
+  /** Enquete, evento e convite: votar e entrar no grupo. */
+  rich: RichActions;
   messages: Message[];
   isGroup: boolean;
   hasMore: boolean;
@@ -659,6 +702,8 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   canAct: boolean;
   /** Mensagem sendo respondida ou editada: fica destacada na conversa. */
   targetId: string | null;
+  /** Resultado atual da busca na conversa (Ctrl+F). */
+  hitId: string | null;
   onReply: (m: Message) => void;
   onDelete: (m: Message) => void;
   onCopy: (m: Message, quiet?: boolean) => Promise<boolean>;
@@ -671,15 +716,20 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   onDiscard: (m: Message) => void;
   /** Botão direito ou "Mais opções": abre o menu da mensagem nesse ponto. */
   onMenu: (m: Message, x: number, y: number) => void;
+  /** Modo de seleção (várias mensagens): ids marcados; null = desligado. */
+  selected: Set<string> | null;
+  onToggleSelect: (m: Message) => void;
+  /** "Conversar" no cartão de contato. */
+  onOpenContact: (digits: string) => void;
+  onCopyText: (text: string) => void;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
   return (
     <>
       {hasMore && (
-        <button className="button button--ghost button--compact messages__more" onClick={onMore} disabled={loadingMore} aria-busy={loadingMore || undefined}>
-          {loadingMore && <LoaderCircle className="spin" size={16} aria-hidden />}
+        <Button variant="ghost" size="compact" className="messages__more" onClick={onMore} loading={loadingMore}>
           Carregar mensagens anteriores
-        </button>
+        </Button>
       )}
       {messages.map((m, i) => {
         const prev = messages[i - 1];
@@ -689,20 +739,44 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         const continues = !newDay && prev.fromMe === m.fromMe && parts[i - 1].author === author && m.at - prev.at < 5 * 60_000;
         const caption = captionOf(m, body);
         const sender = m.sender;
+        // Aviso do grupo ou da conversa (entrou, saiu, temporárias, fixou): linha central, sem balão nem ações.
+        if (m.kind === "system") {
+          return (
+            <div key={m.id} data-message-id={m.id} className="message-row message-row--system">
+              {newDay && <div className="day">{dayLabel(m.at)}</div>}
+              <p className="notice" title={new Date(m.at).toLocaleString("pt-BR")}>
+                {m.text}
+              </p>
+            </div>
+          );
+        }
+        const richView = isRich(m);
+        const link = !m.deleted && !m.media && !m.contacts && !richView ? firstLink(caption) : null;
+        const selectable = !!selected && !m.pending && !m.deleted;
+        const isSelected = selectable && selected.has(m.id);
         return (
-          <div key={m.id} data-message-id={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}`}>
+          <div key={m.id} data-message-id={m.id} className={`message-row${selected ? " message-row--selecting" : ""}${isSelected ? " message-row--selected" : ""}${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}${m.id === hitId ? " message-row--hit" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
             <div
               className="message-line"
               onDoubleClick={(e) => {
                 // Duplo clique na bolha entra no modo de resposta, como no WhatsApp. Ignora
-                // controles (botões, links, mídia) e bolhas ainda não confirmadas pelo servidor.
-                if (m.pending || !canAct) return;
+                // controles (botões, links, mídia), bolhas ainda não confirmadas pelo servidor
+                // e o modo de seleção (ali o clique marca/desmarca).
+                if (selected || m.pending || !canAct) return;
                 if ((e.target as HTMLElement).closest("button, a, audio, video, input, textarea")) return;
                 window.getSelection()?.removeAllRanges();
                 onReply(m);
               }}
+              onClickCapture={(e) => {
+                // Selecionando: clicar em qualquer ponto da mensagem marca/desmarca (links e mídia não abrem).
+                if (!selected) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (selectable) onToggleSelect(m);
+              }}
               onContextMenu={(e) => {
+                if (selected) return e.preventDefault();
                 // Texto selecionado: deixa o menu do sistema (copiar a seleção). Bolha ainda
                 // não confirmada pelo servidor não tem ações (só tentar de novo ou descartar).
                 if (m.pending || window.getSelection()?.toString().trim()) return;
@@ -713,6 +787,16 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                 onMenu(m, keyboard ? box.left + 8 : e.clientX, keyboard ? box.bottom : e.clientY);
               }}
             >
+              {selected && (
+                <input
+                  type="checkbox"
+                  className="message-check"
+                  aria-label={isSelected ? "Desmarcar mensagem" : "Selecionar mensagem"}
+                  checked={isSelected}
+                  disabled={!selectable}
+                  onChange={() => {}}
+                />
+              )}
               {isGroup && !m.fromMe &&
                 (sender && !continues ? (
                   <button type="button" className="author-button" aria-label={`Ver perfil de ${author ?? "participante"}`} onClick={() => onAuthor(sender, author ?? "Participante")}>
@@ -724,7 +808,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   </span>
                 ))}
               <div className="bubble-wrap">
-              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}${m.deleted ? " bubble--deleted" : ""}${m.pending ? ` bubble--${m.pending}` : ""}`}>
+              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" && !richView ? " bubble--media" : ""}${richView ? " bubble--rich" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}${m.deleted ? " bubble--deleted" : ""}${m.pending ? ` bubble--${m.pending}` : ""}`}>
                 {author && !continues &&
                   (sender ? (
                     <button type="button" className={`bubble__author bubble__author--link tone-${authorTone(author)}`} onClick={() => onAuthor(sender, author)}>
@@ -743,10 +827,17 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   <p className="bubble__text bubble__text--deleted">
                     <Ban size={14} aria-hidden /> {m.fromMe ? "Você apagou esta mensagem" : "Esta mensagem foi apagada"}
                   </p>
+                ) : richView ? (
+                  <RichContent m={m} canAct={canAct} actions={rich} />
                 ) : (
                   <>
                     {m.media && <MediaView m={m} caption={caption} />}
-                    {(!m.media || caption) && <p className="bubble__text"><WaText text={caption} /></p>}
+                    {link && <LinkCard url={link} />}
+                    {m.contacts?.length ? (
+                      <ContactCards contacts={m.contacts} onOpen={onOpenContact} onCopy={onCopyText} />
+                    ) : (
+                      (!m.media || caption) && <p className="bubble__text"><WaText text={caption} /></p>
+                    )}
                   </>
                 )}
                 {m.pending === "failed" ? (
@@ -758,6 +849,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   </span>
                 ) : (
                   <span className="bubble__meta">
+                    {m.starred && !m.deleted && <Star className="bubble__star" size={11} aria-label="Favorita" />}
                     {m.editedAt !== null && !m.deleted && <span className="bubble__edited">Editada</span>}
                     <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
                       {formatTime(m.at)}
@@ -768,15 +860,15 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
               </div>
               {!m.pending && <ReactionList m={m} onReact={onReact} />}
               </div>
-              {!m.pending && <div className="message-actions" role="group" aria-label="Ações da mensagem">
-                {!m.deleted && (
+              {!m.pending && !selected && <div className="message-actions" role="group" aria-label="Ações da mensagem">
+                {!m.deleted && m.kind !== "call" && (
                   <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Responder" title="Responder" disabled={!canAct} onClick={() => onReply(m)}>
                     <Reply size={16} aria-hidden />
                   </button>
                 )}
-                {!m.deleted && <ReactButton m={m} onReact={onReact} disabled={!canAct} />}
-                {!m.deleted && (!m.media || caption) && <CopyButton m={m} onCopy={onCopy} />}
-                {!m.deleted && (
+                {!m.deleted && m.kind !== "call" && <ReactButton m={m} onReact={onReact} disabled={!canAct} />}
+                {!m.deleted && !richView && (!m.media || caption) && <CopyButton m={m} onCopy={onCopy} />}
+                {!m.deleted && m.kind !== "call" && (
                   <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Encaminhar" title="Encaminhar" disabled={!canAct} onClick={() => onForward(m)}>
                     <Forward size={16} aria-hidden />
                   </button>
@@ -811,8 +903,14 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   );
 });
 
-function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, quickReplies, onSetupAi, sendTyping, focus }: {
+function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, onOpen, quickReplies, onSetupAi, sendTyping, focus, privateReply, onPrivateReply }: {
+  /** Resposta em particular vinda de um grupo: abre a conversa já citando a mensagem do grupo. */
+  privateReply: PrivateReply | null;
+  /** "Responder em particular" numa mensagem de grupo. */
+  onPrivateReply: (m: Message) => void;
   chat: Chat;
+  /** Abre outra conversa (ex.: "Conversar" de um cartão de contato). */
+  onOpen: (chat: Chat) => void;
   /** Mensagem para abrir em destaque (vinda da busca); `seq` força reabrir a mesma. */
   focus: { id: string; seq: number } | null;
   /** Avisar ao contato que você está digitando (preferência). */
@@ -842,8 +940,13 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setSide("profile");
   }, []);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+  // Citação de outra conversa (responder em particular a alguém do grupo).
+  const [replyFrom, setReplyFrom] = useState<{ jid: string; name: string; isGroup: boolean } | null>(null);
+  const [composeDialog, setComposeDialog] = useState<"poll" | "location" | "sticker" | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
-  const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [forwarding, setForwarding] = useState<Message[] | null>(null);
+  const [selected, setSelected] = useState<Set<string> | null>(null);
+  const [pickingContact, setPickingContact] = useState(false);
   const [presence, setPresence] = useState<"composing" | "recording" | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
   // Menções: participantes carregados no primeiro "@"; escolhas valem até enviar.
@@ -854,6 +957,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const picks = useRef<MentionPick[]>([]);
   const [quickActive, setQuickActive] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
+  const [emojiActive, setEmojiActive] = useState(0);
+  const [emojiClosed, setEmojiClosed] = useState(false);
+  // Última troca de emoticon (":-)" → 🙂): Backspace logo em seguida desfaz.
+  const emoticonSwap = useRef<EmoticonSwap | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -882,12 +989,21 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     });
     recorder.cancel();
     setReplyTo(null);
+    setReplyFrom(null);
+    setComposeDialog(null);
     setEditing(null);
     setForwarding(null);
     setPresence(null);
     setParticipants(null);
     picks.current = [];
   }, [chat.jid]);
+  // Veio de "Responder em particular": já abre citando a mensagem do grupo.
+  useEffect(() => {
+    if (!privateReply || privateReply.to !== chat.jid) return;
+    setReplyTo(privateReply.message);
+    setReplyFrom({ jid: privateReply.from.jid, name: privateReply.from.name, isGroup: privateReply.from.isGroup });
+    requestAnimationFrame(() => composer.current?.focus());
+  }, [privateReply, chat.jid]);
   useEffect(() => {
     const id = requestAnimationFrame(() => composer.current?.focus());
     return () => cancelAnimationFrame(id);
@@ -897,14 +1013,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const usdBrl = useUsdBrl();
   const [drafting, setDrafting] = useState(false);
   const suggest = async () => {
-    if (draft.trim() && !window.confirm("Trocar o texto que você já escreveu pela sugestão da IA?")) return;
+    // Com texto no campo, a IA revisa o que foi escrito em vez de sugerir outra resposta.
+    const own = draft.trim();
     setDrafting(true);
     try {
-      const { text } = await api.draft(chat.jid);
+      const { text } = await api.draft(chat.jid, own || undefined);
       setDraft(text);
       requestAnimationFrame(() => composer.current?.focus());
     } catch (e) {
-      notify("error", `A ${aiName(ai)} não sugeriu resposta. ${(e as Error).message}`);
+      notify("error", `A ${aiName(ai)} não ${own ? "revisou o texto" : "sugeriu resposta"}. ${(e as Error).message}`);
     } finally {
       setDrafting(false);
     }
@@ -1004,10 +1121,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, [messages]);
 
   useEffect(() => {
-    if (chat.unread <= 0) return;
-    onChat({ ...chat, unread: 0 });
+    if (chat.unread <= 0 && !chat.markedUnread) return;
+    onChat({ ...chat, unread: 0, markedUnread: false });
     api.read(chat.jid).then(onChat).catch(() => undefined);
-  }, [chat.jid, chat.unread, onChat]);
+  }, [chat.jid, chat.unread, chat.markedUnread, onChat]);
 
   // Estável entre renders para o memo de <Messages>; lê a lista atual pela ref.
   const oldestAt = useRef<number | null>(null);
@@ -1028,7 +1145,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
   }, [chat.jid, notify]);
 
-  type Outgoing = { text: string; quotedId?: string; mentions: string[]; mentionAll?: boolean };
+  type Outgoing = { text: string; quotedId?: string; quotedChat?: string; mentions: string[]; mentionAll?: boolean };
   const pendingSeq = useRef(0);
   // Payload de cada bolha otimista, para "Tentar de novo".
   const outbox = useRef(new Map<string, Outgoing>());
@@ -1036,9 +1153,29 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     async (localId: string) => {
       const out = outbox.current.get(localId);
       if (!out) return;
+      const startedAt = Date.now();
       setMessages((list) => list && list.map((x) => (x.id === localId ? { ...x, pending: "sending" } : x)));
+      // Se a bolha já foi trocada pela real (SSE) ou a real já está no fim da conversa, some com a local.
+      const settle = (fresh: Message[]) => {
+        const sent = fresh.some((x) => x.fromMe && x.text === out.text && x.at >= startedAt - 5_000);
+        setMessages((list) => {
+          if (!list) return list;
+          const merged = mergeTail(list, fresh);
+          return sent ? merged.filter((x) => x.id !== localId) : merged;
+        });
+        return sent;
+      };
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const updated = await api.send(chat.jid, out.text, { quotedId: out.quotedId, mentions: out.mentions.length ? out.mentions : undefined, mentionAll: out.mentionAll });
+        // Sem resposta do servidor em 6 s: confere se saiu mesmo assim antes de marcar falha.
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("O servidor não confirmou o envio.")), 6_000);
+        });
+        const updated = await Promise.race([
+          api.send(chat.jid, out.text, { quotedId: out.quotedId, quotedChat: out.quotedChat, mentions: out.mentions.length ? out.mentions : undefined, mentionAll: out.mentionAll }),
+          timeout,
+        ]);
+        clearTimeout(timer);
         outbox.current.delete(localId);
         onChat(updated);
         // A versão real chega pelo SSE e já substitui a bolha; se não chegou, recarrega o fim da conversa.
@@ -1048,7 +1185,13 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           () => undefined,
         );
       } catch (e) {
-        setMessages((list) => list && list.map((x) => (x.id === localId ? { ...x, pending: "failed" } : x)));
+        clearTimeout(timer);
+        const sent = await api.messages(chat.jid).then(settle, () => false);
+        if (sent) {
+          outbox.current.delete(localId);
+          return;
+        }
+        setMessages((list) => list && list.map((x) => (x.id === localId && x.pending === "sending" ? { ...x, pending: "failed" } : x)));
         notify("error", `Mensagem não enviada. ${(e as Error).message}`);
       }
     },
@@ -1081,22 +1224,27 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
     stickToBottom.current = true;
     const quotedId = replyTo?.id;
+    // Resposta em particular: a citada é do grupo; anexo e voz saem sem a citação.
+    const quotedChat = replyTo && replyFrom ? replyFrom.jid : undefined;
+    const mediaQuotedId = quotedChat ? undefined : quotedId;
+    const quoteIsGroup = replyFrom ? replyFrom.isGroup : chat.isGroup;
     if (!attachments.length) {
       // Otimista: a bolha aparece na hora e o campo libera; o servidor confirma depois.
       const withMentions = applyMentions(text, picks.current);
       const localId = `local-${++pendingSeq.current}`;
       const quoted = replyTo
-        ? { id: replyTo.id, text: splitAuthor(replyTo, chat.isGroup).body, fromMe: replyTo.fromMe, author: replyTo.fromMe ? null : splitAuthor(replyTo, chat.isGroup).author }
+        ? { id: replyTo.id, text: splitAuthor(replyTo, quoteIsGroup).body, fromMe: replyTo.fromMe, author: replyTo.fromMe ? null : splitAuthor(replyTo, quoteIsGroup).author }
         : null;
       // "@todos" (ou "@all") digitado à mão também menciona o grupo inteiro.
       const mentionAll = chat.isGroup && (withMentions.mentionAll || /(^|\s)@(todos|all)(?=$|[\s.,;:!?])/i.test(text));
-      outbox.current.set(localId, { text: withMentions.text, quotedId, mentions: withMentions.mentions, mentionAll: mentionAll || undefined });
+      outbox.current.set(localId, { text: withMentions.text, quotedId, quotedChat, mentions: withMentions.mentions, mentionAll: mentionAll || undefined });
       setMessages((list) => [
         ...(list ?? []),
-        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], pending: "sending" },
+        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, contacts: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false, pending: "sending" },
       ]);
       setDraft("");
       setReplyTo(null);
+      setReplyFrom(null);
       picks.current = [];
       void deliver(localId);
       return;
@@ -1107,11 +1255,12 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       // A resposta (citação) vai só no primeiro.
       for (const [i, a] of attachments.entries()) {
         const file = a.voice ?? (await fileToOutgoing(a.file, i === 0 && text ? text : undefined));
-        onChat(await api.sendMedia(chat.jid, i === 0 && quotedId ? { ...file, quotedId } : file));
+        onChat(await api.sendMedia(chat.jid, i === 0 && mediaQuotedId ? { ...file, quotedId: mediaQuotedId } : file));
         removeAttachment(a.id);
       }
       setDraft("");
       setReplyTo(null);
+      setReplyFrom(null);
       picks.current = [];
     } catch (e) {
       notify("error", `Mensagem não enviada. ${(e as Error).message}`);
@@ -1127,8 +1276,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     try {
       voice = await recorder.finish();
       if (!voice) return notify("error", "Gravação curta demais; segure por pelo menos meio segundo.");
-      onChat(await api.sendMedia(chat.jid, replyTo ? { ...voice, quotedId: replyTo.id } : voice));
+      onChat(await api.sendMedia(chat.jid, replyTo && !replyFrom ? { ...voice, quotedId: replyTo.id } : voice));
       setReplyTo(null);
+      setReplyFrom(null);
     } catch (e) {
       // Não perde a gravação: volta para a bandeja de anexos, pronta para reenviar.
       if (voice) {
@@ -1196,6 +1346,35 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     });
   };
 
+  // ":" + 2 letras abre as sugestões de emoji (":joinha" → 👍), como no WhatsApp.
+  const emojiQ = showQuick || showMention ? null : emojiQuery(draft, caret);
+  const emojiData = useEmojiData(emojiQ !== null);
+  const emojiItems = emojiQ !== null && emojiData && !emojiClosed ? searchEmoji(emojiQ, emojiData.EMOJIS, 8) : [];
+  const showEmoji = emojiItems.length > 0;
+  useEffect(() => {
+    setEmojiActive(0);
+    setEmojiClosed(false);
+  }, [emojiQ]);
+  const pickEmoji = (e: Emoji) => {
+    const next = insertEmojiShortcut(draft, caret, e.char);
+    rememberEmoji(e.char);
+    setDraft(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => {
+      composer.current?.focus();
+      composer.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+  // Botão de emoji: entra no lugar da seleção do campo; o painel continua aberto para mais de um.
+  const insertEmoji = (emoji: string) => {
+    const el = composer.current;
+    const start = el?.selectionStart ?? draft.length;
+    const next = insertAt(draft, start, el?.selectionEnd ?? start, emoji);
+    setDraft(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => composer.current?.setSelectionRange(next.caret, next.caret));
+  };
+
   // ---- ações da mensagem (callbacks estáveis para o memo de <Messages>)
 
   /** Reinicia uma animação de uma vez na linha da mensagem (pular para a citada, reagir). */
@@ -1209,6 +1388,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
 
   const reply = useCallback((m: Message) => {
     setReplyTo(m);
+    setReplyFrom(null);
     requestAnimationFrame(() => composer.current?.focus());
   }, []);
   const copy = useCallback(
@@ -1229,6 +1409,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     },
     [chat.isGroup, notify],
   );
+  const copyFile = useCallback(
+    (m: Message) =>
+      void copyMedia(m).then(
+        (done) => notify("success", done),
+        (e: Error) => notify("error", e.message),
+      ),
+    [notify],
+  );
   const askDelete = useCallback((m: Message) => setDeleting(m), []);
   const replaceMessage = (updated: Message) => setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
   const react = useCallback(
@@ -1246,7 +1434,117 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     },
     [chat.jid, notify, flashRow],
   );
-  const forward = useCallback((m: Message) => setForwarding(m), []);
+  const forward = useCallback((m: Message) => setForwarding([m]), []);
+  const copyText = useCallback(
+    (text: string) => void navigator.clipboard.writeText(text).then(() => notify("success", "Número copiado."), () => notify("error", "Não foi possível copiar.")),
+    [notify],
+  );
+  const openContact = useCallback(
+    (digits: string) => void api.openChat({ phone: digits }).then(onOpen, (e: Error) => notify("error", `Não foi possível abrir a conversa. ${e.message}`)),
+    [onOpen, notify],
+  );
+  const startSelect = useCallback((m: Message) => setSelected(new Set(m.pending || m.deleted ? [] : [m.id])), []);
+  const toggleSelect = useCallback(
+    (m: Message) =>
+      setSelected((cur) => {
+        if (!cur) return cur;
+        const next = new Set(cur);
+        if (!next.delete(m.id)) next.add(m.id);
+        return next;
+      }),
+    [],
+  );
+  // Na ordem da conversa, como o WhatsApp copia e encaminha.
+  const selectedMessages = useMemo(() => (selected && messages ? messages.filter((m) => selected.has(m.id)) : []), [selected, messages]);
+  const copySelected = useCallback(() => {
+    const text = selectionText(selectedMessages, (m) => {
+      const { author, body } = splitAuthor(m, chat.isGroup);
+      return { author: m.fromMe ? "Você" : (chat.isGroup ? author : chat.name) ?? "Participante", text: m.media ? body : captionOf(m, body) };
+    });
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        notify("success", selectedMessages.length === 1 ? "Mensagem copiada." : `${selectedMessages.length} mensagens copiadas.`);
+        setSelected(null);
+      },
+      () => notify("error", "Não foi possível copiar."),
+    );
+  }, [selectedMessages, chat.isGroup, chat.name, notify]);
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !forwarding) setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, forwarding]);
+  const star = useCallback(
+    async (m: Message) => {
+      const starred = !m.starred;
+      setMessages((list) => list && list.map((x) => (x.id === m.id ? { ...x, starred } : x)));
+      try {
+        const { message, synced } = await api.star(chat.jid, m.id, starred);
+        if (message) setMessages((list) => list && list.map((x) => (x.id === message.id ? message : x)));
+        notify(synced ? "success" : "error", synced ? (starred ? "Mensagem favoritada." : "Mensagem tirada das favoritas.") : `Mensagem ${starred ? "favoritada" : "desfavoritada"} só neste computador. O celular não confirmou.`);
+      } catch (e) {
+        setMessages((list) => list && list.map((x) => (x.id === m.id ? { ...x, starred: m.starred } : x)));
+        notify("error", `Não foi possível ${starred ? "favoritar" : "desfavoritar"}. ${(e as Error).message}`);
+      }
+    },
+    [chat.jid, notify],
+  );
+  const pin = useCallback(
+    async (m: Message, seconds: number | null) => {
+      try {
+        onChat(await api.pin(chat.jid, m.id, seconds));
+        notify("success", seconds ? "Mensagem fixada para todos." : "Mensagem desafixada.");
+      } catch (e) {
+        notify("error", `Não foi possível ${seconds ? "fixar" : "desafixar"}. ${(e as Error).message}`);
+      }
+    },
+    [chat.jid, notify, onChat],
+  );
+  const unpin = useCallback(
+    (id: string) => {
+      const m = messages?.find((x) => x.id === id);
+      void pin(m ?? ({ id } as Message), null);
+    },
+    [messages, pin],
+  );
+  const rich = useMemo<RichActions>(
+    () => ({
+      onVote: (m, options) => {
+        // Otimista: o voto aparece na hora; volta se o WhatsApp recusar.
+        const before = m;
+        const mine = new Set(options);
+        const poll = m.poll && {
+          ...m.poll,
+          options: m.poll.options.map((o) => {
+            const was = o.mine;
+            const now = mine.has(o.name);
+            return { ...o, mine: now, count: o.count + (now && !was ? 1 : !now && was ? -1 : 0) };
+          }),
+        };
+        if (poll) setMessages((list) => list && list.map((x) => (x.id === m.id ? { ...x, poll } : x)));
+        api
+          .vote(chat.jid, m.id, options)
+          .then((updated) => updated && setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x))))
+          .catch((e: Error) => {
+            setMessages((list) => list && list.map((x) => (x.id === before.id ? before : x)));
+            notify("error", `Voto não enviado. ${e.message}`);
+          });
+      },
+      onAcceptInvite: (m) => {
+        api
+          .acceptInvite(chat.jid, m.id)
+          .then((group) => {
+            notify("success", `Você entrou no grupo ${group.name}.`);
+            onOpen(group);
+          })
+          .catch((e: Error) => notify("error", `Não foi possível entrar no grupo. ${e.message}`));
+      },
+    }),
+    [chat.jid, notify, onOpen],
+  );
   const [menuAt, setMenuAt] = useState<MenuAt | null>(null);
   const openMenu = useCallback((message: Message, x: number, y: number) => setMenuAt({ message, x, y }), []);
   const closeMenu = useCallback(() => setMenuAt(null), []);
@@ -1304,6 +1602,46 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     (jid: string, name: string) => openProfile({ jid, name, phone: jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : null, isGroup: false }),
     [openProfile],
   );
+  // ---- busca na conversa (Ctrl+F): procura nas mensagens já carregadas
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+  const findInput = useRef<HTMLInputElement>(null);
+  const findHits = useMemo(() => {
+    const q = normalize(findQuery.trim());
+    if (!q || !messages) return [];
+    return messages
+      .filter((m) => !m.deleted && normalize(captionOf(m, splitAuthor(m, chat.isGroup).body)).includes(q))
+      .map((m) => m.id)
+      .reverse(); // mais recente primeiro, como no WhatsApp
+  }, [findQuery, messages, chat.isGroup]);
+  const hitId = findOpen ? (findHits[Math.min(findIndex, findHits.length - 1)] ?? null) : null;
+  useEffect(() => setFindIndex(0), [findQuery]);
+  useEffect(() => {
+    if (!hitId) return;
+    scroller.current
+      ?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(hitId)}"]`)
+      ?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  }, [hitId]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+        requestAnimationFrame(() => findInput.current?.select());
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const closeFind = () => {
+    setFindOpen(false);
+    setFindQuery("");
+  };
+  const stepFind = (dir: 1 | -1) => {
+    if (!findHits.length) return;
+    setFindIndex((i) => (Math.min(i, findHits.length - 1) + dir + findHits.length) % findHits.length);
+  };
   const jump = useCallback(
     (id: string) => {
       const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
@@ -1388,9 +1726,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       )}
       <header className="chat-pane__header">
         <div className="chat-pane__title">
-          <button className="icon-button chat-pane__back" aria-label="Voltar para a lista" onClick={onBack}>
-            <ArrowLeft size={18} aria-hidden />
-          </button>
+          <Button variant="ghost" className="chat-pane__back" aria-label="Voltar para a lista" icon={<ArrowLeft size={18} aria-hidden />} onClick={onBack} />
           <button
             type="button"
             className="chat-pane__who"
@@ -1415,6 +1751,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
                 <>
                   {chat.phone && <span className="hint">+{chat.phone}</span>}
                   {chat.isGroup && <span className="hint">Grupo · ver participantes</span>}
+                  {chat.ephemeral && (
+                    <span className="hint chat-pane__ephemeral" title="Mensagens temporárias ligadas. Mude no perfil da conversa.">
+                      <Timer size={12} aria-hidden /> Temporárias: {ephemeralLabel(chat.ephemeral)}
+                    </span>
+                  )}
                 </>
               )}
             </span>
@@ -1430,23 +1771,87 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             jevReady={jevReady}
             classifierName={classifierName}
           />
-          <span className="chat-pane__divider" aria-hidden />
-          <button
-            className={`button button--secondary button--compact chat-pane__notes-toggle${chat.note || chat.reminderAt !== null ? " has-content" : ""}`}
+        </div>
+        {/* Ações rápidas ficam sempre na linha do perfil, mesmo quando a classificação desce. */}
+        <div className="chat-pane__actions">
+          <Button
+            variant="secondary"
+            size="compact"
+            className={`chat-pane__notes-toggle${chat.note || chat.reminderAt !== null ? " has-content" : ""}`}
             aria-pressed={notesOpen}
             aria-label={chat.note || chat.reminderAt !== null ? "Notas e lembretes (com conteúdo)" : "Notas e lembretes"}
             title="Notas e lembretes"
+            icon={<StickyNote size={16} aria-hidden />}
             onClick={() => setSide((v) => (v === "notes" ? null : "notes"))}
           >
-            <StickyNote size={16} aria-hidden />
-            {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden />}
-          </button>
-          <ChatMenu chat={chat} onChange={(patch) => void change(patch)} />
+            <span className="chat-pane__notes-label">Notas</span>
+            {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden className="chat-pane__notes-alarm" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="compact"
+            aria-pressed={findOpen}
+            aria-label="Pesquisar na conversa (Ctrl+F)"
+            title="Pesquisar na conversa (Ctrl+F)"
+            icon={<Search size={16} aria-hidden />}
+            onClick={() => (findOpen ? closeFind() : (setFindOpen(true), requestAnimationFrame(() => findInput.current?.focus())))}
+          />
           <AiQuickPicker onMore={onSetupAi} />
         </div>
       </header>
+      {findOpen && (
+        <div className="chat-find" role="search">
+          <SearchBox
+            ref={findInput}
+            size="compact"
+            className="chat-find__box"
+            aria-label="Pesquisar nesta conversa"
+            placeholder="Pesquisar nesta conversa"
+            value={findQuery}
+            autoFocus
+            onChange={setFindQuery}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                stepFind(e.shiftKey ? -1 : 1);
+              } else if (e.key === "Escape") {
+                // 1º Esc limpa o texto (SearchBox); com o campo vazio, fecha a barra.
+                e.stopPropagation();
+                if (!e.defaultPrevented) {
+                  e.preventDefault();
+                  closeFind();
+                }
+              }
+            }}
+          />
+          <span className="chat-find__count" role="status" aria-live="polite">
+            {findQuery.trim() ? (findHits.length ? `${Math.min(findIndex, findHits.length - 1) + 1} de ${findHits.length}` : "Nenhum resultado") : ""}
+          </span>
+          {findQuery.trim() && !findHits.length && hasMore && (
+            <Button variant="ghost" size="compact" loading={loadingMore} onClick={loadMore}>
+              Buscar em anteriores
+            </Button>
+          )}
+          <div className="chat-find__nav">
+            <Button variant="ghost" size="compact" aria-label="Resultado anterior" title="Anterior (Enter)" icon={<ChevronUp size={16} aria-hidden />} disabled={findHits.length < 2} onClick={() => stepFind(1)} />
+            <Button variant="ghost" size="compact" aria-label="Próximo resultado" title="Próximo (Shift+Enter)" icon={<ChevronDown size={16} aria-hidden />} disabled={findHits.length < 2} onClick={() => stepFind(-1)} />
+            <Button variant="ghost" size="compact" aria-label="Fechar pesquisa" title="Fechar (Esc)" icon={<X size={16} aria-hidden />} onClick={closeFind} />
+          </div>
+        </div>
+      )}
+      <PinnedBar key={chat.jid} chat={chat} canAct={connected} onJump={jump} onUnpin={unpin} />
       <div className="chat-pane__body">
-      <div className="messages" ref={scroller} aria-live="polite" aria-busy={messages === null}>
+      <div
+        className="messages"
+        ref={scroller}
+        aria-live="polite"
+        aria-busy={messages === null}
+        // Só acompanha o fim quem já está lá: votar, reagir ou favoritar lá em cima não pode rolar a conversa.
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+        }}
+      >
         {messages === null ? (
           <div className="messages__loading">
             <LoaderCircle className="spin" size={24} aria-hidden />
@@ -1468,6 +1873,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             chatName={chat.name}
             canAct={connected}
             targetId={editing?.id ?? replyTo?.id ?? null}
+            hitId={hitId}
             onReply={reply}
             onDelete={askDelete}
             onCopy={copy}
@@ -1479,11 +1885,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onRetry={retry}
             onDiscard={discard}
             onMenu={openMenu}
+            rich={rich}
+            selected={selected}
+            onToggleSelect={toggleSelect}
+            onOpenContact={openContact}
+            onCopyText={copyText}
           />
         )}
       </div>
       {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
-      {side === "profile" && profileTarget && <ProfilePanel target={profileTarget} connected={connected} onClose={() => setSide(null)} />}
+      {side === "profile" && profileTarget && <ProfilePanel target={profileTarget} chat={chat} connected={connected} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
       </div>
       {menuAt && (
         <MessageMenu
@@ -1495,23 +1906,51 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
               ? { jid: menuAt.message.sender, name: splitAuthor(menuAt.message, true).author ?? "participante" }
               : null
           }
-          actions={{ onReply: reply, onReact: react, onCopy: copy, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor }}
+          pinned={chat.pins.some((p) => p.id === menuAt.message.id && p.until > Date.now())}
+          canPrivateReply={chat.isGroup && !menuAt.message.fromMe && !!menuAt.message.sender}
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect }}
           onClose={closeMenu}
         />
       )}
       {forwarding && (
         <ForwardDialog
-          message={forwarding}
+          messages={forwarding}
           onClose={() => setForwarding(null)}
           onDone={(to) => {
+            const n = forwarding.length;
             setForwarding(null);
-            notify("success", `Mensagem encaminhada para ${to.name}.`);
+            setSelected(null);
+            const names = to.map((c) => c.name).join(", ");
+            notify("success", n === 1 ? `Mensagem encaminhada para ${names}.` : `${n} mensagens encaminhadas para ${names}.`);
           }}
         />
       )}
+      {pickingContact && (
+        <ContactPicker
+          to={chat}
+          onClose={() => setPickingContact(false)}
+          onDone={(n) => {
+            setPickingContact(false);
+            notify("success", n === 1 ? "Contato enviado." : `${n} contatos enviados.`);
+          }}
+        />
+      )}
+      {composeDialog === "poll" && <PollDialog onClose={() => setComposeDialog(null)} onSend={async (poll) => onChat(await api.sendPoll(chat.jid, poll))} />}
+      {composeDialog === "location" && <LocationDialog onClose={() => setComposeDialog(null)} onSend={async (place) => onChat(await api.sendLocation(chat.jid, place))} />}
+      {composeDialog === "sticker" && <StickerDialog onClose={() => setComposeDialog(null)} onSend={async (from) => onChat(await api.sendSticker(chat.jid, from))} />}
       {deleting && <DeleteDialog message={deleting} busy={false} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
+      {selected && (
+        <SelectionBar
+          count={selectedMessages.length}
+          canForward={connected}
+          onCopy={copySelected}
+          onForward={() => setForwarding(selectedMessages)}
+          onCancel={() => setSelected(null)}
+        />
+      )}
       <form
         className="composer"
+        style={selected ? { display: "none" } : undefined}
         onSubmit={(e) => {
           e.preventDefault();
           void send();
@@ -1522,8 +1961,21 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         </label>
         {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
         {showMention && <MentionMenu items={mentionItems} active={mentionActive} onPick={pickMention} onHover={setMentionActive} />}
+        {showEmoji && <EmojiShortcutMenu items={emojiItems} active={emojiActive} onPick={pickEmoji} onHover={setEmojiActive} />}
         {editing && <EditBar key={editing.id} message={editing} onCancel={cancelEdit} />}
-        {replyTo && <ReplyBar key={replyTo.id} message={replyTo} isGroup={chat.isGroup} chatName={chat.name} onCancel={() => setReplyTo(null)} />}
+        {replyTo && (
+          <ReplyBar
+            key={replyTo.id}
+            message={replyTo}
+            isGroup={replyFrom ? replyFrom.isGroup : chat.isGroup}
+            chatName={replyFrom ? replyFrom.name : chat.name}
+            onCancel={() => {
+              setReplyTo(null);
+              setReplyFrom(null);
+            }}
+          />
+        )}
+        {replyTo && replyFrom && <p className="hint reply-origin">Resposta em particular a uma mensagem de {replyFrom.name}</p>}
         {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} disabled={sending} />}
         <input
           ref={fileInput}
@@ -1547,38 +1999,52 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           />
         ) : (
           <>
-        <button
-          type="button"
-          className="icon-button"
+        <Button
+          variant="ghost"
           aria-label="Anexar arquivo"
           title="Anexar imagem, vídeo ou documento (ou arraste para a conversa, ou cole com Ctrl+V)"
           disabled={!connected || sending}
           onClick={() => fileInput.current?.click()}
-        >
-          <Paperclip size={18} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
+          icon={<Paperclip size={18} aria-hidden />}
+        />
+        <EmojiButton disabled={!connected} onPick={insertEmoji} onClose={() => composer.current?.focus()} />
+        <Button
+          variant="ghost"
+          aria-label="Enviar contato"
+          title="Enviar contato"
+          disabled={!connected || sending}
+          onClick={() => setPickingContact(true)}
+          icon={<Contact size={18} aria-hidden />}
+        />
+        <Menu
+          align="start"
+          trigger={(t) => (
+            <Button {...t} variant="ghost" aria-label="Enviar enquete, localização ou figurinha" title="Enquete, localização ou figurinha" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
+          )}
+          actions={[
+            { id: "poll", label: "Enquete", icon: <ListChecks size={16} aria-hidden />, onSelect: () => setComposeDialog("poll") },
+            { id: "location", label: "Localização", icon: <MapPin size={16} aria-hidden />, onSelect: () => setComposeDialog("location") },
+            { id: "sticker", label: "Figurinha", icon: <Sticker size={16} aria-hidden />, onSelect: () => setComposeDialog("sticker") },
+          ]}
+        />
+        <Button
+          variant="ghost"
           aria-label="Respostas rápidas"
           title={quickReplies.length ? "Respostas rápidas (ou digite / no começo)" : "Cadastre respostas rápidas em Configurações"}
           disabled={!connected || !quickReplies.length}
           aria-expanded={showQuick}
           onClick={() => setQuickOpen((v) => !v)}
-        >
-          <Zap size={18} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label={aiReady ? `Sugerir resposta com a ${aiName(ai)}` : "Ativar a IA"}
-          title={aiReady ? `Sugerir resposta (${aiName(ai)}, revise antes de enviar)` : "Ativar a IA para sugerir respostas"}
+          icon={<Zap size={18} aria-hidden />}
+        />
+        <Button
+          variant="ghost"
+          aria-label={aiReady ? `${draft.trim() ? "Revisar texto" : "Sugerir resposta"} com a ${aiName(ai)}` : "Ativar a IA"}
+          title={aiReady ? `${draft.trim() ? "Corrigir e formalizar o texto" : "Sugerir resposta"} (${aiName(ai)}, revise antes de enviar)` : "Ativar a IA para sugerir respostas"}
           disabled={drafting || !connected}
           aria-busy={drafting || undefined}
           onClick={() => (aiReady ? void suggest() : onSetupAi())}
-        >
-          {drafting ? <LoaderCircle className="spin" size={18} aria-hidden /> : <WandSparkles size={18} aria-hidden />}
-        </button>
+          icon={drafting ? <LoaderCircle className="spin" size={18} aria-hidden /> : <WandSparkles size={18} aria-hidden />}
+        />
         <div className="composer__field">
         <div className="composer__mirror" ref={mirror} aria-hidden>
           <WaLive text={draft} />
@@ -1588,9 +2054,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           id="composer-text"
           rows={1}
           role="combobox"
-          aria-expanded={showQuick || showMention}
-          aria-controls={showQuick ? "quick-menu" : showMention ? "mention-menu" : undefined}
-          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : showMention ? `mention-${mentionActive}` : undefined}
+          aria-expanded={showQuick || showMention || showEmoji}
+          aria-controls={showQuick ? "quick-menu" : showMention ? "mention-menu" : showEmoji ? "emoji-menu" : undefined}
+          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : showMention ? `mention-${mentionActive}` : showEmoji ? `emoji-${emojiActive}` : undefined}
           aria-autocomplete="list"
           value={draft}
           disabled={!connected}
@@ -1604,8 +2070,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
                   : "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha."
           }
           onChange={(e) => {
-            setDraft(e.target.value);
-            setCaret(e.target.selectionStart ?? e.target.value.length);
+            const el = e.target;
+            const at = el.selectionStart ?? el.value.length;
+            // Emoticon digitado (":-)", "<3", "(y)") vira emoji na hora, como no WhatsApp Web.
+            const swap = (e.nativeEvent as InputEvent).inputType === "insertText" ? convertEmoticon(el.value, at) : null;
+            emoticonSwap.current = swap?.swap ?? null;
+            setDraft(swap?.text ?? el.value);
+            setCaret(swap?.swap.caret ?? at);
+            if (swap) requestAnimationFrame(() => el.setSelectionRange(swap.swap.caret, swap.swap.caret));
             noteTyping();
           }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
@@ -1619,6 +2091,19 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             addFiles(files);
           }}
           onKeyDown={(e) => {
+            const swap = emoticonSwap.current;
+            if (swap && e.key === "Backspace" && e.currentTarget.selectionStart === swap.caret && e.currentTarget.selectionEnd === swap.caret) {
+              const undo = undoEmoticon(draft, swap);
+              emoticonSwap.current = null;
+              if (undo) {
+                e.preventDefault();
+                const el = e.currentTarget;
+                setDraft(undo.text);
+                setCaret(undo.caret);
+                requestAnimationFrame(() => el.setSelectionRange(undo.caret, undo.caret));
+                return;
+              }
+            }
             const marker = formatShortcut(e);
             if (marker) {
               e.preventDefault();
@@ -1643,6 +2128,24 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
               if (e.key === "Escape") {
                 e.preventDefault();
                 setMentionClosed(true);
+                return;
+              }
+            }
+            if (showEmoji) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                setEmojiActive((i) => (i + step + emojiItems.length) % emojiItems.length);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                pickEmoji(emojiItems[emojiActive] ?? emojiItems[0]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setEmojiClosed(true);
                 return;
               }
             }
@@ -1681,20 +2184,18 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           </>
         )}
         {recorder.recording || draft.trim() || attachments.length || sending ? (
-          <button
-            className="button button--primary"
+          <Button
+            variant="primary"
             type={recorder.recording ? "button" : "submit"}
             onClick={recorder.recording ? () => void sendVoice() : undefined}
             disabled={!connected || sending}
-            aria-busy={sending || undefined}
+            loading={sending}
+            icon={<SendHorizontal size={18} aria-hidden />}
           >
-            {sending ? <LoaderCircle className="spin" size={18} aria-hidden /> : <SendHorizontal size={18} aria-hidden />}
             <span className="composer__label">Enviar</span>
-          </button>
+          </Button>
         ) : (
-          <button type="button" className="button button--primary composer__mic" disabled={!connected} aria-label="Gravar mensagem de voz" title="Gravar mensagem de voz" onClick={() => void recorder.start()}>
-            <Mic size={18} aria-hidden />
-          </button>
+          <Button variant="primary" className="composer__mic" disabled={!connected} aria-label="Gravar mensagem de voz" title="Gravar mensagem de voz" icon={<Mic size={18} aria-hidden />} onClick={() => void recorder.start()} />
         )}
       </form>
       {chat.aiUsage.calls > 0 && (
@@ -1720,14 +2221,19 @@ function App() {
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [focus, setFocus] = useState<{ id: string; seq: number } | null>(null);
+  const [privateReply, setPrivateReply] = useState<PrivateReply | null>(null);
+  const [dialog, setDialog] = useState<"new-chat" | "starred" | null>(null);
   const openChat = useCallback((jid: string | null) => {
     setFocus(null);
+    setPrivateReply(null);
     setSelected(jid);
   }, []);
   const openAt = useCallback((jid: string, id: string) => {
     setSelected(jid);
     setFocus((f) => ({ id, seq: (f?.seq ?? 0) + 1 }));
   }, []);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
   const visible = useRef<string[]>([]);
   const onVisible = useCallback((jids: string[]) => {
     visible.current = jids;
@@ -1737,7 +2243,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsUsed = useRef(false);
   if (settingsOpen) settingsUsed.current = true;
-  const [settingsTab, setSettingsTab] = useState<"geral" | "ia" | undefined>(undefined);
+  const [settingsTab, setSettingsTab] = useState<"geral" | "ia" | "conta" | undefined>(undefined);
   const [skipConnect, setSkipConnect] = useState(false);
   const { toasts, push, dismiss } = useToasts();
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
@@ -1763,6 +2269,41 @@ function App() {
       });
     }, 30);
   }, []);
+
+  /** Abre uma conversa que pode ser nova (número, contato recebido, grupo em que entrou). */
+  const openTarget = useCallback(
+    (target: { phone: string } | Chat) => {
+      if ("jid" in target) {
+        upsert(target);
+        return openChat(target.jid);
+      }
+      api
+        .openChat(target)
+        .then((chat) => {
+          upsert(chat);
+          openChat(chat.jid);
+        })
+        .catch((e: Error) => push("error", `Não foi possível abrir a conversa. ${e.message}`));
+    },
+    [upsert, openChat, push],
+  );
+
+  /** "Responder em particular": abre a conversa com quem escreveu no grupo, já citando a mensagem. */
+  const startPrivateReply = useCallback(
+    (m: Message) => {
+      const group = chats.get(m.chatJid);
+      if (!m.sender || !group) return;
+      api
+        .openChat({ jid: m.sender })
+        .then((chat) => {
+          upsert(chat);
+          openChat(chat.jid);
+          setPrivateReply({ to: chat.jid, message: m, from: { jid: group.jid, name: group.name, isGroup: true } });
+        })
+        .catch((e: Error) => push("error", `Não foi possível abrir a conversa em particular. ${e.message}`));
+    },
+    [chats, upsert, openChat, push],
+  );
 
   const reload = useCallback(() => {
     api
@@ -1853,6 +2394,8 @@ function App() {
         .update(jid, patch)
         .then((c) => {
           upsert(c);
+          // Marcar como não lida a conversa aberta fecha a conversa (senão ela seria lida de novo na hora).
+          if (patch.markedUnread && jid === selectedRef.current) openChat(null);
           if (patch.archived === undefined) return;
           push("success", `${c.name} ${patch.archived ? "arquivada" : "desarquivada"}.`, {
             label: "Desfazer",
@@ -1861,7 +2404,7 @@ function App() {
         })
         .catch((err) => push("error", `Não foi possível atualizar a conversa. ${(err as Error).message}`));
     },
-    [upsert, push],
+    [upsert, push, openChat],
   );
 
   // Atalhos globais (ver ShortcutsDialog). Dentro de campos, só Ctrl+K e Ctrl+E valem.
@@ -1917,7 +2460,10 @@ function App() {
       setSkipConnect(true);
       openChat(jid);
     });
-    const offSettings = bridge.onOpenSettings(() => setSettingsOpen(true));
+    const offSettings = bridge.onOpenSettings((tab) => {
+      if (tab === "conta") setSettingsTab("conta");
+      setSettingsOpen(true);
+    });
     return () => {
       offChat();
       offSettings();
@@ -1968,6 +2514,8 @@ function App() {
             onSettings={() => setSettingsOpen(true)}
             loaded={loaded}
             onPatch={patchChat}
+            onNewChat={() => setDialog("new-chat")}
+            onStarred={() => setDialog("starred")}
           />
           {current ? (
             <ChatView
@@ -1981,8 +2529,14 @@ function App() {
               onBack={() => openChat(null)}
               notify={push}
               onChat={upsert}
+              onOpen={(c) => {
+                upsert(c);
+                openChat(c.jid);
+              }}
               quickReplies={quickReplies}
               sendTyping={!!state?.prefs.sendTyping}
+              privateReply={privateReply}
+              onPrivateReply={startPrivateReply}
               onSetupAi={() => {
                 setSettingsTab("ia");
                 setSettingsOpen(true);
@@ -2019,7 +2573,14 @@ function App() {
         </Suspense>
       )}
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
-      <UpdateDialog />
+      {dialog === "new-chat" && <NewChatDialog onClose={() => setDialog(null)} onOpen={openTarget} />}
+      {dialog === "starred" && <StarredDialog chats={chats} onClose={() => setDialog(null)} onOpenAt={openAt} />}
+      <UpdateDialog
+        onShowVersions={() => {
+          setSettingsTab("geral");
+          setSettingsOpen(true);
+        }}
+      />
       <Toasts toasts={toasts} dismiss={dismiss} />
       <div className="build-badge" aria-hidden="true">
         {formatBuild(__APP_VERSION__, __BUILD_DATE__)}

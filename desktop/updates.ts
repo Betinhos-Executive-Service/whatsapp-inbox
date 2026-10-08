@@ -1,6 +1,6 @@
 // Atualização pelo GitHub Releases (Betinhos-Executive-Service/whatsapp-inbox).
-// Só consulta e baixa quando a pessoa pede: a janela mostra o aviso e o botão "Atualizar agora".
-import { app, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from "electron";
+// Consulta a cada 2 minutos; só baixa quando a pessoa pede pelo toast ("Atualizar agora").
+import { app, ipcMain, type IpcMainInvokeEvent } from "electron";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import updater from "electron-updater";
@@ -14,31 +14,29 @@ export type UpdateState =
   | { status: "installing"; version: string }
   | { status: "error"; version: string | null; message: string };
 
-const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
+const CHECK_EVERY_MS = 2 * 60 * 1000;
 const OWNER = "Betinhos-Executive-Service";
 const REPO = "whatsapp-inbox";
 const VERSION = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 
 export function setupUpdates(options: {
-  window: () => BrowserWindow | null;
-  trustedOrigin: () => string | null;
+  /** Envia para a página de cada conta aberta. */
+  send: (channel: string, ...args: unknown[]) => void;
+  /** Só a página de uma conta (servidor local) pode pedir atualização. */
+  trusted: (event: IpcMainInvokeEvent) => boolean;
   beforeInstall: () => Promise<void>;
 }) {
   const { autoUpdater } = updater;
   let state: UpdateState = { status: "idle" };
   let latest: string | null = null;
 
-  const publish = () => options.window()?.webContents.send("update:state", state);
+  const publish = () => options.send("update:state", state);
   const set = (next: UpdateState) => {
     state = next;
     publish();
   };
 
-  /** Só a página do próprio app (servidor local) pode pedir atualização. */
-  const trusted = (event: IpcMainInvokeEvent) => {
-    const origin = options.trustedOrigin();
-    return !!origin && new URL(event.senderFrame?.url ?? "about:blank").origin === origin;
-  };
+  const trusted = options.trusted;
 
   // Log em %APPDATA%WhatsApp Inboxlogsatualizacao.log: mostra onde uma atualização parou.
   const logDir = join(app.getPath("userData"), "logs");
@@ -156,7 +154,7 @@ export function setupUpdates(options: {
     /** Ao reabrir a janela: consulta de novo e lembra a página de mostrar o aviso. */
     remind: () => {
       check();
-      options.window()?.webContents.send("update:remind");
+      options.send("update:remind");
     },
   };
 }

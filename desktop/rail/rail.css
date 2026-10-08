@@ -1,0 +1,123 @@
+/* Trilho de contas (§10.1 App shell, estado trilho): só tokens do Design System Betinhos. */
+@import "../../ui/design-tokens.css";
+
+@font-face {
+  font-family: "Manrope";
+  src: url("../../node_modules/@fontsource-variable/manrope/files/manrope-latin-wght-normal.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background-color: var(--bt-color-brand);
+  font-family: var(--bt-font-family-sans);
+  color: var(--bt-color-white);
+  overflow: hidden;
+  user-select: none;
+}
+
+.rail {
+  /* Mesma largura do RAIL_WIDTH em desktop/main.ts: a área da conta começa logo depois. */
+  width: 72px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--bt-space-2);
+  padding: var(--bt-space-3) 0;
+}
+.rail__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--bt-space-2);
+  width: 100%;
+  /* Espaço no topo para o selo de não lidas, que sobe 4 px acima do botão. */
+  padding: var(--bt-space-1) 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Rola com muitas contas, sem barra roubando largura do trilho. */
+  scrollbar-width: none;
+}
+
+.account,
+.rail__add {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: var(--bt-radius-md);
+  background-color: transparent;
+  color: var(--bt-color-white);
+  font: 700 14px/1 var(--bt-font-family-sans);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background-color var(--bt-duration-fast) var(--bt-ease-out);
+}
+.account:hover,
+.rail__add:hover { background-color: rgba(255, 255, 255, 0.08); }
+.account:active,
+.rail__add:active { background-color: rgba(255, 255, 255, 0.16); }
+.account[aria-current="true"] { background-color: rgba(255, 255, 255, 0.12); }
+.account:focus-visible,
+.rail__add:focus-visible { outline: 2px solid var(--bt-focus-border); outline-offset: 2px; }
+
+/* Seleção: barra à esquerda + fundo (dois sinais, não só cor). */
+.account[aria-current="true"]::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 10px;
+  bottom: 10px;
+  width: 4px;
+  border-radius: var(--bt-radius-full);
+  background-color: var(--bt-color-white);
+}
+
+.account__unread {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--bt-space-1-5);
+  border-radius: var(--bt-badge-radius);
+  background-color: var(--bt-color-action);
+  color: var(--bt-color-white);
+  font: 800 11px/20px var(--bt-font-family-sans);
+  text-align: center;
+}
+
+/* Status: ponto para conectado; selo com texto para QR pendente e falha. */
+.account__status {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  border: 2px solid var(--bt-color-brand);
+  border-radius: var(--bt-radius-full);
+}
+.account__status--ok { width: 12px; height: 12px; background-color: var(--bt-color-green-600); }
+.account__status--wait { width: 12px; height: 12px; background-color: var(--bt-color-slate-400); }
+.account__status--qr,
+.account__status--error {
+  height: 16px;
+  padding: 0 4px;
+  font: 800 9px/12px var(--bt-font-family-sans);
+}
+.account__status--qr { background-color: var(--bt-color-warning-soft); color: var(--bt-color-warning); }
+.account__status--error { background-color: var(--bt-color-danger-soft); color: var(--bt-color-danger); }
+
+.rail__add { color: var(--bt-color-slate-400); }
+.rail__add:hover { color: var(--bt-color-white); }
+
+@media (prefers-reduced-motion: reduce) {
+  .account, .rail__add { transition: none; }
+}

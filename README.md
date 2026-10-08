@@ -5,10 +5,13 @@ Inbox local e leve para gerir e classificar as conversas do seu WhatsApp. Roda n
 - **Conversas por status:** Abertas, Aguardando e Resolvidas. Mensagem nova reabre a conversa; resposta sua passa para Aguardando.
 - **Etiquetas** editáveis (Cotação, Reserva, Operação…): a principal vem da IA ou de você; dá para somar etiquetas extras.
 - **Responder** pelo próprio app: texto, anexos e mensagem de voz, citando, mencionando com @ e com formatação do WhatsApp. Ticks de entrega/leitura, reações, editar (até 15 min), apagar e encaminhar.
+- **Mais que texto:** enquete (criar, votar e ver quem votou), localização (link do mapa ou coordenadas), contato, figurinhas já recebidas e prévia de link ao enviar URL. Chegam legíveis também evento, convite de grupo (com **Entrar no grupo**), ligações (recebida, perdida, atendida no celular) e avisos do grupo (entrou, saiu, mudou o nome).
+- **Como no WhatsApp:** nova conversa por número, marcar como não lida, favoritar mensagens (lista de favoritas no topo), fixar mensagem por 24 h, 7 ou 30 dias, responder em particular a quem escreveu no grupo, bloquear contato e mensagens temporárias.
+- **Grupos:** criar grupo, adicionar e remover pessoas, tornar ou tirar admin e mudar nome e descrição (pelo perfil do grupo, se você for admin).
 - **Organizar:** fixar no topo, arquivar, silenciar notificações e adiar (some das abertas e volta sozinha na hora marcada). Rascunho guardado por conversa.
 - **Busca** em nomes, números e no texto de todo o histórico, sem acento; o resultado abre a conversa na mensagem.
 - **Atalhos:** `Ctrl+K` busca, `Alt+↓/↑` próxima/anterior conversa, `Ctrl+Enter` resolve, `?` mostra todos.
-- Conversas individuais e grupos; status e canais ficam de fora.
+- Conversas individuais e grupos; status, canais e comunidades ficam de fora. Ligações são atendidas no celular (o app só avisa), e mídia de visualização única só abre no celular.
 
 ## Instalar e usar
 
@@ -18,7 +21,7 @@ Na primeira vez, leia o código QR pelo celular (WhatsApp › Aparelhos conectad
 
 - Fechar a janela deixa o app na **bandeja** (perto do relógio), recebendo mensagens e classificando. Para sair, clique com o botão direito no ícone › **Sair**.
 - No mesmo menu: **Iniciar com o Windows**.
-- **Atualização:** quando sai versão nova no GitHub, o app avisa toda vez que você entra nele. **Atualizar agora** baixa, fecha por alguns segundos e reabre na versão nova. As conversas e a conexão continuam.
+- **Atualização:** o app verifica a cada 2 minutos e, quando sai versão nova no GitHub, mostra uma vez um aviso no canto com o que mudou em linguagem simples (e o botão **Ver versões** para o histórico). **Atualizar agora** baixa, fecha por alguns segundos e reabre na versão nova. As conversas e a conexão continuam.
 
 O Windows pode mostrar "O Windows protegeu o computador" na primeira instalação, porque o instalador não tem assinatura digital paga. Clique em **Mais informações › Executar assim mesmo**.
 

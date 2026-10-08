@@ -153,7 +153,7 @@ test("Jev: perguntas, estado e resposta validados", () => {
   assert.throws(() => buildQuestions(labels.slice(0, 1)));
   const q = buildQuestions(labels);
   assert.deepEqual(Object.keys(q), ["etiqueta", "responder", "urgente", "prioridade"]);
-  const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null, quoted: null, deleted: false, sender: null, ack: null, editedAt: null, reactions: [] }]));
+  const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null, contacts: null, quoted: null, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false }]));
   assert.equal(state.mensagens[0].de, "contato");
   assert.equal(state.mensagens[0].texto.length, 1000);
   assert.ok(!JSON.stringify(state).includes("whatsapp.net"));
@@ -190,12 +190,30 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       watch: async () => undefined,
       typing: async () => undefined,
       sendMedia: async (_jid, file) => void sentMedia.push(file),
+      sendPoll: async () => undefined,
+      vote: async () => null,
+      sendLocation: async () => undefined,
+      sendContacts: async () => undefined,
+      sendSticker: async () => undefined,
+      stickers: () => [],
+      star: async () => ({ synced: true }),
+      pin: async () => undefined,
+      openChat: async () => null,
+      setBlocked: async () => undefined,
+      setEphemeral: async () => undefined,
+      syncUnread: () => undefined,
+      createGroup: async () => null,
+      updateParticipants: async () => [],
+      updateGroupInfo: async () => undefined,
+      acceptInvite: async () => null,
       deleteMessage: async () => ({ synced: true }),
       participants: async () => [],
       profile: async () => ({}),
       photo: async () => null,
       markRead: async () => undefined,
       syncArchive: () => undefined,
+      syncMute: () => undefined,
+      syncPin: () => undefined,
       classify: async () => null,
       saveSettings: () => undefined,
       logout: async () => undefined,

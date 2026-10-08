@@ -1,4 +1,4 @@
-// Ponte mínima entre a página e o app desktop: atualização, versão e atalhos da bandeja/notificação.
+// Ponte mínima entre a página e o app desktop: atualização, versão, contas e atalhos da bandeja/notificação.
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("desktop", {
@@ -9,13 +9,23 @@ contextBridge.exposeInMainWorld("desktop", {
   installVersion: (version: string) => ipcRenderer.invoke("update:install-version", version),
   appInfo: () => ipcRenderer.invoke("app:info"),
   setUnread: (total: number, image: string | null) => ipcRenderer.send("app:unread", total, image),
+  copyFile: (chatJid: string, id: string) => ipcRenderer.invoke("media:copy-file", chatJid, id),
+  openFile: (chatJid: string, id: string) => ipcRenderer.invoke("media:open", chatJid, id),
   onOpenChat: (callback: (jid: string) => void) => {
     const listener = (_event: unknown, jid: string) => callback(jid);
     ipcRenderer.on("app:open-chat", listener);
     return () => ipcRenderer.removeListener("app:open-chat", listener);
   },
-  onOpenSettings: (callback: () => void) => {
-    const listener = () => callback();
+  accountInfo: () => ipcRenderer.invoke("account:info"),
+  renameAccount: (name: string) => ipcRenderer.invoke("account:rename", name),
+  addAccount: () => ipcRenderer.invoke("account:add"),
+  onAccount: (callback: (info: unknown) => void) => {
+    const listener = (_event: unknown, info: unknown) => callback(info);
+    ipcRenderer.on("app:account", listener);
+    return () => ipcRenderer.removeListener("app:account", listener);
+  },
+  onOpenSettings: (callback: (tab?: string) => void) => {
+    const listener = (_event: unknown, tab?: string) => callback(tab);
     ipcRenderer.on("app:open-settings", listener);
     return () => ipcRenderer.removeListener("app:open-settings", listener);
   },

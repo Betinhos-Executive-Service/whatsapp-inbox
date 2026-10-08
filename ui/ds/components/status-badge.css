@@ -1,0 +1,26 @@
+/* StatusBadge: cinco tons, cada um um par texto/fundo de tokens. */
+.bt-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bt-space-1-5);
+  max-width: 100%;
+  min-height: var(--bt-badge-height);
+  padding: 0 var(--bt-space-2);
+  border-radius: var(--bt-badge-radius);
+  font-family: var(--bt-font-family-sans);
+  font-size: var(--bt-font-size-11);
+  font-weight: var(--bt-font-weight-extrabold);
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.bt-badge__label { overflow: hidden; text-overflow: ellipsis; }
+.bt-badge__dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: var(--bt-radius-full); background-color: currentColor; }
+.bt-badge__icon { flex: 0 0 auto; display: grid; place-items: center; line-height: 0; }
+.bt-badge__icon > svg { width: 12px; height: 12px; }
+
+.bt-badge--neutral { color: var(--bt-color-text-primary); background-color: var(--bt-color-border); }
+.bt-badge--info { color: var(--bt-color-action); background-color: var(--bt-color-action-soft); }
+.bt-badge--success { color: var(--bt-color-success); background-color: var(--bt-color-success-soft); }
+.bt-badge--warning { color: var(--bt-color-warning); background-color: var(--bt-color-warning-soft); }
+.bt-badge--danger { color: var(--bt-color-danger); background-color: var(--bt-color-danger-soft); }

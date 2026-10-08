@@ -1,0 +1,24 @@
+/* SearchBox: caixa .bt-control com lupa à esquerda e limpar à direita. */
+.bt-control--search .bt-control__input { padding-left: var(--bt-space-2); }
+.bt-control--search .bt-control__input::-webkit-search-cancel-button, .bt-control--search .bt-control__input::-webkit-search-decoration { appearance: none; display: none; }
+.bt-search__icon { flex: 0 0 auto; display: grid; place-items: center; padding-left: var(--bt-space-3); color: var(--bt-color-text-secondary); }
+.bt-control--search:focus-within .bt-search__icon { color: var(--bt-color-action); }
+.bt-search__spinner { animation: bt-search-spin 800ms linear infinite; }
+@keyframes bt-search-spin { to { transform: rotate(360deg); } }
+.bt-search__clear { flex: 0 0 auto; display: grid; place-items: center; width: 28px; height: 28px; margin-right: var(--bt-space-1-5); padding: 0; border: 0; border-radius: var(--bt-radius-full); background: transparent; color: var(--bt-color-text-secondary); cursor: pointer; }
+.bt-search__clear:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--bt-focus-border); }
+.bt-search__status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.bt-control--compact .bt-search__icon { padding-left: var(--bt-space-2-5); }
+.bt-control--compact .bt-search__icon svg { width: 16px; height: 16px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .bt-search__clear:hover { background-color: var(--bt-color-surface-soft); color: var(--bt-color-text-primary); }
+}
+
+@media (pointer: coarse) {
+  .bt-control--search:not(.bt-control--compact) { min-height: var(--bt-control-height-touch); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bt-search__spinner { animation-duration: 2.4s; }
+}

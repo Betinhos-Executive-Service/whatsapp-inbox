@@ -5,15 +5,77 @@ import { z } from "zod";
 import { claudeOptionsSchema, type ClaudeOptions } from "./claude.ts";
 import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
 import { STATUSES, type Store } from "./db.ts";
+import { linkPreview } from "./link-preview.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
+
+/** Documento sem tipo (octet-stream): deduz pela extensão os formatos que a visualização abre. */
+const TYPE_BY_EXT: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".txt": "text/plain; charset=utf-8",
+  ".csv": "text/csv; charset=utf-8",
+};
+/** Extensão pelo tipo, para foto, áudio e vídeo (o WhatsApp não manda nome de arquivo para eles). */
+const EXT_BY_TYPE: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "video/mp4": ".mp4",
+  "video/3gpp": ".3gp",
+  "audio/ogg": ".ogg",
+  "audio/mpeg": ".mp3",
+  "audio/mp4": ".m4a",
+  "audio/aac": ".aac",
+  "application/pdf": ".pdf",
+};
+
+/** Nome do arquivo baixado: o original, ou "arquivo" + extensão do tipo; sem extensão o Windows não sabe abrir. */
+export function downloadName(mimetype: string, fileName: string | null): string {
+  const base = fileName?.trim() || "arquivo";
+  if (extname(base)) return base;
+  return base + (EXT_BY_TYPE[mimetype.split(";")[0].trim().toLowerCase()] ?? "");
+}
+
+export function servedType(mimetype: string, fileName: string | null): string {
+  if (mimetype && mimetype !== "application/octet-stream") return mimetype;
+  return TYPE_BY_EXT[extname(fileName ?? "").toLowerCase()] ?? (mimetype || "application/octet-stream");
+}
 
 export type Api = {
   store: Store;
   distDir: string;
   port: number;
   state: () => unknown;
-  send: (jid: string, text: string, opts: { quotedId?: string; mentions?: string[]; mentionAll?: boolean }) => Promise<void>;
+  /** `quotedChat`: a mensagem citada é de outra conversa (responder em particular a alguém do grupo). */
+  send: (jid: string, text: string, opts: { quotedId?: string; quotedChat?: string; mentions?: string[]; mentionAll?: boolean }) => Promise<void>;
   sendMedia: (jid: string, file: { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number }, quotedId?: string) => Promise<void>;
+  sendPoll: (jid: string, question: string, options: string[], multiple: boolean) => Promise<void>;
+  vote: (jid: string, id: string, options: string[]) => Promise<unknown>;
+  sendLocation: (jid: string, place: { lat: number; lng: number; name?: string; address?: string }) => Promise<void>;
+  sendContacts: (jid: string, contacts: { name: string; phone: string }[]) => Promise<void>;
+  /** Reenvia como figurinha uma figurinha já recebida. */
+  sendSticker: (jid: string, from: { chatJid: string; id: string }) => Promise<void>;
+  /** Figurinhas recebidas mais recentes, para escolher e enviar. */
+  stickers: () => unknown;
+  /** Favoritar; synced = o celular também recebeu. */
+  star: (jid: string, id: string, starred: boolean) => Promise<{ synced: boolean }>;
+  /** Fixar por `seconds` ou desafixar (null). */
+  pin: (jid: string, id: string, seconds: number | null) => Promise<void>;
+  /** Abre (ou começa) a conversa com um número ou JID; o número é conferido no WhatsApp. */
+  openChat: (target: { phone?: string; jid?: string }) => Promise<unknown>;
+  setBlocked: (jid: string, blocked: boolean) => Promise<void>;
+  setEphemeral: (jid: string, seconds: number) => Promise<void>;
+  /** Marcar como lida/não lida também no celular (sem bloquear a tela). */
+  syncUnread: (jid: string, unread: boolean) => void;
+  createGroup: (subject: string, participants: string[]) => Promise<unknown>;
+  updateParticipants: (jid: string, participants: string[], action: "add" | "remove" | "promote" | "demote") => Promise<unknown>;
+  updateGroupInfo: (jid: string, info: { subject?: string; description?: string }) => Promise<void>;
+  acceptInvite: (jid: string, id: string) => Promise<unknown>;
   /** everyone = apagar para todos; me = só deste lado. synced = o celular também apagou. */
   deleteMessage: (jid: string, id: string, mode: "everyone" | "me") => Promise<{ synced: boolean }>;
   participants: (jid: string) => Promise<unknown>;
@@ -30,6 +92,8 @@ export type Api = {
   markRead: (jid: string) => Promise<void>;
   /** Leva ao celular o arquivar/desarquivar feito aqui (sem bloquear a tela). */
   syncArchive: (jid: string, archived: boolean) => void;
+  syncMute: (jid: string, until: number | null) => void;
+  syncPin: (jid: string, pinned: boolean) => void;
   classify: (jid: string) => Promise<unknown>;
   saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
@@ -43,7 +107,7 @@ export type Api = {
   summarizeAudio: (jid: string, id: string, force?: boolean) => Promise<unknown>;
   ai: {
     status: () => unknown;
-    draft: (jid: string) => Promise<string>;
+    draft: (jid: string, text?: string) => Promise<string>;
     summarize: (jid: string) => Promise<unknown>;
     setInstructions: (text: string | null) => void;
     setProvider: (provider: "deepseek" | "claude") => void;
@@ -98,7 +162,38 @@ const chatPatchSchema = z.object({
   mutedUntil: z.number().int().positive().nullable().optional(),
   snoozedUntil: z.number().int().positive().nullable().optional(),
   autoTranscribe: z.enum(["on", "off"]).nullable().optional(),
+  markedUnread: z.boolean().optional(),
 });
+
+/** Prazos que o WhatsApp aceita: mensagens temporárias e mensagem fixada. */
+const EPHEMERAL_SECONDS = [0, 86400, 604800, 7776000] as const;
+const PIN_SECONDS = [86400, 604800, 2592000] as const;
+
+const pollSchema = z.object({
+  question: z.string().trim().min(1, "Escreva a pergunta.").max(255),
+  options: z
+    .array(z.string().trim().min(1).max(100))
+    .min(2, "A enquete precisa de pelo menos duas opções.")
+    .max(12, "A enquete aceita até 12 opções.")
+    .refine((l) => new Set(l.map((o) => o.toLowerCase())).size === l.length, "Há opções repetidas."),
+  multiple: z.boolean(),
+});
+
+const locationSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  name: z.string().trim().max(200).optional(),
+  address: z.string().trim().max(300).optional(),
+});
+
+
+const openChatSchema = z.union([
+  z.object({ phone: z.string().trim().min(1).max(40) }),
+  z.object({ jid: z.string().regex(/^[\w.:-]+@(s\.whatsapp\.net|lid)$/, "Contato inválido.") }),
+]);
+
+const participantJids = z.array(z.string().regex(/^[\w.:-]+@(s\.whatsapp\.net|lid)$/, "Participante inválido.")).min(1).max(256);
+const draftSchema = z.object({ text: z.string().max(10000).optional() });
 
 const reminderSchema = z.object({
   dueAt: z.number().int().positive(),
@@ -146,6 +241,7 @@ const sendMediaSchema = z.object({
 const sendSchema = z.object({
   text: z.string().trim().min(1).max(4096),
   quotedId: z.string().min(1).max(200).optional(),
+  quotedChat: z.string().min(1).max(200).optional(),
   mentions: z.array(z.string().regex(/^[\w.:-]+@(s\.whatsapp\.net|lid)$/, "Menção inválida.")).max(256).optional(),
   /** "@todos": menciona o grupo inteiro. */
   mentionAll: z.boolean().optional(),
@@ -218,9 +314,22 @@ export function createHandler(api: Api) {
     if (path === "/api/events" && method === "GET") return api.subscribe(res);
     if (path === "/api/state" && method === "GET") return json(res, 200, api.state());
     if (path === "/api/chats" && method === "GET") return json(res, 200, store.listChats());
+    if (path === "/api/link-preview" && method === "GET") {
+      const target = url.searchParams.get("url") ?? "";
+      if (!/^https?:\/\//i.test(target) || target.length > 2048) throw new HttpError(400, "Link inválido.");
+      return json(res, 200, await linkPreview(target));
+    }
+
     if (path === "/api/search" && method === "GET") {
       const q = (url.searchParams.get("q") ?? "").slice(0, 200);
       return json(res, 200, store.search(q));
+    }
+    if (path === "/api/starred" && method === "GET") return json(res, 200, store.listStarred());
+    if (path === "/api/stickers" && method === "GET") return json(res, 200, api.stickers());
+    if (path === "/api/open-chat" && method === "POST") return json(res, 200, await api.openChat(parse(openChatSchema, await readJson(req))));
+    if (path === "/api/groups" && method === "POST") {
+      const { subject, participants } = parse(z.object({ subject: z.string().trim().min(1, "Dê um nome ao grupo.").max(100), participants: participantJids }), await readJson(req));
+      return json(res, 201, await api.createGroup(subject, participants));
     }
 
     if (jid) {
@@ -231,9 +340,14 @@ export function createHandler(api: Api) {
         if (patch.label && !known.has(patch.label)) throw new HttpError(400, "Etiqueta não cadastrada.");
         if (patch.extraLabels?.some((l) => !known.has(l))) throw new HttpError(400, "Etiqueta não cadastrada.");
         if (patch.snoozedUntil && patch.snoozedUntil <= Date.now()) throw new HttpError(400, "Escolha um horário no futuro para adiar.");
-        store.updateChat(jid, patch);
+        // "Marcar como lida" zera as não lidas e manda os recibos, como abrir a conversa.
+        if (patch.markedUnread === false) await api.markRead(jid);
+        store.updateChat(jid, { ...patch, markedUnread: patch.markedUnread || undefined });
         if (patch.note !== undefined) store.setNote(jid, patch.note);
         if (patch.archived !== undefined) api.syncArchive(jid, patch.archived);
+        if (patch.mutedUntil !== undefined) api.syncMute(jid, patch.mutedUntil);
+        if (patch.pinned !== undefined) api.syncPin(jid, patch.pinned);
+        if (patch.markedUnread) api.syncUnread(jid, true);
         api.onChatChanged(jid);
         return json(res, 200, store.getChat(jid));
       }
@@ -259,11 +373,81 @@ export function createHandler(api: Api) {
         await api.sendMedia(jid, { ...file, body }, quotedId);
         return json(res, 200, store.getChat(jid));
       }
-      if (action === "/send" && method === "POST") {
-        const { text, quotedId, mentions, mentionAll } = parse(sendSchema, await readJson(req));
-        if (quotedId && !store.messageKey(jid, quotedId)) throw new HttpError(404, "A mensagem respondida não está mais salva.");
-        await api.send(jid, text, { quotedId, mentions, mentionAll });
+      if (action === "/send-contacts" && method === "POST") {
+        const { contacts } = parse(
+          z.object({ contacts: z.array(z.object({ name: z.string().trim().min(1).max(200), phone: z.string().regex(/^\d{8,15}$/, "Número inválido.") })).min(1).max(20) }),
+          await readJson(req),
+        );
+        await api.sendContacts(jid, contacts);
         return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/send" && method === "POST") {
+        const { text, quotedId, quotedChat, mentions, mentionAll } = parse(sendSchema, await readJson(req));
+        if (quotedId && !store.messageKey(quotedChat ?? jid, quotedId)) throw new HttpError(404, "A mensagem respondida não está mais salva.");
+        await api.send(jid, text, { quotedId, quotedChat, mentions, mentionAll });
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/poll" && method === "POST") {
+        const { question, options, multiple } = parse(pollSchema, await readJson(req));
+        await api.sendPoll(jid, question, options, multiple);
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/vote" && method === "POST") {
+        const { id, options } = parse(z.object({ id: z.string().min(1).max(200), options: z.array(z.string().max(100)).max(12) }), await readJson(req));
+        return json(res, 200, await api.vote(jid, id, options));
+      }
+      if (action === "/location" && method === "POST") {
+        await api.sendLocation(jid, parse(locationSchema, await readJson(req)));
+        return json(res, 200, store.getChat(jid));
+      }
+
+      if (action === "/sticker" && method === "POST") {
+        const from = parse(z.object({ chatJid: z.string().regex(JID, "Conversa inválida."), id: z.string().min(1).max(200) }), await readJson(req));
+        await api.sendSticker(jid, from);
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/star" && method === "POST") {
+        const { id, starred } = parse(z.object({ id: z.string().min(1).max(200), starred: z.boolean() }), await readJson(req));
+        if (!store.messageKey(jid, id)) throw new HttpError(404, "Mensagem não encontrada.");
+        const { synced } = await api.star(jid, id, starred);
+        return json(res, 200, { message: store.getMessage(jid, id), synced });
+      }
+      if (action === "/pin" && method === "POST") {
+        const { id, seconds } = parse(
+          z.object({ id: z.string().min(1).max(200), seconds: z.union([z.literal(PIN_SECONDS[0]), z.literal(PIN_SECONDS[1]), z.literal(PIN_SECONDS[2])]).nullable() }),
+          await readJson(req),
+        );
+        if (!store.messageKey(jid, id)) throw new HttpError(404, "Mensagem não encontrada.");
+        await api.pin(jid, id, seconds);
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/ephemeral" && method === "POST") {
+        const { seconds } = parse(
+          z.object({ seconds: z.union([z.literal(EPHEMERAL_SECONDS[0]), z.literal(EPHEMERAL_SECONDS[1]), z.literal(EPHEMERAL_SECONDS[2]), z.literal(EPHEMERAL_SECONDS[3])]) }),
+          await readJson(req),
+        );
+        await api.setEphemeral(jid, seconds);
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/block" && method === "POST") {
+        const { blocked } = parse(z.object({ blocked: z.boolean() }), await readJson(req));
+        await api.setBlocked(jid, blocked);
+        return json(res, 200, { blocked });
+      }
+      if (action === "/participants" && method === "POST") {
+        const body = parse(z.object({ action: z.enum(["add", "remove", "promote", "demote"]), participants: participantJids }), await readJson(req));
+        if (!jid.endsWith("@g.us")) throw new HttpError(400, "Só grupos têm participantes.");
+        return json(res, 200, await api.updateParticipants(jid, body.participants, body.action));
+      }
+      if (action === "/group-info" && method === "POST") {
+        const info = parse(z.object({ subject: z.string().trim().min(1, "O grupo precisa de um nome.").max(100).optional(), description: z.string().trim().max(2048).optional() }), await readJson(req));
+        if (!jid.endsWith("@g.us")) throw new HttpError(400, "Só grupos têm nome e descrição.");
+        await api.updateGroupInfo(jid, info);
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/accept-invite" && method === "POST") {
+        const { id } = parse(z.object({ id: z.string().min(1).max(200) }), await readJson(req));
+        return json(res, 200, await api.acceptInvite(jid, id));
       }
       if (action === "/delete" && method === "POST") {
         const { id, mode } = parse(z.object({ id: z.string().min(1).max(200), mode: z.enum(["everyone", "me"]) }), await readJson(req));
@@ -306,8 +490,8 @@ export function createHandler(api: Api) {
         return json(res, 201, reminder);
       }
       if (action === "/draft" && method === "POST") {
-        await readJson(req);
-        return json(res, 200, { text: await api.ai.draft(jid) });
+        const body = parse(draftSchema, await readJson(req));
+        return json(res, 200, { text: await api.ai.draft(jid, body.text) });
       }
       if (action === "/summary" && method === "POST") {
         await readJson(req);
@@ -419,16 +603,18 @@ export function createHandler(api: Api) {
       });
       return json(res, 200, { text });
     }
-    const mediaMatch = path.match(/^\/api\/media\/([^/]+)\/([^/]+)$/);
+    // O último trecho opcional é só o nome do arquivo (título no visualizador de PDF); não muda o conteúdo.
+    const mediaMatch = path.match(/^\/api\/media\/([^/]+)\/([^/]+)(?:\/[^/]+)?$/);
     if (mediaMatch && method === "GET") {
       const file = await api.media(decodeURIComponent(mediaMatch[1]), decodeURIComponent(mediaMatch[2])).catch((error: Error) => {
         if (error instanceof HttpError) throw error;
         throw new HttpError(502, `Não foi possível baixar a mídia. Ela pode ter expirado no WhatsApp. (${error.message})`);
       });
       // A mídia de uma mensagem nunca muda: o navegador pode guardar sem revalidar.
-      const headers: Record<string, string> = { "content-type": file.mimetype, "cache-control": "private, max-age=31536000, immutable", "accept-ranges": "bytes" };
+      // nosniff: o arquivo abre na visualização só pelo tipo declarado (um "PDF" com HTML dentro não vira página).
+      const headers: Record<string, string> = { "content-type": servedType(file.mimetype, file.fileName), "cache-control": "private, max-age=31536000, immutable", "accept-ranges": "bytes", "x-content-type-options": "nosniff" };
       if (url.searchParams.has("download")) {
-        headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName ?? "arquivo")}`;
+        headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName(file.mimetype, file.fileName))}`;
       }
       const size = file.body.length;
       const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");

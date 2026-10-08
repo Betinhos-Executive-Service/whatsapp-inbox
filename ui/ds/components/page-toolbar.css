@@ -1,0 +1,12 @@
+/* PageToolbar: filtros da tela ou barra utilitária do ambiente, logo abaixo do PageHeader. */
+.bt-page-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--bt-space-2); min-height: var(--bt-layout-toolbar-min-height); font-family: var(--bt-font-family-sans); }
+.bt-page-toolbar__start, .bt-page-toolbar__end { display: flex; align-items: center; flex-wrap: wrap; gap: var(--bt-space-2); min-width: 0; }
+.bt-page-toolbar__end { margin-left: auto; }
+.bt-page-toolbar--utility { gap: var(--bt-space-1-5); margin-bottom: var(--bt-space-3); }
+.bt-page-toolbar--utility .bt-page-toolbar__start, .bt-page-toolbar--utility .bt-page-toolbar__end { gap: var(--bt-space-1-5); }
+
+@media (max-width: 820px) {
+  .bt-page-toolbar--utility { display: none; }
+  .bt-page-toolbar--filters { align-items: stretch; }
+  .bt-page-toolbar--filters .bt-page-toolbar__end { margin-left: 0; }
+}

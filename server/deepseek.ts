@@ -4,7 +4,7 @@
 import { z } from "zod";
 import type { Label, LabelExample, Message } from "./db.ts";
 import type { TokenUsage } from "./pricing.ts";
-import { audioSummaryPrompt, parseAudioSummary, type AudioSummary, draftPrompt, guardDraft, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
+import { audioSummaryPrompt, parseAudioSummary, type AudioSummary, draftPrompt, guardDraft, polishPrompt, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
 import { buildState, PRIORITIES, PRIORITY_CRITERIA, type Classification } from "./jev.ts";
 
 /** Modelos da DeepSeek que o app oferece. Os dois têm contexto de 1M tokens. */
@@ -131,8 +131,12 @@ export class DeepSeekAI {
   }
 
   /** Rascunho de resposta para a última mensagem do contato. Nunca envia sozinho. */
-  async draft(apiKey: string, contactName: string, messages: Message[], instructions: string): Promise<{ text: string; usage: TokenUsage }> {
+  async draft(apiKey: string, contactName: string, messages: Message[], instructions: string, own = ""): Promise<{ text: string; usage: TokenUsage }> {
     const window = this.window;
+    if (own.trim()) {
+      const { text, usage } = await this.complete(apiKey, polishPrompt(contactName, messages, own, window), "draft");
+      return { text: unquote(text), usage };
+    }
     const { text, usage } = await this.complete(apiKey, draftPrompt(contactName, messages, instructions, true, window), "draft");
     return { text: guardDraft(unquote(text), plainTranscript(contactName, messages, window)), usage };
   }

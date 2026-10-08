@@ -3,7 +3,7 @@
 // pnpm release  → nova versão no GitHub Releases; os apps instalados avisam e atualizam
 import { execFileSync, spawn } from "node:child_process";
 import { statSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { copyFile, rm } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import * as esbuild from "esbuild";
 import { writeIcon } from "./icon.mjs";
@@ -56,6 +56,27 @@ await esbuild.build({
   format: "cjs",
   external: ["electron"],
 });
+await esbuild.build({
+  ...nodeOptions,
+  entryPoints: [resolve(root, "desktop/rail-preload.ts")],
+  outfile: resolve(root, "dist-electron/rail-preload.cjs"),
+  format: "cjs",
+  external: ["electron"],
+});
+// Trilho de contas: página própria da janela, com as várias contas ao lado.
+await esbuild.build({
+  entryPoints: { rail: resolve(root, "desktop/rail/rail.ts"), "rail-style": resolve(root, "desktop/rail/rail.css") },
+  outdir: resolve(root, "dist/rail"),
+  bundle: true,
+  format: "iife",
+  target: "es2022",
+  minify: true,
+  legalComments: "none",
+  loader: { ".woff2": "file" },
+  assetNames: "assets/[name]-[hash]",
+  logLevel: "warning",
+});
+await copyFile(resolve(root, "desktop/rail/index.html"), resolve(root, "dist/rail/index.html"));
 console.log(`Build v${build.version} compilado em ${Math.round(performance.now() - started)} ms`);
 
 if (runOnly) {
@@ -86,7 +107,7 @@ async function publishRelease(version, files) {
   const assets = [...files.filter((f) => /\.(exe|blockmap)$/.test(f)), resolve(root, "release", "latest.yml")];
   git("fetch", "--tags", "--quiet");
   const previous = git("tag", "--list", "v*", "--sort=-v:refname").split(/\r?\n/).find((t) => t && t !== tag);
-  const changes = git("log", "--pretty=- %s", previous ? `${previous}..HEAD` : "HEAD")
+  const changes = git("log", "--no-merges", "--pretty=- %s", previous ? `${previous}..HEAD` : "HEAD")
     .split(/\r?\n/)
     .filter((l) => l && !l.startsWith("- release:") && !l.startsWith("- chore:"))
     .join("\n");

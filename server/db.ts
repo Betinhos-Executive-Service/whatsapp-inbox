@@ -1,5 +1,7 @@
+import type { ContactCard } from "./contacts.ts";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { Provider, TokenUsage, UsageKind } from "./pricing.ts";
+import type { Extra } from "./text.ts";
 
 export const STATUSES = ["aberta", "aguardando", "resolvida"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -45,7 +47,15 @@ export type Chat = {
   snoozedUntil: number | null;
   /** Transcrição automática dos áudios recebidos: null segue a opção global. */
   autoTranscribe: AutoTranscribe | null;
+  /** Marcada como não lida (aqui ou no celular), mesmo sem mensagem nova. */
+  markedUnread: boolean;
+  /** Mensagens temporárias: prazo em segundos; null = desligadas. */
+  ephemeral: number | null;
+  /** Mensagens fixadas na conversa que ainda valem, a mais recente primeiro. */
+  pins: PinnedRef[];
 };
+
+export type PinnedRef = { id: string; until: number; text: string | null; fromMe: boolean };
 
 export type AutoTranscribe = "on" | "off";
 
@@ -62,6 +72,7 @@ export type ChatPatch = {
   mutedUntil?: number | null;
   snoozedUntil?: number | null;
   autoTranscribe?: AutoTranscribe | null;
+  markedUnread?: boolean;
 };
 
 /** Uma chamada de IA (Jev, DeepSeek ou local) registrada para o painel de gastos. */
@@ -110,6 +121,8 @@ export type Message = {
   at: number;
   text: string;
   kind: string;
+  /** Cartões de contato recebidos ou enviados. */
+  contacts: ContactCard[] | null;
   /** Mídia baixável (sem as chaves, que ficam só no banco). */
   media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
   /** Mensagem respondida (citação). */
@@ -122,7 +135,15 @@ export type Message = {
   ack: number | null;
   editedAt: number | null;
   reactions: { emoji: string; fromMe: boolean }[];
+  /** Enquete, localização, contato, evento, convite, ligação ou prévia de link (sem segredos). */
+  extra: Extra | null;
+  /** Só em enquete: votos somados por opção. */
+  poll: PollResult | null;
+  /** Favoritada (estrela). */
+  starred: boolean;
 };
+
+export type PollResult = { options: { name: string; count: number; mine: boolean; voters: string[] }[]; voters: number };
 
 export type QuotedRef = { id: string; text: string; fromMe: boolean; author: string | null };
 
@@ -134,15 +155,21 @@ export type LabelExample = { label: string; snippet: string };
 
 export type Label = { name: string; description: string };
 
-export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "sender" | "ack" | "editedAt" | "reactions"> & {
+export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "sender" | "ack" | "editedAt" | "reactions" | "contacts" | "extra" | "poll" | "starred"> & {
   rawJid: string;
   participant?: string | null;
   media?: string | null;
   /** QuotedRef em JSON. */
   quoted?: string | null;
+  /** Extra em JSON (a enquete guarda o segredo dos votos aqui). */
+  extra?: string | null;
   ack?: number | null;
+  /** ContactCard[] em JSON (mensagem de contato). */
+  contacts?: string | null;
   /** Mensagem enviada já serializada (proto), para reenviar quando o WhatsApp pedir retry. */
   raw?: Uint8Array | null;
+  /** Aviso (entrou no grupo, temporárias…): aparece, mas não conta como não lida nem reabre a conversa. */
+  silent?: boolean;
 };
 
 const DEFAULT_LABELS: Label[] = [
@@ -252,6 +279,21 @@ create table if not exists chat_labels (
   label text not null,
   primary key (chat_jid, label)
 );
+create table if not exists poll_votes (
+  chat_jid text not null references chats(jid) on delete cascade on update cascade,
+  poll_id text not null,
+  voter text not null,
+  options text not null,
+  at integer not null,
+  primary key (chat_jid, poll_id, voter)
+);
+create table if not exists pins (
+  chat_jid text not null references chats(jid) on delete cascade on update cascade,
+  message_id text not null,
+  until integer not null,
+  at integer not null,
+  primary key (chat_jid, message_id)
+);
 `;
 
 /** Busca no histórico: índice de texto sem acento, mantido por gatilhos. */
@@ -281,15 +323,23 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
   ["messages", "edited_at", "integer"],
   ["messages", "raw", "blob"],
   ["messages", "unread", "integer not null default 0"],
+  ["messages", "contacts", "text"],
   ["chats", "pinned_at", "integer"],
   ["chats", "archived", "integer not null default 0"],
   ["chats", "muted_until", "integer"],
   ["chats", "snoozed_until", "integer"],
   ["chats", "auto_transcribe", "text"],
+  ["messages", "extra", "text"],
+  ["messages", "starred", "integer not null default 0"],
+  ["chats", "marked_unread", "integer not null default 0"],
+  ["chats", "ephemeral", "integer"],
 ];
 
 const CHAT_SELECT = `select c.*,
   (select min(due_at) from reminders r where r.chat_jid = c.jid and r.done_at is null) as reminder_at,
+  (select json_group_array(json_object('id', p.message_id, 'until', p.until, 'at', p.at, 'text', m.text, 'fromMe', m.from_me))
+     from pins p left join messages m on m.chat_jid = p.chat_jid and m.id = p.message_id
+     where p.chat_jid = c.jid and p.until > unixepoch() * 1000) as pins,
   (select count(*) from ai_usage u where u.chat_jid = c.jid) as ai_calls,
   (select coalesce(sum(input_tokens + output_tokens), 0) from ai_usage u where u.chat_jid = c.jid) as ai_tokens,
   (select coalesce(sum(cost_usd), 0) from ai_usage u where u.chat_jid = c.jid) as ai_cost,
@@ -340,7 +390,33 @@ function toChat(r: Row): Chat {
     mutedUntil: r.muted_until == null ? null : Number(r.muted_until),
     snoozedUntil: r.snoozed_until == null ? null : Number(r.snoozed_until),
     autoTranscribe: r.auto_transcribe === "on" || r.auto_transcribe === "off" ? r.auto_transcribe : null,
+    markedUnread: r.marked_unread === 1,
+    ephemeral: r.ephemeral == null || Number(r.ephemeral) <= 0 ? null : Number(r.ephemeral),
+    pins: parsePins(r.pins),
   };
+}
+
+function parsePins(raw: unknown): PinnedRef[] {
+  if (typeof raw !== "string") return [];
+  try {
+    return (JSON.parse(raw) as { id: string; until: number; at: number; text: string | null; fromMe: number | null }[])
+      .filter((p) => Number(p.until) > Date.now())
+      .sort((a, b) => b.at - a.at)
+      .map((p) => ({ id: String(p.id), until: Number(p.until), text: p.text ?? null, fromMe: p.fromMe === 1 }));
+  } catch {
+    return [];
+  }
+}
+
+/** Extra da mensagem para a tela: a enquete perde o segredo dos votos. */
+function parseExtra(raw: unknown): Extra | null {
+  if (typeof raw !== "string") return null;
+  try {
+    const extra = JSON.parse(raw) as Extra;
+    return extra.type === "poll" ? { ...extra, secret: null } : extra;
+  } catch {
+    return null;
+  }
 }
 
 function toReminder(r: Row): Reminder {
@@ -353,7 +429,7 @@ function toReminder(r: Row): Reminder {
   };
 }
 
-function toMessage(r: Row, reactions: Message["reactions"] = []): Message {
+function toMessage(r: Row, reactions: Message["reactions"] = [], poll: PollResult | null = null): Message {
   let media: Message["media"] = null;
   if (typeof r.media === "string") {
     try {
@@ -372,6 +448,14 @@ function toMessage(r: Row, reactions: Message["reactions"] = []): Message {
       quoted = null;
     }
   }
+  let contacts: ContactCard[] | null = null;
+  if (typeof r.contacts === "string") {
+    try {
+      contacts = JSON.parse(r.contacts);
+    } catch {
+      contacts = null;
+    }
+  }
   const deleted = r.deleted_at != null;
   return {
     chatJid: String(r.chat_jid),
@@ -387,13 +471,17 @@ function toMessage(r: Row, reactions: Message["reactions"] = []): Message {
     ack: r.ack == null ? null : Number(r.ack),
     editedAt: r.edited_at == null ? null : Number(r.edited_at),
     reactions: deleted ? [] : reactions,
+    contacts: deleted ? null : contacts,
+    extra: deleted ? null : parseExtra(r.extra),
+    poll: deleted ? null : poll,
+    starred: r.starred === 1,
   };
 }
 
 export const DELETED_TEXT = "Mensagem apagada";
 
 /** Colunas da mensagem para a tela (sem `raw`, que só serve ao retry). */
-const MESSAGE_COLUMNS = "chat_jid, id, participant, from_me, at, text, kind, media, quoted, deleted_at, ack, edited_at";
+const MESSAGE_COLUMNS = "chat_jid, id, participant, from_me, at, text, kind, media, quoted, deleted_at, ack, edited_at, contacts, extra, starred";
 
 export class Store {
   readonly db: DatabaseSync;
@@ -532,6 +620,7 @@ export class Store {
     if (patch.mutedUntil !== undefined) this.q("update chats set muted_until = ? where jid = ?").run(patch.mutedUntil, jid);
     if (patch.snoozedUntil !== undefined) this.q("update chats set snoozed_until = ? where jid = ?").run(patch.snoozedUntil, jid);
     if (patch.autoTranscribe !== undefined) this.q("update chats set auto_transcribe = ? where jid = ?").run(patch.autoTranscribe, jid);
+    if (patch.markedUnread !== undefined) this.q("update chats set marked_unread = ? where jid = ?").run(patch.markedUnread ? 1 : 0, jid);
     if (patch.extraLabels) {
       const list = [...new Set(patch.extraLabels)];
       this.tx(() => {
@@ -546,6 +635,23 @@ export class Store {
         .q("update chats set label = ?, label_source = ? where jid = ?")
         .run(patch.label, patch.label === null ? null : "manual", jid);
     }
+    return this.getChat(jid);
+  }
+
+  /** Tira a marca de "não lida"; devolve true se ela existia (para avisar o celular). */
+  clearMarkedUnread(jid: string): boolean {
+    return this.q("update chats set marked_unread = 0 where jid = ? and marked_unread = 1").run(jid).changes > 0;
+  }
+
+  /** Abre (ou cria) a conversa para começar a falar: entra na lista mesmo sem mensagem. */
+  openChat(jid: string): Chat {
+    this.ensureChat(jid, { status: "aberta" });
+    this.q("update chats set last_at = ? where jid = ? and last_at = 0").run(Date.now(), jid);
+    return this.getChat(jid)!;
+  }
+
+  setEphemeral(jid: string, seconds: number | null): Chat | null {
+    this.q("update chats set ephemeral = ? where jid = ? and ephemeral is not ?").run(seconds || null, jid, seconds || null);
     return this.getChat(jid);
   }
 
@@ -597,24 +703,25 @@ export class Store {
       this.ensureChat(m.chatJid, { status: live ? "aberta" : "resolvida" });
       const inserted = this
         .q(
-          `insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media, quoted, ack, raw, unread)
-           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media, quoted, ack, raw, unread, contacts, extra)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           m.chatJid, m.id, m.rawJid, m.participant ?? null, m.fromMe ? 1 : 0, m.at, m.text, m.kind, m.media ?? null, m.quoted ?? null,
-          m.fromMe ? (m.ack ?? null) : null, m.raw ?? null, live && !m.fromMe ? 1 : 0,
+          m.fromMe ? (m.ack ?? null) : null, m.raw ?? null, live && !m.fromMe && !m.silent ? 1 : 0, m.contacts ?? null, m.extra ?? null,
         );
       if (inserted.changes === 0) return false;
       this
         .q("update chats set last_at = ?, last_text = ?, last_from_me = ? where jid = ? and last_at <= ?")
         .run(m.at, m.text, m.fromMe ? 1 : 0, m.chatJid, m.at);
+      if (m.silent) return true;
       if (live && !m.fromMe) {
         this
           .q("update chats set unread = unread + 1, status = 'aberta', archived = archived * ?, snoozed_until = null where jid = ?")
           .run(this.keepArchived ? 1 : 0, m.chatJid);
       } else if (live && m.fromMe) {
         this
-          .q("update chats set unread = 0, status = case when status = 'aberta' then 'aguardando' else status end where jid = ?")
+          .q("update chats set unread = 0, marked_unread = 0, status = case when status = 'aberta' then 'aguardando' else status end where jid = ?")
           .run(m.chatJid);
       }
       return true;
@@ -650,14 +757,177 @@ export class Store {
     const at = Number(target.at);
     const older = this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at < ? order by at desc limit ?`).all(jid, at, before) as Row[];
     const newer = this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at >= ? order by at asc limit ?`).all(jid, at, max) as Row[];
-    const rows = [...older.reverse(), ...newer];
-    const reactions = this.reactionsOf(jid, rows.map((r) => String(r.id)));
-    return rows.map((r) => toMessage(r, reactions.get(String(r.id))));
+    return this.decorate(jid, [...older.reverse(), ...newer]);
   }
 
   getMessage(chatJid: string, id: string): Message | null {
     const r = this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and id = ?`).get(chatJid, id) as Row | undefined;
-    return r ? toMessage(r, this.reactionsOf(chatJid, [id]).get(id)) : null;
+    return r ? this.decorate(chatJid, [r])[0] : null;
+  }
+
+  /** Linhas do banco viram mensagens da tela, com reações e votos das enquetes. */
+  private decorate(chatJid: string, rows: Row[]): Message[] {
+    const reactions = this.reactionsOf(chatJid, rows.map((r) => String(r.id)));
+    const polls = this.pollResults(chatJid, rows.filter((r) => r.kind === "poll"));
+    return rows.map((r) => toMessage(r, reactions.get(String(r.id)), polls.get(String(r.id)) ?? null));
+  }
+
+  /** Votos somados por opção. Voto "me" é o meu; os outros mostram o nome do contato. */
+  private pollResults(chatJid: string, rows: Row[]): Map<string, PollResult> {
+    const out = new Map<string, PollResult>();
+    if (!rows.length) return out;
+    const votes = this
+      .q("select poll_id, voter, options from poll_votes where chat_jid = ? and poll_id in (select value from json_each(?)) order by at")
+      .all(chatJid, JSON.stringify(rows.map((r) => String(r.id)))) as Row[];
+    for (const r of rows) {
+      const extra = parseExtra(r.extra);
+      if (extra?.type !== "poll") continue;
+      const options = extra.options.map((name) => ({ name, count: 0, mine: false, voters: [] as string[] }));
+      let voters = 0;
+      for (const v of votes) {
+        if (v.poll_id !== r.id) continue;
+        let picked: string[] = [];
+        try {
+          picked = JSON.parse(String(v.options)) as string[];
+        } catch {
+          continue;
+        }
+        if (!picked.length) continue;
+        voters++;
+        const voter = String(v.voter);
+        const name = voter === "me" ? "Você" : (this.contactName(voter) ?? (phoneOf(voter) ? `+${phoneOf(voter)}` : "Participante"));
+        for (const o of options) {
+          if (!picked.includes(o.name)) continue;
+          o.count++;
+          o.voters.push(name);
+          if (voter === "me") o.mine = true;
+        }
+      }
+      out.set(String(r.id), { options, voters });
+    }
+    return out;
+  }
+
+  /** Voto numa enquete; lista vazia tira o voto. `voter` = "me" ou o JID do contato. Devolve a enquete atualizada. */
+  recordVote(chatJid: string, pollId: string, voter: string, options: string[], at = Date.now()): Message | null {
+    if (!options.length) this.q("delete from poll_votes where chat_jid = ? and poll_id = ? and voter = ?").run(chatJid, pollId, voter);
+    else {
+      this
+        .q(
+          `insert into poll_votes (chat_jid, poll_id, voter, options, at) values (?, ?, ?, ?, ?)
+           on conflict(chat_jid, poll_id, voter) do update set options = excluded.options, at = excluded.at where excluded.at >= poll_votes.at`,
+        )
+        .run(chatJid, pollId, voter, JSON.stringify(options), at);
+    }
+    return this.getMessage(chatJid, pollId);
+  }
+
+  /** Enquete com o segredo dos votos e a chave, para decifrar e mandar votos. */
+  pollRef(chatJid: string, id: string): (MessageKeyRef & { poll: Extract<Extra, { type: "poll" }> }) | null {
+    const key = this.messageKey(chatJid, id);
+    const r = this.q("select extra from messages where chat_jid = ? and id = ?").get(chatJid, id) as Row | undefined;
+    if (!key || typeof r?.extra !== "string") return null;
+    try {
+      const poll = JSON.parse(r.extra) as Extra;
+      return poll.type === "poll" ? { ...key, poll } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A última mensagem recebida na conversa veio pelo LID? (a conversa já está no endereço novo do WhatsApp) */
+  lastIncomingIsLid(chatJid: string): boolean {
+    const r = this.q("select raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc limit 1").get(chatJid) as Row | undefined;
+    return !!r && String(r.participant ?? r.raw_jid).endsWith("@lid");
+  }
+
+  /** Conversa da enquete pelo id: o voto pode chegar endereçado pelo LID, fora da conversa do número. */
+  pollChat(id: string): string | null {
+    const r = this.q("select chat_jid from messages where id = ? and kind = 'poll' limit 1").get(id) as Row | undefined;
+    return r ? String(r.chat_jid) : null;
+  }
+
+  /** Dado rico guardado (com segredos), para quem precisa dele no servidor. */
+  messageExtra(chatJid: string, id: string): Extra | null {
+    const r = this.q("select extra from messages where chat_jid = ? and id = ?").get(chatJid, id) as Row | undefined;
+    if (typeof r?.extra !== "string") return null;
+    try {
+      return JSON.parse(r.extra) as Extra;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Favoritar (estrela). Devolve a mensagem atualizada, ou null se não mudou. */
+  setStarred(chatJid: string, id: string, starred: boolean): Message | null {
+    const changed = this.q("update messages set starred = ? where chat_jid = ? and id = ? and starred <> ?").run(starred ? 1 : 0, chatJid, id, starred ? 1 : 0).changes;
+    return changed ? this.getMessage(chatJid, id) : null;
+  }
+
+  /** Favoritas de todas as conversas, mais recentes primeiro. */
+  listStarred(limit = 300): Message[] {
+    const rows = this.q(`select ${MESSAGE_COLUMNS} from messages where starred = 1 and deleted_at is null order by at desc limit ?`).all(limit) as Row[];
+    return rows.map((r) => this.decorate(String(r.chat_jid), [r])[0]);
+  }
+
+  /** Fixar (até `until`) ou desafixar uma mensagem. Devolve a conversa atualizada. */
+  setPin(chatJid: string, messageId: string, until: number | null, at = Date.now()): Chat | null {
+    if (!this.hasChat(chatJid)) return null;
+    if (until === null) this.q("delete from pins where chat_jid = ? and message_id = ?").run(chatJid, messageId);
+    else {
+      this
+        .q("insert into pins (chat_jid, message_id, until, at) values (?, ?, ?, ?) on conflict(chat_jid, message_id) do update set until = excluded.until, at = excluded.at")
+        .run(chatJid, messageId, until, at);
+    }
+    return this.getChat(chatJid);
+  }
+
+  /** Ligação: troca o texto e o estado. `missed` conta como não lida e reabre a conversa, como mensagem nova. */
+  updateCall(chatJid: string, id: string, text: string, extra: string, missed: boolean): { message: Message; chat: Chat } | null {
+    return this.tx(() => {
+      const changed = this.q("update messages set text = ?, extra = ?, unread = ? where chat_jid = ? and id = ?").run(text, extra, missed ? 1 : 0, chatJid, id).changes;
+      if (!changed) return null;
+      this.refreshPreview(chatJid, id, text);
+      if (missed) {
+        this
+          .q("update chats set unread = unread + 1, status = 'aberta', archived = archived * ?, snoozed_until = null where jid = ?")
+          .run(this.keepArchived ? 1 : 0, chatJid);
+      }
+      return { message: this.getMessage(chatJid, id)!, chat: this.getChat(chatJid)! };
+    });
+  }
+
+  /** Já há registro desta ligação perto desse horário? (o celular manda o registro depois do aviso ao vivo) */
+  hasCallNear(chatJid: string, at: number, windowMs = 3 * 60_000): boolean {
+    return !!this.q("select 1 from messages where chat_jid = ? and kind = 'call' and abs(at - ?) < ? limit 1").get(chatJid, at, windowMs);
+  }
+
+  /** Figurinhas mais recentes, sem repetir a mesma (mesmo tamanho de arquivo), para reenviar. */
+  listStickers(limit = 40): { chatJid: string; id: string }[] {
+    const rows = this
+      .q("select chat_jid, id, media from messages where kind = 'sticker' and media is not null and deleted_at is null order by at desc limit 500")
+      .all() as Row[];
+    const seen = new Set<string>();
+    const out: { chatJid: string; id: string }[] = [];
+    for (const r of rows) {
+      let key = String(r.id);
+      try {
+        const media = JSON.parse(String(r.media)) as { size?: number | null; mediaKey?: string };
+        key = media.size ? `size:${media.size}` : key;
+      } catch {
+        continue;
+      }
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ chatJid: String(r.chat_jid), id: String(r.id) });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  lidForPn(pn: string): string | null {
+    const r = this.q("select lid from lid_map where pn = ? limit 1").get(pn) as Row | undefined;
+    return r ? String(r.lid) : null;
   }
 
   /** Chave da mensagem no WhatsApp: para citar (responder) ou apagar. */
@@ -691,6 +961,8 @@ export class Store {
       const gone = this.q("delete from messages where chat_jid = ? and id = ?").run(jid, id).changes > 0;
       if (gone) {
         this.q("delete from reactions where chat_jid = ? and message_id = ?").run(jid, id);
+        this.q("delete from poll_votes where chat_jid = ? and poll_id = ?").run(jid, id);
+        this.q("delete from pins where chat_jid = ? and message_id = ?").run(jid, id);
         this.refreshLast(jid);
       }
       return gone;
@@ -708,8 +980,7 @@ export class Store {
     const rows = (before
       ? this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and at < ? order by at desc limit ?`).all(jid, before, limit)
       : this.q(`select ${MESSAGE_COLUMNS} from messages where chat_jid = ? order by at desc limit ?`).all(jid, limit)) as Row[];
-    const reactions = this.reactionsOf(jid, rows.map((r) => String(r.id)));
-    return rows.map((r) => toMessage(r, reactions.get(String(r.id)))).reverse();
+    return this.decorate(jid, rows).reverse();
   }
 
   private reactionsOf(chatJid: string, ids: string[]): Map<string, Message["reactions"]> {
@@ -846,6 +1117,8 @@ export class Store {
       this.q("update or ignore messages set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update or ignore reactions set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update or ignore chat_labels set chat_jid = ? where chat_jid = ?").run(pn, lid);
+      this.q("update or ignore poll_votes set chat_jid = ? where chat_jid = ?").run(pn, lid);
+      this.q("update or ignore pins set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update reminders set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update ai_usage set chat_jid = ? where chat_jid = ?").run(pn, lid);
       this.q("update chats set note = coalesce(note, (select note from chats where jid = ?)) where jid = ?").run(lid, pn);
@@ -1011,7 +1284,7 @@ export class Store {
   /** Apaga conversas, mensagens e contatos deste computador. Etiquetas e configurações ficam. */
   clearConversations(): void {
     this.tx(() => {
-      this.db.exec("delete from label_examples; delete from reminders; delete from messages; delete from chats; delete from contacts; delete from lid_map;");
+      this.db.exec("delete from label_examples; delete from reminders; delete from poll_votes; delete from pins; delete from messages; delete from chats; delete from contacts; delete from lid_map;");
       // A agenda precisa ser pedida de novo na próxima conexão.
       this.setSetting("contacts_backfill", null);
     });
@@ -1132,6 +1405,10 @@ export class Store {
         };
       }),
     };
+  }
+
+  listSettings(): [key: string, value: string][] {
+    return (this.q("select key, value from settings order by key").all() as Row[]).map((r) => [String(r.key), String(r.value)]);
   }
 
   getSetting(key: string): string | null {

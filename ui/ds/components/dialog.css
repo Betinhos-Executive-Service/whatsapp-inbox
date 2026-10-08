@@ -1,0 +1,17 @@
+/* Dialog: caixa centrada, entra de 95% com opacidade. */
+.bt-dialog { width: min(440px, calc(100vw - 32px)); max-width: none; margin: auto; padding: 0; border: 0; border-radius: var(--bt-radius-lg); background: var(--bt-color-surface); color: var(--bt-color-text-primary); font-family: var(--bt-font-family-sans); box-shadow: var(--bt-shadow-popover); }
+.bt-dialog::backdrop { background-color: rgba(0, 26, 61, var(--bt-opacity-backdrop)); }
+.bt-dialog[open] { animation: bt-dialog-in var(--bt-duration-normal) var(--bt-ease-out); }
+@keyframes bt-dialog-in { from { opacity: 0; transform: scale(.95); } }
+.bt-dialog__panel { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--bt-space-3); padding: var(--bt-space-5) var(--bt-space-5) var(--bt-space-4); }
+.bt-dialog__icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--bt-radius-md); color: var(--bt-color-action); background-color: var(--bt-color-action-soft); }
+.bt-dialog--danger .bt-dialog__icon { color: var(--bt-color-danger); background-color: var(--bt-color-danger-soft); }
+.bt-dialog__body { display: grid; gap: var(--bt-space-1-5); min-width: 0; }
+.bt-dialog__title { margin: 0; font-size: var(--bt-font-size-17); font-weight: var(--bt-font-weight-extrabold); line-height: 1.29; color: var(--bt-color-brand); }
+.bt-dialog__text { font-size: var(--bt-font-size-13); line-height: 1.54; color: var(--bt-color-text-secondary); }
+.bt-dialog__close { display: grid; place-items: center; width: 32px; height: 32px; margin: -6px -6px 0 0; padding: 0; border: 0; border-radius: var(--bt-radius-full); background: transparent; color: var(--bt-color-text-secondary); cursor: pointer; }
+.bt-dialog__close:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--bt-focus-border); }
+.bt-dialog__actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: var(--bt-space-2); margin-top: var(--bt-space-2); }
+@media (hover: hover) and (pointer: fine) { .bt-dialog__close:hover { background-color: var(--bt-color-surface-soft); color: var(--bt-color-text-primary); } }
+@media (max-width: 560px) { .bt-dialog__actions { flex-direction: column-reverse; } .bt-dialog__actions > * { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .bt-dialog[open] { animation: none; } }

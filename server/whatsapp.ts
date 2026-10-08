@@ -12,13 +12,34 @@ import makeWASocket, {
   normalizeMessageContent,
   proto,
   useMultiFileAuthState,
+  type WACallEvent,
   type WAMessage,
   type WASocket,
 } from "@whiskeysockets/baileys";
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
-import { extractAction, extractContext, extractMedia, extractText, revokedId, sentChangeError, viewOnceText, type Action } from "./text.ts";
+import { buildVcard, extractContacts } from "./contacts.ts";
+import { sendPreview } from "./link-preview.ts";
+import { decryptVote, encryptVote, optionsFromHashes } from "./poll.ts";
+import {
+  callText,
+  ephemeralChange,
+  ephemeralLabel,
+  extractAction,
+  extractContext,
+  extractExtra,
+  extractMedia,
+  extractPin,
+  extractText,
+  revokedId,
+  sentChangeError,
+  viewOnceText,
+  type Action,
+  type CallInfo,
+  type Extra,
+  type PinAction,
+} from "./text.ts";
 
 export type ConnectionStatus = "iniciando" | "qr" | "conectado" | "reconectando" | "desconectado";
 export type ConnectionState = { status: ConnectionStatus; qr: string | null; me: string | null; error: string | null };
@@ -28,13 +49,20 @@ const LIVE_WINDOW_MS = 2 * 60 * 1000;
 /** A agenda é pedida de novo a cada 6 h: nomes salvos no celular depois chegam sozinhos. */
 const CONTACTS_RESYNC_MS = 6 * 60 * 60 * 1000;
 const logger = pino({ level: "silent" });
+/** "Silenciar sempre" no app: a maior data possível (a mesma da tela). */
+const MUTE_FOREVER = 8_640_000_000_000_000;
+/** Fim do silêncio vindo do celular: null/0 = não silenciada; -1 = sempre. */
+const mutedUntilOf = (raw: number | { toNumber(): number } | null | undefined): number | null => {
+  const end = raw == null ? 0 : typeof raw === "object" ? raw.toNumber() : Number(raw);
+  return !end ? null : end < 0 ? MUTE_FOREVER : end;
+};
 
 /** Conversas individuais e grupos; status, listas e canais ficam de fora. */
 function isConversation(jid: string | null | undefined): jid is string {
   return !!jid && (isPnUser(jid) || isLidUser(jid) || isJidGroup(jid)) === true;
 }
 
-export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number };
+export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number; sticker?: boolean };
 /** Resposta a uma mensagem (citação) e menções com @. */
 export type SendOptions = { quoted?: MessageKeyRef | null; mentions?: string[]; mentionAll?: boolean };
 
@@ -42,8 +70,39 @@ export type Participant = { jid: string; name: string; phone: string | null; adm
 export type Profile = {
   about: string | null;
   aboutAt: number | null;
-  group: { subject: string; description: string | null; createdAt: number | null; size: number; participants: Participant[] } | null;
+  /** Contato bloqueado por este número. */
+  blocked: boolean;
+  group: {
+    subject: string;
+    description: string | null;
+    createdAt: number | null;
+    size: number;
+    participants: Participant[];
+    /** Sou admin: posso adicionar, remover e promover. */
+    meAdmin: boolean;
+    /** Só admins mudam nome e descrição. */
+    restrict: boolean;
+  } | null;
 };
+
+/** Ação em participantes do grupo e o resultado de cada um (o WhatsApp pode recusar alguns). */
+export type ParticipantAction = "add" | "remove" | "promote" | "demote";
+export type ParticipantResult = { jid: string; ok: boolean; reason: string | null };
+
+const PARTICIPANT_ERRORS: Record<string, string> = {
+  "401": "sem permissão de admin",
+  "403": "a privacidade da pessoa não deixa adicionar; mande o link de convite",
+  "404": "número sem WhatsApp",
+  "408": "saiu do grupo há pouco; mande o link de convite",
+  "409": "já está no grupo",
+  "500": "o grupo está cheio",
+};
+
+/** Avisos de grupo (messageStubType) que aparecem na conversa. */
+const STUB = { CREATE: 20, SUBJECT: 21, ICON: 22, DESCRIPTION: 24, RESTRICT: 25, ANNOUNCE: 26, ADD: 27, REMOVE: 28, PROMOTE: 29, DEMOTE: 30, INVITE: 31, LEAVE: 32, MISSED_VOICE: 40, MISSED_VIDEO: 41, MISSED_GROUP_VOICE: 45, MISSED_GROUP_VIDEO: 46, JOIN_REQUEST: 71, EPHEMERAL: 72 } as const;
+
+const joinNames = (names: string[]) => (names.length <= 1 ? (names[0] ?? "alguém") : `${names.slice(0, -1).join(", ")} e ${names[names.length - 1]}`);
+const timestamp = (m: WAMessage) => Number(m.messageTimestamp ?? 0) * 1000 || Date.now();
 
 /** Em grupo, o texto salvo começa com "Autor: "; na citação vai só o conteúdo. */
 function quoteText(ref: MessageKeyRef): string {
@@ -64,6 +123,14 @@ export class WhatsApp extends EventEmitter<{
 }> {
   state: ConnectionState = { status: "iniciando", qr: null, me: null, error: null };
   private sock: WASocket | null = null;
+  /** Arquivar/desarquivar feito aqui que ainda não chegou ao celular (ex.: faltava a chave). */
+  private pendingArchive = new Map<string, boolean>();
+  /** Silenciar à espera de conexão ou da chave do celular (fim em ms; null = reativar). */
+  private pendingMute = new Map<string, number | null>();
+  /** Fixar conversa à espera de conexão ou da chave do celular. */
+  private pendingPin = new Map<string, boolean>();
+  /** Contatos bloqueados (JID da conversa), lidos ao conectar e mantidos pelos eventos. */
+  private blocked = new Set<string>();
   private retries = 0;
   private stopped = false;
   private readonly store: Store;
@@ -142,23 +209,39 @@ export class WhatsApp extends EventEmitter<{
     const raw = m.key.remoteJid;
     // Visualização única chega sem conteúdo em aparelho conectado; só marca que existe.
     const viewOnce = !!m.key.isViewOnce && !m.message;
-    if (!isConversation(raw) || !m.key.id || (!m.message && !viewOnce)) return;
+    if (!isConversation(raw) || !m.key.id) return;
+    const chatJid = this.canonical(raw, m.key.remoteJidAlt);
+    if (!m.message && !viewOnce) {
+      // Sem conteúdo: avisos do grupo (entrou, saiu, mudou o nome…) e ligação perdida.
+      if (m.messageStubType) this.ingestStub(m, chatJid, live, quiet);
+      return;
+    }
     const content = normalizeMessageContent(m.message);
     const revoked = revokedId(content);
     if (revoked) {
-      const chatJid = this.canonical(raw, m.key.remoteJidAlt);
       const message = this.store.markRevoked(chatJid, revoked);
       if (message && !quiet) this.emit("update", { message, chat: this.store.getChat(chatJid)! });
       return;
     }
     const action = extractAction(content);
-    if (action) return this.applyAction(this.canonical(raw, m.key.remoteJidAlt), action, m, quiet);
+    if (action) return this.applyAction(chatJid, action, m, quiet);
+    const pin = extractPin({ ...content, messageContextInfo: content?.messageContextInfo ?? m.message?.messageContextInfo });
+    if (pin) return this.applyPin(chatJid, pin, m, live, quiet);
+    if (content?.pollUpdateMessage) return this.applyVote(chatJid, content.pollUpdateMessage, m, quiet);
+    const ephemeral = ephemeralChange(content);
+    if (ephemeral !== null) return this.applyEphemeral(chatJid, ephemeral, m, live, quiet);
     const extracted = viewOnce ? viewOnceText() : extractText(content);
     const media = viewOnce ? null : extractMedia(content);
     if (!extracted) return;
-    const at = Number(m.messageTimestamp ?? 0) * 1000 || Date.now();
-    const chatJid = this.canonical(raw, m.key.remoteJidAlt);
+    const at = timestamp(m);
     const group = isJidGroup(raw) === true;
+    let extra = viewOnce ? null : extractExtra(content, m.message?.messageContextInfo?.messageSecret);
+    if (extra?.type === "call") {
+      // Registro de ligação que o celular manda: o lado diz se foi feita ou recebida; o aviso ao vivo já pode ter entrado.
+      if (this.store.hasCallNear(chatJid, at)) return;
+      extra = { ...extra, outgoing: !!m.key.fromMe };
+      extracted.text = callText(extra);
+    }
     // Em grupo, o autor vai no início do texto: "Nome: mensagem".
     const author = group && !m.key.fromMe ? this.authorName(m) : null;
     const ctx = extractContext(content);
@@ -173,7 +256,12 @@ export class WhatsApp extends EventEmitter<{
       text: author ? `${author}: ${body}` : body,
       kind: extracted.kind,
       media: media ? JSON.stringify(media) : null,
+      contacts: viewOnce ? null : (() => {
+        const list = extractContacts(content);
+        return list ? JSON.stringify(list) : null;
+      })(),
       quoted: ctx.quoted ? JSON.stringify(this.quoteRef(chatJid, ctx.quoted, group)) : null,
+      extra: extra ? JSON.stringify(extra) : null,
       ack: m.key.fromMe ? (m.status ?? null) : null,
     };
     const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
@@ -188,6 +276,244 @@ export class WhatsApp extends EventEmitter<{
     const result = this.store.addMessage(incoming, isLive);
     if (!group && !m.key.fromMe && m.pushName) this.store.setNames(chatJid, { push: m.pushName });
     if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive });
+  }
+
+  /** Aviso na conversa (fixou, temporárias, entrou no grupo…): não conta como não lida. */
+  private addNotice(chatJid: string, m: WAMessage, text: string, live: boolean, quiet: boolean, kind = "system", extra: Extra | null = null) {
+    const at = timestamp(m);
+    const incoming: IncomingMessage = {
+      chatJid,
+      id: m.key.id!,
+      rawJid: m.key.remoteJid!,
+      participant: isJidGroup(m.key.remoteJid!) ? (m.key.participant ?? null) : null,
+      fromMe: !!m.key.fromMe,
+      at,
+      text,
+      kind,
+      extra: extra ? JSON.stringify(extra) : null,
+      // Ligação perdida conta como mensagem nova; os demais avisos não.
+      silent: kind !== "call",
+    };
+    const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
+    if (quiet) return void this.store.insertMessage(incoming, isLive);
+    const result = this.store.addMessage(incoming, isLive);
+    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive && kind === "call" });
+  }
+
+  /** Quem fez a ação: "Você", o autor no grupo ou o contato. */
+  private actorName(chatJid: string, m: WAMessage): string {
+    if (m.key.fromMe) return "Você";
+    if (isJidGroup(m.key.remoteJid!)) return m.key.participant ? (this.nameOf(m.key.participant, m.key.participantAlt) ?? m.pushName ?? "Alguém") : "Alguém";
+    return this.store.getChat(chatJid)?.name ?? m.pushName ?? "O contato";
+  }
+
+  private applyPin(chatJid: string, pin: PinAction, m: WAMessage, live: boolean, quiet: boolean) {
+    const at = timestamp(m);
+    const chat = this.store.setPin(chatJid, pin.id, pin.pin ? at + pin.seconds * 1000 : null, at);
+    if (pin.pin) this.addNotice(chatJid, m, `${this.actorName(chatJid, m)} fixou uma mensagem`, live, quiet);
+    if (chat && !quiet) this.emit("chat", chat);
+  }
+
+  private applyEphemeral(chatJid: string, seconds: number, m: WAMessage, live: boolean, quiet: boolean) {
+    const chat = this.store.setEphemeral(chatJid, seconds || null);
+    const who = this.actorName(chatJid, m);
+    const text = seconds
+      ? `${who} ativou as mensagens temporárias. Novas mensagens somem em ${ephemeralLabel(seconds)}.`
+      : `${who} desativou as mensagens temporárias.`;
+    this.addNotice(chatJid, m, text, live, quiet);
+    if (chat && !quiet) this.emit("chat", chat);
+  }
+
+  /** Formas do meu JID (número e LID): a enquete pode ter sido cifrada com qualquer uma. */
+  private meJids(): string[] {
+    const me = this.sock?.user;
+    return [me?.id, me?.lid].filter((j): j is string => !!j).map((j) => jidNormalizedUser(j));
+  }
+
+  /** Um JID e o seu par (número ↔ LID), quando conhecido. */
+  private withAlt(...jids: (string | null | undefined)[]): string[] {
+    const out = new Set<string>();
+    for (const raw of jids) {
+      if (!raw) continue;
+      const jid = jidNormalizedUser(raw);
+      out.add(jid);
+      const alt = isLidUser(jid) ? this.store.pnForLid(jid) : isPnUser(jid) ? this.store.lidForPn(jid) : null;
+      if (alt) out.add(alt);
+    }
+    return [...out];
+  }
+
+  /** Voto que chegou (de alguém ou meu, pelo celular): decifra e soma na enquete. */
+  private applyVote(chatJid: string, update: { pollCreationMessageKey?: { id?: string | null } | null; vote?: { encPayload?: Uint8Array | null; encIv?: Uint8Array | null } | null }, m: WAMessage, quiet: boolean) {
+    const pollId = update.pollCreationMessageKey?.id;
+    const enc = update.vote;
+    if (!pollId || !enc?.encPayload || !enc.encIv) return;
+    // O voto pode vir endereçado pelo LID e cair fora da conversa do número: acha a enquete pelo id.
+    const pollChat = this.store.pollRef(chatJid, pollId) ? chatJid : this.store.pollChat(pollId);
+    const ref = pollChat ? this.store.pollRef(pollChat, pollId) : null;
+    if (!ref?.poll.secret) return void console.warn(`Voto de enquete ${pollId} sem a enquete salva (conversa ${chatJid}).`);
+    const group = isJidGroup(m.key.remoteJid!) === true;
+    const creators = ref.fromMe ? this.withAlt(...this.meJids()) : this.withAlt(ref.participant ?? ref.rawJid);
+    const voters = m.key.fromMe ? this.withAlt(...this.meJids()) : group ? this.withAlt(m.key.participant, m.key.participantAlt) : this.withAlt(m.key.remoteJid, m.key.remoteJidAlt, pollChat);
+    const got = decryptVote({ encPayload: enc.encPayload, encIv: enc.encIv }, { secret: Buffer.from(ref.poll.secret, "base64"), pollId, creators, voters });
+    if (!got) return void console.warn(`Voto da enquete ${pollId} não decifrou.`);
+    // A forma que serviu para "mim" (votante, se votei pelo celular; criador, se a enquete é minha) é a que
+    // o WhatsApp usa nesta conversa: os votos enviados daqui passam a cifrar igual.
+    const mine = m.key.fromMe ? got.voter : ref.fromMe ? got.creator : null;
+    if (mine) this.rememberPollAddressing(pollChat!, isLidUser(mine) === true);
+    const voter = m.key.fromMe ? "me" : this.canonical(group ? m.key.participant! : m.key.remoteJid!, group ? m.key.participantAlt : m.key.remoteJidAlt);
+    const message = this.store.recordVote(pollChat!, pollId, voter, optionsFromHashes(ref.poll.options, got.hashes), timestamp(m));
+    if (message && !quiet) this.emit("update", { message, chat: this.store.getChat(pollChat!)! });
+  }
+
+  /** Guarda se a conversa endereça enquetes pelo LID (por conversa e como padrão geral). */
+  private rememberPollAddressing(chatJid: string, lid: boolean) {
+    this.store.setSetting(`poll_lid:${chatJid}`, lid ? "1" : "0");
+    this.store.setSetting("poll_lid", lid ? "1" : "0");
+  }
+
+  /**
+   * Endereço das enquetes na conversa: o aprendido dos votos que chegaram; senão, o modo do grupo;
+   * senão, se o contato já escreve pelo LID; senão, o padrão aprendido em outras conversas.
+   */
+  private async pollUsesLid(chatJid: string, rawJid: string): Promise<boolean> {
+    const learned = this.store.getSetting(`poll_lid:${chatJid}`);
+    if (learned !== null) return learned === "1";
+    if (isJidGroup(rawJid)) return (await this.groupInfo(rawJid)).addressingMode === "lid";
+    if (isLidUser(rawJid) || this.store.lastIncomingIsLid(chatJid)) return true;
+    return this.store.getSetting("poll_lid") === "1";
+  }
+
+  /** Participantes citados num aviso de grupo (JSON com id/LID e número, ou o JID puro). */
+  private stubPeople(m: WAMessage): string[] {
+    return (m.messageStubParameters ?? []).map((p: string) => {
+      try {
+        const o = JSON.parse(p) as { id?: string; lid?: string; phoneNumber?: string };
+        const raw = o.id ?? o.lid ?? o.phoneNumber;
+        return raw ? (this.nameOf(raw, o.phoneNumber) ?? "alguém") : "alguém";
+      } catch {
+        return /@/.test(p) ? (this.nameOf(p) ?? "alguém") : "alguém";
+      }
+    });
+  }
+
+  private ingestStub(m: WAMessage, chatJid: string, live: boolean, quiet: boolean) {
+    const type = Number(m.messageStubType);
+    const params: string[] = m.messageStubParameters ?? [];
+    const who = this.actorName(chatJid, m);
+    const people = () => this.stubPeople(m);
+    const plural = () => people().length > 1;
+    if (type === STUB.MISSED_VOICE || type === STUB.MISSED_VIDEO || type === STUB.MISSED_GROUP_VOICE || type === STUB.MISSED_GROUP_VIDEO) {
+      if (this.store.hasCallNear(chatJid, timestamp(m))) return;
+      const call: CallInfo = { video: type === STUB.MISSED_VIDEO || type === STUB.MISSED_GROUP_VIDEO, group: type >= STUB.MISSED_GROUP_VOICE, outcome: "missed", seconds: null, outgoing: false };
+      return this.addNotice(chatJid, m, callText(call), live, quiet, "call", { type: "call", ...call });
+    }
+    if (type === STUB.EPHEMERAL) {
+      const seconds = Number(params[0]) || 0;
+      const chat = this.store.setEphemeral(chatJid, seconds || null);
+      if (chat && !quiet) this.emit("chat", chat);
+    }
+    if (type >= STUB.ADD && type <= STUB.LEAVE) this.groupCache.delete(m.key.remoteJid!);
+    const text = (() => {
+      switch (type) {
+        case STUB.CREATE:
+          return `${who} criou o grupo${params[0] ? ` “${params[0]}”` : ""}`;
+        case STUB.SUBJECT:
+          return `${who} mudou o nome do grupo para “${params[0] ?? ""}”`;
+        case STUB.ICON:
+          return `${who} mudou a foto do grupo`;
+        case STUB.DESCRIPTION:
+          return `${who} mudou a descrição do grupo`;
+        case STUB.RESTRICT:
+          return params[0] === "on" || params[0] === "true" ? `${who} deixou só admins editarem os dados do grupo` : `${who} deixou todos editarem os dados do grupo`;
+        case STUB.ANNOUNCE:
+          return params[0] === "on" || params[0] === "true" ? `${who} deixou só admins enviarem mensagens` : `${who} deixou todos enviarem mensagens`;
+        case STUB.ADD: {
+          const names = people();
+          return names.length === 1 && names[0] === who ? `${who} entrou no grupo` : `${who} adicionou ${joinNames(names)}`;
+        }
+        case STUB.REMOVE:
+          return `${who} removeu ${joinNames(people())}`;
+        case STUB.PROMOTE:
+          return `${joinNames(people())} ${plural() ? "agora são admins" : "agora é admin"}`;
+        case STUB.DEMOTE:
+          return `${joinNames(people())} ${plural() ? "não são mais admins" : "não é mais admin"}`;
+        case STUB.INVITE:
+          return `${joinNames(people())} entrou usando o link de convite`;
+        case STUB.LEAVE:
+          return `${joinNames(people())} saiu`;
+        case STUB.JOIN_REQUEST:
+          return `${joinNames(people())} entrou no grupo`;
+        case STUB.EPHEMERAL: {
+          const seconds = Number(params[0]) || 0;
+          return seconds ? `${who} ativou as mensagens temporárias. Novas mensagens somem em ${ephemeralLabel(seconds)}.` : `${who} desativou as mensagens temporárias.`;
+        }
+        default:
+          return null;
+      }
+    })();
+    if (text) this.addNotice(chatJid, m, text, live, quiet);
+  }
+
+  /** Ligações em andamento (o WhatsApp avisa oferta, atendimento e fim em eventos separados). */
+  private calls = new Map<string, { chatJid: string; id: string; video: boolean; group: boolean; acceptedAt: number | null }>();
+
+  /**
+   * Ligação recebida: aparece na conversa na hora ("atenda no celular") e vira perdida, recusada ou
+   * atendida quando termina. O aparelho conectado não atende: áudio e vídeo ficam no celular.
+   */
+  private onCall(c: WACallEvent) {
+    const from = c.isGroup && c.groupJid ? c.groupJid : c.from || c.chatId;
+    if (!isConversation(from)) return;
+    const known = this.calls.get(c.id);
+    const chatJid = known?.chatJid ?? this.canonical(from, c.callerPn);
+    const id = `call-${c.id}`;
+    const at = c.date instanceof Date && c.date.getTime() > 0 ? c.date.getTime() : Date.now();
+    const info = (outcome: CallInfo["outcome"], seconds: number | null = null): CallInfo => ({
+      video: known?.video ?? !!c.isVideo,
+      group: known?.group ?? !!c.isGroup,
+      outcome,
+      seconds,
+      outgoing: false,
+    });
+    const save = (call: CallInfo, missed: boolean) => {
+      const extra = JSON.stringify({ type: "call", ...call });
+      const updated = this.store.updateCall(chatJid, id, callText(call), extra, missed);
+      if (updated) return this.emit("update", updated);
+      const incoming: IncomingMessage = { chatJid, id, rawJid: from, fromMe: false, at, text: callText(call), kind: "call", extra, silent: !missed };
+      const result = this.store.addMessage(incoming, !c.offline);
+      if (result) this.emit("message", { ...result, live: !c.offline && missed });
+    };
+    switch (c.status) {
+      case "offer": {
+        this.calls.set(c.id, { chatJid, id, video: !!c.isVideo, group: !!c.isGroup, acceptedAt: null });
+        if (c.offline) return;
+        const call = info("ringing");
+        const incoming: IncomingMessage = { chatJid, id, rawJid: from, fromMe: false, at, text: callText(call), kind: "call", extra: JSON.stringify({ type: "call", ...call }), silent: true };
+        const result = this.store.addMessage(incoming, true);
+        // Ao vivo: o app avisa como mensagem nova ("atenda no celular").
+        if (result) this.emit("message", { ...result, live: true });
+        return;
+      }
+      case "accept":
+        if (known) known.acceptedAt = Date.now();
+        return save(info("elsewhere"), false);
+      case "reject":
+        this.calls.delete(c.id);
+        return save(info("rejected"), false);
+      case "timeout":
+        this.calls.delete(c.id);
+        return save(info("missed"), true);
+      case "terminate": {
+        this.calls.delete(c.id);
+        if (known?.acceptedAt) return save(info("connected", Math.round((Date.now() - known.acceptedAt) / 1000)), false);
+        // Desligou antes de alguém atender: perdida (só se a oferta foi vista; senão não há o que dizer).
+        if (known) return save(info("missed"), true);
+        return;
+      }
+      default:
+        return;
+    }
   }
 
   /** Editar e reagir mudam uma mensagem já guardada. `quiet`: lote do histórico, sem evento. */
@@ -282,6 +608,8 @@ export class WhatsApp extends EventEmitter<{
       if (update.me?.id) this.checkAccount(jidNormalizedUser(update.me.id));
       if (update.accountSettings) this.store.keepArchived = !update.accountSettings.unarchiveChats;
       void saveCreds();
+      // Chave nova do celular (pedida em syncArchives): agora dá para enviar e receber o arquivamento.
+      if (update.myAppStateKeyId && this.state.status === "conectado") setTimeout(() => void this.syncArchives(sock), 3000);
     });
 
     sock.ev.on("connection.update", async (u) => {
@@ -295,9 +623,14 @@ export class WhatsApp extends EventEmitter<{
         this.setState({ status: "conectado", qr: null, error: null, me });
         // Depois do histórico inicial; numa reconexão recente é só uma consulta à configuração.
         setTimeout(() => void this.backfillContacts(sock), 20000);
+        setTimeout(() => void this.syncArchives(sock), 25000);
         // Enquanto esta conexão durar, confere a cada hora se a agenda já venceu.
         const timer = setInterval(() => (this.sock === sock ? void this.backfillContacts(sock) : clearInterval(timer)), 60 * 60 * 1000);
         void this.loadGroups(sock);
+        sock
+          .fetchBlocklist()
+          .then((list) => (this.blocked = new Set(list.filter((j): j is string => !!j).map((j) => this.canonical(j)))))
+          .catch(() => undefined);
       }
       if (u.connection === "close") {
         if (this.sock !== sock) return;
@@ -330,6 +663,10 @@ export class WhatsApp extends EventEmitter<{
           this.store.ensureChat(jid, { status: unread > 0 ? "aberta" : "resolvida", unread: Math.max(0, unread) });
           if (c.name) this.store.setNames(jid, { saved: c.name });
           if (typeof c.archived === "boolean") this.store.updateChat(jid, { archived: c.archived });
+          if (c.muteEndTime !== undefined) this.store.updateChat(jid, { mutedUntil: mutedUntilOf(c.muteEndTime) });
+          if (c.pinned && !this.store.getChat(jid)?.pinnedAt) this.store.updateChat(jid, { pinned: true });
+          if (c.ephemeralExpiration != null) this.store.setEphemeral(jid, Number(c.ephemeralExpiration) || null);
+          if (c.markedAsUnread) this.store.updateChat(jid, { markedUnread: true });
         }
         for (const contact of contacts) this.applyContact(contact);
         for (const m of messages) this.ingest(m, false, true);
@@ -337,15 +674,52 @@ export class WhatsApp extends EventEmitter<{
       this.emit("reload");
     });
 
-    // Arquivada ou desarquivada no celular (ou desarquivada por mensagem nova, conforme o ajuste dele).
+    // Mudanças feitas no celular: arquivar (ou desarquivar por mensagem nova), marcar como lida/não lida, temporárias.
     sock.ev.on("chats.update", (list) => {
       for (const u of list) {
-        if (typeof u.archived !== "boolean" || !u.id || !isConversation(u.id)) continue;
+        if (!u.id || !isConversation(u.id)) continue;
         const jid = this.canonical(u.id);
         const current = this.store.getChat(jid);
-        if (!current || current.archived === u.archived) continue;
-        const chat = this.store.updateChat(jid, { archived: u.archived });
+        if (!current) continue;
+        let changed = false;
+        if (typeof u.archived === "boolean" && current.archived !== u.archived) {
+          this.store.updateChat(jid, { archived: u.archived });
+          changed = true;
+        }
+        // -1 = marcada como não lida; 0 = marcada como lida (só vem da sincronização, não de mensagem nova).
+        if (u.unreadCount === -1 && !current.markedUnread) {
+          this.store.updateChat(jid, { markedUnread: true });
+          changed = true;
+        } else if (u.unreadCount === 0 && (current.markedUnread || current.unread > 0)) {
+          this.store.clearMarkedUnread(jid);
+          this.store.markRead(jid);
+          changed = true;
+        }
+        // Fixar vem com o horário em que foi fixada; null = desafixada.
+        if (u.pinned !== undefined && !!u.pinned !== !!current.pinnedAt) {
+          this.store.updateChat(jid, { pinned: !!u.pinned });
+          changed = true;
+        }
+        if (u.muteEndTime !== undefined && mutedUntilOf(u.muteEndTime) !== current.mutedUntil) {
+          this.store.updateChat(jid, { mutedUntil: mutedUntilOf(u.muteEndTime) });
+          changed = true;
+        }
+        if (u.ephemeralExpiration !== undefined && (Number(u.ephemeralExpiration) || null) !== current.ephemeral) {
+          this.store.setEphemeral(jid, Number(u.ephemeralExpiration) || null);
+          changed = true;
+        }
+        const chat = changed ? this.store.getChat(jid) : null;
         if (chat && chat.lastAt > 0) this.emit("chat", chat);
+      }
+    });
+    sock.ev.on("call", (list) => list.forEach((c) => this.onCall(c)));
+    sock.ev.on("blocklist.set", ({ blocklist }) => {
+      this.blocked = new Set(blocklist.map((j) => this.canonical(j)));
+    });
+    sock.ev.on("blocklist.update", ({ blocklist, type }) => {
+      for (const j of blocklist) {
+        if (type === "add") this.blocked.add(this.canonical(j));
+        else this.blocked.delete(this.canonical(j));
       }
     });
     sock.ev.on("groups.upsert", (list) => list.forEach((g) => this.setGroupName(g.id, g.subject)));
@@ -362,12 +736,14 @@ export class WhatsApp extends EventEmitter<{
       const state = states.includes("recording") ? "recording" : states.includes("composing") ? "composing" : null;
       this.emit("presence", { jid: this.canonical(id), state });
     });
-    // Recibos das minhas mensagens: entregue, lida, ouvida.
+    // Recibos das minhas mensagens (entregue, lida, ouvida) e estrela dada no celular.
     sock.ev.on("messages.update", (list) => {
       for (const { key, update } of list) {
-        if (!key.fromMe || !key.id || typeof update.status !== "number" || !isConversation(key.remoteJid)) continue;
+        if (!key.id || !isConversation(key.remoteJid)) continue;
         const chatJid = this.canonical(key.remoteJid, key.remoteJidAlt);
-        const message = this.store.setAck(chatJid, key.id, update.status);
+        let message: Message | null = null;
+        if (key.fromMe && typeof update.status === "number") message = this.store.setAck(chatJid, key.id, update.status);
+        if (typeof update.starred === "boolean") message = this.store.setStarred(chatJid, key.id, update.starred) ?? message;
         if (message) this.emit("update", { message, chat: this.store.getChat(chatJid)! });
       }
     });
@@ -420,6 +796,12 @@ export class WhatsApp extends EventEmitter<{
     };
   }
 
+  /** Citação e, com mensagens temporárias ligadas, o prazo (a mensagem some como as do celular). */
+  private sendOptions(jid: string, quoted?: MessageKeyRef | null) {
+    const ephemeral = this.store.getChat(jid)?.ephemeral;
+    return { ...this.quoted(quoted), ...(ephemeral ? { ephemeralExpiration: ephemeral } : {}) };
+  }
+
   async send(jid: string, text: string, opts: SendOptions = {}): Promise<void> {
     const sock = this.ready();
     const all = opts.mentionAll && isJidGroup(jid);
@@ -428,8 +810,191 @@ export class WhatsApp extends EventEmitter<{
     const everyone = all ? (await this.groupInfo(jid)).participants.map((p) => p.id).filter((id) => !this.isMe(id)) : [];
     const list = [...new Set([...(opts.mentions ?? []), ...everyone])];
     const mentions = list.length || all ? { ...(list.length ? { mentions: list } : {}), ...(all ? { mentionAll: true } : {}) } : {};
-    const sent = await sock.sendMessage(jid, { text, ...mentions }, this.quoted(opts.quoted));
+    // Prévia do primeiro link (título, descrição e miniatura), como o WhatsApp faz ao digitar.
+    const preview = await sendPreview(text).catch(() => null);
+    const sent = await sock.sendMessage(jid, { text, ...mentions, ...(preview ? { linkPreview: preview } : {}) }, this.sendOptions(jid, opts.quoted));
     if (sent) this.ingest(sent, true);
+  }
+
+  /** Enquete; `multiple` deixa marcar mais de uma opção. */
+  async sendPoll(jid: string, question: string, options: string[], multiple: boolean): Promise<void> {
+    const sent = await this.ready().sendMessage(jid, { poll: { name: question, values: options, selectableCount: multiple ? 0 : 1 } }, this.sendOptions(jid));
+    if (sent) this.ingest(sent, true);
+  }
+
+  /** Meu voto (lista vazia tira o voto). Vai cifrado como o do celular e já conta aqui. */
+  async votePoll(jid: string, pollId: string, options: string[]): Promise<Message | null> {
+    const sock = this.ready();
+    const ref = this.store.pollRef(jid, pollId);
+    if (!ref) throw new Error("Enquete não encontrada.");
+    if (!ref.poll.secret) throw new Error("Esta enquete chegou antes desta versão do app; vote pelo celular.");
+    const valid = options.filter((o) => ref.poll.options.includes(o));
+    if (ref.poll.selectable === 1 && valid.length > 1) throw new Error("Esta enquete aceita só uma opção.");
+    // A cifra usa os JIDs como a conversa endereça: LID ou número.
+    const lidMode = await this.pollUsesLid(jid, ref.rawJid);
+    const me = sock.user!;
+    const myJid = jidNormalizedUser(lidMode && me.lid ? me.lid : me.id);
+    // Quem criou, na mesma forma (o par número/LID vem do mapa, quando conhecido).
+    const author = jidNormalizedUser(ref.participant ?? ref.rawJid);
+    const authorAlt = isLidUser(author) ? this.store.pnForLid(author) : this.store.lidForPn(author);
+    const creator = ref.fromMe ? myJid : (isLidUser(author) === lidMode ? author : (authorAlt ?? author));
+    const vote = encryptVote(valid, { secret: Buffer.from(ref.poll.secret, "base64"), pollId, creator, voter: myJid });
+    await sock.relayMessage(
+      ref.rawJid,
+      {
+        pollUpdateMessage: {
+          pollCreationMessageKey: { remoteJid: ref.rawJid, id: pollId, fromMe: ref.fromMe, ...(ref.participant ? { participant: ref.participant } : {}) },
+          vote,
+          senderTimestampMs: Date.now(),
+        },
+      },
+      // Como o WhatsApp Web: o voto vai marcado como de enquete; sem isso o servidor não entrega aos outros aparelhos.
+      { additionalNodes: [{ tag: "meta", attrs: { polltype: "vote" } }] },
+    );
+    const message = this.store.recordVote(jid, pollId, "me", valid);
+    if (message) this.emit("update", { message, chat: this.store.getChat(jid)! });
+    return message;
+  }
+
+  async sendLocation(jid: string, place: { lat: number; lng: number; name?: string; address?: string }): Promise<void> {
+    const location = { degreesLatitude: place.lat, degreesLongitude: place.lng, ...(place.name ? { name: place.name } : {}), ...(place.address ? { address: place.address } : {}) };
+    const sent = await this.ready().sendMessage(jid, { location }, this.sendOptions(jid));
+    if (sent) this.ingest(sent, true);
+  }
+
+  async sendContacts(jid: string, contacts: { name: string; phone: string }[]): Promise<void> {
+    const cards = contacts.map((c) => ({ displayName: c.name, vcard: buildVcard(c.name, c.phone) }));
+    const displayName = cards.length === 1 ? cards[0].displayName : `${cards.length} contatos`;
+    const sent = await this.ready().sendMessage(jid, { contacts: { displayName, contacts: cards } }, this.sendOptions(jid));
+    if (sent) this.ingest(sent, true);
+  }
+
+  /** Chave de uma mensagem guardada, no formato do WhatsApp. */
+  private keyOf(jid: string, id: string) {
+    const ref = this.store.messageKey(jid, id);
+    if (!ref) throw new Error("Mensagem não encontrada.");
+    return { remoteJid: ref.rawJid, id, fromMe: ref.fromMe, ...(ref.participant ? { participant: ref.participant } : {}) };
+  }
+
+  /** Estrela: vai para o celular pela sincronização; sem a chave, fica só aqui. Devolve se sincronizou. */
+  async star(jid: string, id: string, starred: boolean): Promise<boolean> {
+    const key = this.keyOf(jid, id);
+    let synced = true;
+    try {
+      await this.ready().chatModify({ star: { messages: [{ id, fromMe: key.fromMe }], star: starred } }, key.remoteJid);
+    } catch (error) {
+      synced = false;
+      if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey && this.sock) await this.requestAppStateKey(this.sock).catch(() => undefined);
+    }
+    const message = this.store.setStarred(jid, id, starred);
+    if (message) this.emit("update", { message, chat: this.store.getChat(jid)! });
+    return synced;
+  }
+
+  /** Fixa para todos por `seconds` (24 h, 7 ou 30 dias) ou desafixa (null). */
+  async pinMessage(jid: string, id: string, seconds: number | null): Promise<void> {
+    const key = this.keyOf(jid, id);
+    await this.ready().sendMessage(jid, seconds ? { pin: key, type: proto.PinInChat.Type.PIN_FOR_ALL, time: seconds as 86400 } : { pin: key, type: proto.PinInChat.Type.UNPIN_FOR_ALL });
+    const chat = this.store.setPin(jid, id, seconds ? Date.now() + seconds * 1000 : null);
+    if (chat) this.emit("chat", chat);
+  }
+
+  /** Últimas mensagens da conversa: o WhatsApp exige ao arquivar ou marcar como lida/não lida. */
+  private lastMessages(jid: string) {
+    const last = this.store.lastMessageKey(jid);
+    if (!last) return null;
+    const key = { remoteJid: last.rawJid, id: last.id, fromMe: last.fromMe, ...(last.participant ? { participant: last.participant } : {}) };
+    return { rawJid: last.rawJid, lastMessages: [{ key, messageTimestamp: Math.floor(last.at / 1000) }] };
+  }
+
+  /** Marca como lida/não lida também no celular. Cortesia: sem a chave, vale só aqui. */
+  async syncUnread(jid: string, unread: boolean): Promise<void> {
+    const last = this.lastMessages(jid);
+    if (!this.sock || !last) return;
+    try {
+      await this.sock.chatModify({ markRead: !unread, lastMessages: last.lastMessages }, last.rawJid);
+    } catch (error) {
+      if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(this.sock).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  isBlocked(jid: string): boolean {
+    return this.blocked.has(jid);
+  }
+
+  async setBlocked(jid: string, blocked: boolean): Promise<void> {
+    if (isJidGroup(jid)) throw new Error("Grupos não podem ser bloqueados.");
+    await this.ready().updateBlockStatus(jid, blocked ? "block" : "unblock");
+    if (blocked) this.blocked.add(jid);
+    else this.blocked.delete(jid);
+  }
+
+  /** Liga (segundos) ou desliga (0) as mensagens temporárias para todos da conversa. */
+  async setEphemeral(jid: string, seconds: number): Promise<void> {
+    const sock = this.ready();
+    if (isJidGroup(jid)) await sock.groupToggleEphemeral(jid, seconds);
+    else {
+      const sent = await sock.sendMessage(jid, { disappearingMessagesInChat: seconds || false });
+      if (sent) this.ingest(sent, true);
+    }
+    const chat = this.store.setEphemeral(jid, seconds || null);
+    if (chat) this.emit("chat", chat);
+  }
+
+  /** Número tem WhatsApp? Devolve o JID da conversa ou null. */
+  async checkNumber(digits: string): Promise<string | null> {
+    const [hit] = (await this.ready().onWhatsApp(`${digits}@s.whatsapp.net`)) ?? [];
+    return hit?.exists ? jidNormalizedUser(hit.jid) : null;
+  }
+
+  /** Conversa de um participante (pode vir como LID): o número quando conhecido. */
+  conversationOf(jid: string): string {
+    return this.canonical(jid);
+  }
+
+  async createGroup(subject: string, participants: string[]): Promise<string> {
+    const meta = await this.ready().groupCreate(subject, participants);
+    this.store.ensureChat(meta.id, { status: "aberta" });
+    this.store.setNames(meta.id, { saved: meta.subject || subject });
+    return meta.id;
+  }
+
+  async updateParticipants(jid: string, participants: string[], action: ParticipantAction): Promise<ParticipantResult[]> {
+    const results = await this.ready().groupParticipantsUpdate(jid, participants, action);
+    this.groupCache.delete(jid);
+    return results.map((r) => ({
+      jid: r.jid ?? "",
+      ok: r.status === "200",
+      reason: r.status === "200" ? null : (PARTICIPANT_ERRORS[r.status] ?? `recusado pelo WhatsApp (${r.status})`),
+    }));
+  }
+
+  async updateGroupInfo(jid: string, info: { subject?: string; description?: string }): Promise<void> {
+    const sock = this.ready();
+    if (info.subject !== undefined) {
+      await sock.groupUpdateSubject(jid, info.subject);
+      this.setGroupName(jid, info.subject);
+    }
+    if (info.description !== undefined) await sock.groupUpdateDescription(jid, info.description || undefined);
+    this.groupCache.delete(jid);
+  }
+
+  /** Aceita o convite de grupo recebido numa mensagem. Devolve o JID do grupo. */
+  async acceptInvite(jid: string, id: string): Promise<string> {
+    const extra = this.store.messageExtra(jid, id);
+    if (extra?.type !== "invite") throw new Error("Esta mensagem não é um convite de grupo.");
+    if (extra.expiration && extra.expiration < Date.now()) throw new Error("O convite venceu. Peça um novo a quem enviou.");
+    const key = this.keyOf(jid, id);
+    await this.ready().groupAcceptInviteV4(key, {
+      groupJid: extra.groupJid,
+      inviteCode: extra.code,
+      inviteExpiration: Math.floor((extra.expiration ?? Date.now() + 86400_000) / 1000),
+      groupName: extra.groupName ?? undefined,
+    });
+    this.store.ensureChat(extra.groupJid, { status: "aberta" });
+    if (extra.groupName) this.store.setNames(extra.groupJid, { saved: extra.groupName });
+    return extra.groupJid;
   }
 
   /** Apaga para todos (só mensagens enviadas por mim). */
@@ -522,15 +1087,19 @@ export class WhatsApp extends EventEmitter<{
     const sock = this.ready();
     if (isJidGroup(jid)) {
       const meta = await this.groupInfo(jid);
+      const participants = await this.participants(jid);
       return {
         about: null,
         aboutAt: null,
+        blocked: false,
         group: {
           subject: meta.subject,
           description: meta.desc?.trim() || null,
           createdAt: meta.creation ? meta.creation * 1000 : null,
           size: meta.size ?? meta.participants.length,
-          participants: await this.participants(jid),
+          participants,
+          meAdmin: participants.some((p) => p.me && p.admin),
+          restrict: !!meta.restrict,
         },
       };
     }
@@ -538,7 +1107,7 @@ export class WhatsApp extends EventEmitter<{
     const status = (list?.[0] as { status?: { status?: string | null; setAt?: Date } } | undefined)?.status;
     const about = typeof status?.status === "string" && status.status.trim() ? status.status.trim() : null;
     const setAt = status?.setAt instanceof Date && status.setAt.getTime() > 0 ? status.setAt.getTime() : null;
-    return { about, aboutAt: about ? setAt : null, group: null };
+    return { about, aboutAt: about ? setAt : null, blocked: this.blocked.has(this.canonical(jid)), group: null };
   }
 
   /** URL temporária da foto de perfil; null = sem foto ou foto privada. Erro de rede sobe. */
@@ -560,7 +1129,9 @@ export class WhatsApp extends EventEmitter<{
     const { body, fileName } = file;
     const caption = file.caption?.trim() || undefined;
     const base = file.mimetype.split(";")[0];
-    const content = file.ptt
+    const content = file.sticker
+      ? { sticker: body, mimetype: "image/webp" }
+      : file.ptt
       ? { audio: body, ptt: true, mimetype: "audio/ogg; codecs=opus", ...(file.seconds ? { seconds: Math.round(file.seconds) } : {}) }
       : base.startsWith("image/") && base !== "image/gif" && base !== "image/svg+xml"
         ? { image: body, mimetype: base, caption }
@@ -569,7 +1140,7 @@ export class WhatsApp extends EventEmitter<{
           : base.startsWith("audio/")
             ? { audio: body, mimetype: base }
             : { document: body, mimetype: base || "application/octet-stream", fileName, caption };
-    const sent = await sock.sendMessage(jid, content, this.quoted(opts.quoted));
+    const sent = await sock.sendMessage(jid, content, this.sendOptions(jid, opts.quoted));
     if (!sent) return null;
     this.ingest(sent, true);
     return sent.key.id ?? null;
@@ -582,11 +1153,110 @@ export class WhatsApp extends EventEmitter<{
     );
   }
 
-  /** Arquiva ou desarquiva também no celular; o WhatsApp pede a última mensagem da conversa. */
-  async setArchived(last: MessageKeyRef, archived: boolean): Promise<void> {
-    if (!this.sock) return;
-    const key = { remoteJid: last.rawJid, id: last.id, fromMe: last.fromMe, ...(last.participant ? { participant: last.participant } : {}) };
-    await this.sock.chatModify({ archive: archived, lastMessages: [{ key, messageTimestamp: Math.floor(last.at / 1000) }] }, last.rawJid);
+  /** Arquiva ou desarquiva também no celular. Sem conexão ou sem a chave, fica pendente. */
+  async setArchived(jid: string, archived: boolean): Promise<void> {
+    this.pendingArchive.set(jid, archived);
+    if (this.sock) await this.pushArchives(this.sock);
+  }
+
+  /** Silencia ou reativa também no celular. Sem conexão ou sem a chave, fica pendente. */
+  async setMuted(jid: string, until: number | null): Promise<void> {
+    this.pendingMute.set(jid, until);
+    if (this.sock) await this.pushMutes(this.sock);
+  }
+
+  private async pushMutes(sock: WASocket): Promise<void> {
+    for (const [jid, until] of [...this.pendingMute]) {
+      const rawJid = this.store.lastMessageKey(jid)?.rawJid ?? jid;
+      try {
+        // No WhatsApp, "sempre" é -1; o resto é o fim em ms.
+        await sock.chatModify({ mute: until === null ? null : until >= MUTE_FOREVER ? -1 : until }, rawJid);
+      } catch (error) {
+        if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(sock);
+        throw error;
+      }
+      if (this.pendingMute.get(jid) === until) this.pendingMute.delete(jid);
+    }
+  }
+
+  /** Fixa ou desafixa a conversa também no celular (lá o limite é 3). Sem conexão ou sem a chave, fica pendente. */
+  async setChatPinned(jid: string, pinned: boolean): Promise<void> {
+    this.pendingPin.set(jid, pinned);
+    if (this.sock) await this.pushPins(this.sock);
+  }
+
+  private async pushPins(sock: WASocket): Promise<void> {
+    for (const [jid, pinned] of [...this.pendingPin]) {
+      const rawJid = this.store.lastMessageKey(jid)?.rawJid ?? jid;
+      try {
+        await sock.chatModify({ pin: pinned }, rawJid);
+      } catch (error) {
+        if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(sock);
+        throw error;
+      }
+      if (this.pendingPin.get(jid) === pinned) this.pendingPin.delete(jid);
+    }
+  }
+
+  /** O WhatsApp pede a última mensagem da conversa junto com o arquivar. */
+  private async pushArchives(sock: WASocket): Promise<void> {
+    for (const [jid, archived] of [...this.pendingArchive]) {
+      const last = this.store.lastMessageKey(jid);
+      if (last) {
+        const key = { remoteJid: last.rawJid, id: last.id, fromMe: last.fromMe, ...(last.participant ? { participant: last.participant } : {}) };
+        try {
+          await sock.chatModify({ archive: archived, lastMessages: [{ key, messageTimestamp: Math.floor(last.at / 1000) }] }, last.rawJid);
+        } catch (error) {
+          if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(sock);
+          throw error;
+        }
+      }
+      if (this.pendingArchive.get(jid) === archived) this.pendingArchive.delete(jid);
+    }
+  }
+
+  /**
+   * Arquivar e fixar viajam no "estado do app", cifrado com uma chave que o celular troca de tempos
+   * em tempos. Sem a chave atual, nada vai nem vem: pede ao celular. Com ela, envia o que ficou
+   * pendente e relê o arquivamento inteiro do celular (o histórico inicial não traz isso direito).
+   */
+  private async syncArchives(sock: WASocket): Promise<void> {
+    if (this.sock !== sock) return;
+    try {
+      if (!(await this.hasAppStateKey(sock))) return void (await this.requestAppStateKey(sock));
+      await this.pushArchives(sock);
+      await this.pushMutes(sock);
+      await this.pushPins(sock);
+      await sock.authState.keys.set({ "app-state-sync-version": { regular_low: null } });
+      await sock.resyncAppState(["regular_low"], false);
+    } catch (error) {
+      console.warn(`Sincronizar arquivadas com o celular falhou: ${(error as Error).message}`);
+    }
+  }
+
+  private async hasAppStateKey(sock: WASocket): Promise<boolean> {
+    const id = sock.authState.creds.myAppStateKeyId;
+    if (!id) return false;
+    const found = await sock.authState.keys.get("app-state-sync-key", [id]);
+    return !!found[id];
+  }
+
+  /** Pede ao celular a chave do estado do app; ela volta numa mensagem que o Baileys guarda sozinho. */
+  private async requestAppStateKey(sock: WASocket): Promise<void> {
+    const id = sock.authState.creds.myAppStateKeyId;
+    const me = sock.authState.creds.me?.id;
+    if (!id || !me) return;
+    console.warn(`Chave de sincronização ${id} ausente; pedindo ao celular.`);
+    await sock.relayMessage(
+      jidNormalizedUser(me),
+      {
+        protocolMessage: {
+          type: proto.Message.ProtocolMessage.Type.APP_STATE_SYNC_KEY_REQUEST,
+          appStateSyncKeyRequest: { keyIds: [{ keyId: Buffer.from(id, "base64") }] },
+        },
+      },
+      { additionalAttributes: { category: "peer", push_priority: "high_force" }, additionalNodes: [{ tag: "meta", attrs: { appdata: "default" } }] },
+    );
   }
 
   /** Desconecta este aparelho do WhatsApp e volta a mostrar o QR. */

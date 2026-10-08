@@ -1,6 +1,7 @@
 import { Check, CheckCheck, Clock, Copy, Pencil, SmilePlus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Message } from "./api.ts";
+import { Button } from "./ds/index.ts";
 
 /** Reações rápidas, as mesmas do WhatsApp. São conteúdo da mensagem, não ícones da interface. */
 export const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -131,9 +132,7 @@ export function EditBar({ message, onCancel }: { message: Message; onCancel: () 
         <span className="quote__author">Editando mensagem</span>
         <span className="quote__text">{message.text}</span>
       </div>
-      <button type="button" className="icon-button icon-button--plain" aria-label="Cancelar edição" onClick={onCancel}>
-        <X size={16} aria-hidden />
-      </button>
+      <Button variant="ghost" size="compact" icon={<X size={16} aria-hidden />} aria-label="Cancelar edição" onClick={onCancel} />
     </div>
   );
 }
