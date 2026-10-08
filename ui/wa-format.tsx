@@ -1,12 +1,12 @@
 import { Fragment, type ReactNode } from "react";
-import { parseWa, type WaNode } from "./wa-text.ts";
+import { parseWa, splitLinks, type WaNode } from "./wa-text.ts";
 
 const TAG = { b: "strong", i: "em", s: "s", code: "code", mono: "code" } as const;
 
 function inline(nodes: WaNode[], live: boolean, key = ""): ReactNode[] {
   return nodes.map((n, idx) => {
     const k = `${key}${idx}`;
-    if (typeof n === "string") return <Fragment key={k}>{n}</Fragment>;
+    if (typeof n === "string") return <Fragment key={k}>{live ? n : linked(n, k)}</Fragment>;
     const Tag = live ? "span" : TAG[n.kind];
     const body = inline(n.children, live, `${k}.`);
     if (!live) return <Tag key={k} className={`wa wa--${n.kind}`}>{body}</Tag>;
@@ -19,6 +19,21 @@ function inline(nodes: WaNode[], live: boolean, key = ""): ReactNode[] {
       </span>
     );
   });
+}
+
+/** Links clicáveis; abrem fora do app (navegador padrão). */
+function linked(text: string, key: string): ReactNode {
+  const parts = splitLinks(text);
+  if (parts.length === 1 && typeof parts[0] === "string") return text;
+  return parts.map((p, idx) =>
+    typeof p === "string" ? (
+      p
+    ) : (
+      <a key={`${key}-${idx}`} className="wa-link" href={p.href} target="_blank" rel="noopener noreferrer" title={p.href}>
+        {p.url}
+      </a>
+    ),
+  );
 }
 
 const LIST = /^(\s*)([-*•]|\d{1,3}\.)\s+(.*)$/;

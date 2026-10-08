@@ -1,4 +1,4 @@
-import { Copy, Download, Eye, Forward, ImageIcon, Pencil, Reply, Trash2, UserRound } from "lucide-react";
+import { CheckSquare, Copy, Download, Eye, Forward, ImageIcon, Pencil, Reply, Trash2, UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { mediaUrl, type Message } from "./api.ts";
 import { canEdit, REACTIONS } from "./message-extras.tsx";
@@ -19,6 +19,8 @@ export type MessageMenuActions = {
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
   onAuthor: (jid: string, name: string) => void;
+  /** Entra no modo de seleção com esta mensagem marcada. */
+  onSelect: (m: Message) => void;
 };
 
 type Item = { id: string; label: string; icon: ReactNode; danger?: boolean; disabled?: boolean; href?: string; run?: () => void };
@@ -54,6 +56,7 @@ export function MessageMenu({ at, canAct, hasText, author, actions, onClose }: {
         { id: "forward", label: "Encaminhar", icon: <Forward size={16} aria-hidden />, disabled: !canAct, run: () => actions.onForward(m) },
         ...(m.media ? [{ id: "download", label: "Baixar arquivo", icon: <Download size={16} aria-hidden />, href: mediaUrl(m, true) }] : []),
         ...(canEdit(m) ? [{ id: "edit", label: "Editar", icon: <Pencil size={16} aria-hidden />, disabled: !canAct, run: () => actions.onEdit(m) }] : []),
+        { id: "select", label: "Selecionar mensagens", icon: <CheckSquare size={16} aria-hidden />, run: () => actions.onSelect(m) },
         ...(author ? [{ id: "author", label: `Ver perfil de ${author.name}`, icon: <UserRound size={16} aria-hidden />, run: () => actions.onAuthor(author.jid, author.name) }] : []),
         { id: "delete", label: "Apagar", icon: <Trash2 size={16} aria-hidden />, danger: true, run: () => actions.onDelete(m) },
       ];

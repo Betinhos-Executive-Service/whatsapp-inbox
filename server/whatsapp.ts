@@ -18,6 +18,7 @@ import makeWASocket, {
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
+import { buildVcard, extractContacts } from "./contacts.ts";
 import { extractAction, extractContext, extractMedia, extractText, revokedId, sentChangeError, viewOnceText, type Action } from "./text.ts";
 
 export type ConnectionStatus = "iniciando" | "qr" | "conectado" | "reconectando" | "desconectado";
@@ -175,6 +176,10 @@ export class WhatsApp extends EventEmitter<{
       text: author ? `${author}: ${body}` : body,
       kind: extracted.kind,
       media: media ? JSON.stringify(media) : null,
+      contacts: viewOnce ? null : (() => {
+        const list = extractContacts(content);
+        return list ? JSON.stringify(list) : null;
+      })(),
       quoted: ctx.quoted ? JSON.stringify(this.quoteRef(chatJid, ctx.quoted, group)) : null,
       ack: m.key.fromMe ? (m.status ?? null) : null,
     };
@@ -434,6 +439,14 @@ export class WhatsApp extends EventEmitter<{
     const list = [...new Set([...(opts.mentions ?? []), ...everyone])];
     const mentions = list.length || all ? { ...(list.length ? { mentions: list } : {}), ...(all ? { mentionAll: true } : {}) } : {};
     const sent = await sock.sendMessage(jid, { text, ...mentions }, this.quoted(opts.quoted));
+    if (sent) this.ingest(sent, true);
+  }
+
+  /** Envia um ou vários contatos (vCard), como o "Contato" do clipe no WhatsApp. */
+  async sendContacts(jid: string, list: { name: string; phone: string }[]): Promise<void> {
+    const contacts = list.map((c) => ({ displayName: c.name, vcard: buildVcard(c.name, c.phone) }));
+    const displayName = list.length === 1 ? list[0].name : `${list.length} contatos`;
+    const sent = await this.ready().sendMessage(jid, { contacts: { displayName, contacts } });
     if (sent) this.ingest(sent, true);
   }
 
