@@ -64,6 +64,8 @@ import { ResizeHandle } from "./resize.tsx";
 import { AttachmentTray, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
+import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
+import type { Emoji } from "./emoji-data.ts";
 import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
 // Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
@@ -899,6 +901,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const picks = useRef<MentionPick[]>([]);
   const [quickActive, setQuickActive] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
+  const [emojiActive, setEmojiActive] = useState(0);
+  const [emojiClosed, setEmojiClosed] = useState(false);
+  // Última troca de emoticon (":-)" → 🙂): Backspace logo em seguida desfaz.
+  const emoticonSwap = useRef<EmoticonSwap | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -1240,6 +1246,35 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       composer.current?.focus();
       composer.current?.setSelectionRange(next.caret, next.caret);
     });
+  };
+
+  // ":" + 2 letras abre as sugestões de emoji (":joinha" → 👍), como no WhatsApp.
+  const emojiQ = showQuick || showMention ? null : emojiQuery(draft, caret);
+  const emojiData = useEmojiData(emojiQ !== null);
+  const emojiItems = emojiQ !== null && emojiData && !emojiClosed ? searchEmoji(emojiQ, emojiData.EMOJIS, 8) : [];
+  const showEmoji = emojiItems.length > 0;
+  useEffect(() => {
+    setEmojiActive(0);
+    setEmojiClosed(false);
+  }, [emojiQ]);
+  const pickEmoji = (e: Emoji) => {
+    const next = insertEmojiShortcut(draft, caret, e.char);
+    rememberEmoji(e.char);
+    setDraft(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => {
+      composer.current?.focus();
+      composer.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+  // Botão de emoji: entra no lugar da seleção do campo; o painel continua aberto para mais de um.
+  const insertEmoji = (emoji: string) => {
+    const el = composer.current;
+    const start = el?.selectionStart ?? draft.length;
+    const next = insertAt(draft, start, el?.selectionEnd ?? start, emoji);
+    setDraft(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => composer.current?.setSelectionRange(next.caret, next.caret));
   };
 
   // ---- ações da mensagem (callbacks estáveis para o memo de <Messages>)
@@ -1735,6 +1770,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         </label>
         {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
         {showMention && <MentionMenu items={mentionItems} active={mentionActive} onPick={pickMention} onHover={setMentionActive} />}
+        {showEmoji && <EmojiShortcutMenu items={emojiItems} active={emojiActive} onPick={pickEmoji} onHover={setEmojiActive} />}
         {editing && <EditBar key={editing.id} message={editing} onCancel={cancelEdit} />}
         {replyTo && <ReplyBar key={replyTo.id} message={replyTo} isGroup={chat.isGroup} chatName={chat.name} onCancel={() => setReplyTo(null)} />}
         {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} disabled={sending} />}
@@ -1768,6 +1804,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           onClick={() => fileInput.current?.click()}
           icon={<Paperclip size={18} aria-hidden />}
         />
+        <EmojiButton disabled={!connected} onPick={insertEmoji} onClose={() => composer.current?.focus()} />
         <Button
           variant="ghost"
           aria-label="Enviar contato"
@@ -1803,9 +1840,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           id="composer-text"
           rows={1}
           role="combobox"
-          aria-expanded={showQuick || showMention}
-          aria-controls={showQuick ? "quick-menu" : showMention ? "mention-menu" : undefined}
-          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : showMention ? `mention-${mentionActive}` : undefined}
+          aria-expanded={showQuick || showMention || showEmoji}
+          aria-controls={showQuick ? "quick-menu" : showMention ? "mention-menu" : showEmoji ? "emoji-menu" : undefined}
+          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : showMention ? `mention-${mentionActive}` : showEmoji ? `emoji-${emojiActive}` : undefined}
           aria-autocomplete="list"
           value={draft}
           disabled={!connected}
@@ -1819,8 +1856,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
                   : "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha."
           }
           onChange={(e) => {
-            setDraft(e.target.value);
-            setCaret(e.target.selectionStart ?? e.target.value.length);
+            const el = e.target;
+            const at = el.selectionStart ?? el.value.length;
+            // Emoticon digitado (":-)", "<3", "(y)") vira emoji na hora, como no WhatsApp Web.
+            const swap = (e.nativeEvent as InputEvent).inputType === "insertText" ? convertEmoticon(el.value, at) : null;
+            emoticonSwap.current = swap?.swap ?? null;
+            setDraft(swap?.text ?? el.value);
+            setCaret(swap?.swap.caret ?? at);
+            if (swap) requestAnimationFrame(() => el.setSelectionRange(swap.swap.caret, swap.swap.caret));
             noteTyping();
           }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
@@ -1834,6 +1877,19 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             addFiles(files);
           }}
           onKeyDown={(e) => {
+            const swap = emoticonSwap.current;
+            if (swap && e.key === "Backspace" && e.currentTarget.selectionStart === swap.caret && e.currentTarget.selectionEnd === swap.caret) {
+              const undo = undoEmoticon(draft, swap);
+              emoticonSwap.current = null;
+              if (undo) {
+                e.preventDefault();
+                const el = e.currentTarget;
+                setDraft(undo.text);
+                setCaret(undo.caret);
+                requestAnimationFrame(() => el.setSelectionRange(undo.caret, undo.caret));
+                return;
+              }
+            }
             const marker = formatShortcut(e);
             if (marker) {
               e.preventDefault();
@@ -1858,6 +1914,24 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
               if (e.key === "Escape") {
                 e.preventDefault();
                 setMentionClosed(true);
+                return;
+              }
+            }
+            if (showEmoji) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                setEmojiActive((i) => (i + step + emojiItems.length) % emojiItems.length);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                pickEmoji(emojiItems[emojiActive] ?? emojiItems[0]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setEmojiClosed(true);
                 return;
               }
             }
