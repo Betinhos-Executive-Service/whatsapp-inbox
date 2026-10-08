@@ -468,6 +468,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(opts.quotedChat ?? jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll }),
     sendMedia,
     sendPoll: (jid, question, options, multiple) => connected().sendPoll(jid, question, options, multiple),
+    businessQuickReplies: () => connected().businessQuickReplies(),
     vote: (jid, id, options) => connected().votePoll(jid, id, options),
     sendLocation: (jid, place) => connected().sendLocation(jid, place),
     sendContacts: (jid, contacts) => connected().sendContacts(jid, contacts),

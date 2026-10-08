@@ -5,6 +5,7 @@ import {
   BellOff,
   Pin,
   Ban,
+  Check,
   CheckCircle2,
   Forward,
   MoreVertical,
@@ -42,12 +43,13 @@ import {
   Sticker,
   Timer,
   UserRoundPlus,
+  PencilLine,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
-import { ChatItemMenu, drafts, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
+import { ChatItemMenu, drafts, isMuted, useDraft, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
@@ -223,6 +225,9 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
   // Prioridade dita pela IA aparece sempre; "baixa" só quando não há nada mais relevante.
   const aiPriority = chat.ai?.priority ?? null;
   const showPriority = !!aiPriority && chat.status !== "resolvida" && (aiPriority !== "baixa" || (!level && !urgent && chat.reminderAt === null));
+  // Rascunho não enviado toma o lugar da prévia, como no WhatsApp; na conversa aberta ele já está no campo.
+  const draft = useDraft(chat.jid).trim();
+  const showDraft = !!draft && !selected;
   return (
     <li>
       <button
@@ -252,10 +257,20 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
             <span className={`chat-item__time${chat.unread || chat.markedUnread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>
           </span>
           <span className="chat-item__row">
-            <span className="chat-item__preview">
-              {chat.lastFromMe && <span className="chat-item__me">Você: </span>}
-              {chat.lastText ? <WaInline text={chat.lastText} /> : "Sem mensagens"}
-            </span>
+            {showDraft ? (
+              <span className="chat-item__preview chat-item__preview--draft" title={`Rascunho não enviado: ${draft}`}>
+                <span className="chat-item__draft">
+                  <PencilLine size={12} aria-hidden />
+                  Rascunho:
+                </span>{" "}
+                {draft.replace(/\s+/g, " ")}
+              </span>
+            ) : (
+              <span className="chat-item__preview">
+                {chat.lastFromMe && <span className="chat-item__me">Você: </span>}
+                {chat.lastText ? <WaInline text={chat.lastText} /> : "Sem mensagens"}
+              </span>
+            )}
             {chat.unread > 0 ? (
               <span className="count" aria-label={`${chat.unread} não lidas`}>
                 {chat.unread > 99 ? "99+" : chat.unread}
@@ -840,14 +855,19 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
               }}
             >
               {selected && (
-                <input
-                  type="checkbox"
-                  className="message-check"
-                  aria-label={isSelected ? "Desmarcar mensagem" : "Selecionar mensagem"}
-                  checked={isSelected}
-                  disabled={!selectable}
-                  onChange={() => {}}
-                />
+                <span className="message-check">
+                  <input
+                    type="checkbox"
+                    className="message-check__input"
+                    aria-label={isSelected ? "Desmarcar mensagem" : "Selecionar mensagem"}
+                    checked={isSelected}
+                    disabled={!selectable}
+                    onChange={() => {}}
+                  />
+                  <span className="message-check__box" aria-hidden>
+                    <Check size={13} strokeWidth={3} />
+                  </span>
+                </span>
               )}
               {isGroup && !m.fromMe &&
                 (sender && !continues ? (
@@ -1129,8 +1149,17 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, [chat.jid, notify, focus, unreadAtOpen]);
 
   // Rascunho por conversa: volta ao abrir e é guardado enquanto digita (não durante uma edição).
-  useEffect(() => setDraft(drafts.get(chat.jid)), [chat.jid]);
+  // Na troca, o texto da conversa anterior ainda está no estado: pula um ciclo para não gravá-lo na nova.
+  const draftLoading = useRef(false);
   useEffect(() => {
+    draftLoading.current = true;
+    setDraft(drafts.get(chat.jid));
+  }, [chat.jid]);
+  useEffect(() => {
+    if (draftLoading.current) {
+      draftLoading.current = false;
+      return;
+    }
     if (!editing) drafts.set(chat.jid, draft);
   }, [chat.jid, draft, editing]);
 
@@ -1310,7 +1339,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       // Otimista: o texto novo aparece na hora; volta ao original se o servidor recusar.
       const original = editing;
       setEditing(null);
-      setDraft("");
+      setDraft(drafts.get(chat.jid));
       if (text === original.text) return;
       replaceMessage({ ...original, text, editedAt: Date.now() });
       try {
@@ -1653,9 +1682,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setDraft(m.text);
     requestAnimationFrame(() => composer.current?.focus());
   }, []);
+  // Ao sair da edição, volta o rascunho que estava no campo antes dela.
   const cancelEdit = () => {
     setEditing(null);
-    setDraft("");
+    setDraft(drafts.get(chat.jid));
   };
 
   // "digitando" do contato: assina ao abrir a conversa e limpa sozinho se o aviso de parada não vier.
@@ -2115,29 +2145,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           />
         ) : (
           <>
-        <Button
-          variant="ghost"
-          aria-label="Anexar arquivo"
-          title="Anexar imagem, vídeo ou documento (ou arraste para a conversa, ou cole com Ctrl+V)"
-          disabled={!connected || sending}
-          onClick={() => fileInput.current?.click()}
-          icon={<Paperclip size={18} aria-hidden />}
-        />
         <EmojiButton disabled={!connected} onPick={insertEmoji} onClose={() => composer.current?.focus()} />
-        <Button
-          variant="ghost"
-          aria-label="Enviar contato"
-          title="Enviar contato"
-          disabled={!connected || sending}
-          onClick={() => setPickingContact(true)}
-          icon={<Contact size={18} aria-hidden />}
-        />
         <Menu
           align="start"
           trigger={(t) => (
-            <Button {...t} variant="ghost" aria-label="Enviar enquete, localização ou figurinha" title="Enquete, localização ou figurinha" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
+            <Button {...t} variant="ghost" aria-label="Anexar arquivo, contato, enquete, localização ou figurinha" title="Anexar (arquivo, contato, enquete, localização ou figurinha)" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
           )}
           actions={[
+            { id: "file", label: "Arquivo", icon: <Paperclip size={16} aria-hidden />, onSelect: () => fileInput.current?.click() },
+            { id: "contact", label: "Contato", icon: <Contact size={16} aria-hidden />, onSelect: () => setPickingContact(true) },
             { id: "poll", label: "Enquete", icon: <ListChecks size={16} aria-hidden />, onSelect: () => setComposeDialog("poll") },
             { id: "location", label: "Localização", icon: <MapPin size={16} aria-hidden />, onSelect: () => setComposeDialog("location") },
             { id: "sticker", label: "Figurinha", icon: <Sticker size={16} aria-hidden />, onSelect: () => setComposeDialog("sticker") },

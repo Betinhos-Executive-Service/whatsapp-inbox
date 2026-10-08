@@ -1,5 +1,5 @@
 import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, ChevronLeft, ChevronRight, Clock, Keyboard, Mail, MailOpen, MessageSquareText, Pin, PinOff, Tags, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import type { Chat, ChatPatch, SearchHit } from "./api.ts";
 import { dayLabel, formatTime, listTime } from "./format.ts";
 import { Button, Dialog } from "./ds/index.ts";
@@ -343,21 +343,49 @@ export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
 }
 
 /** Rascunho por conversa, só neste computador: sobrevive a trocar de conversa e reiniciar. */
+const draftCache = new Map<string, string>();
+const draftListeners = new Map<string, Set<() => void>>();
 export const drafts = {
   key: (jid: string) => `inbox:draft:${jid}`,
   get(jid: string): string {
+    const hit = draftCache.get(jid);
+    if (hit !== undefined) return hit;
+    let text = "";
     try {
-      return localStorage.getItem(this.key(jid)) ?? "";
+      text = localStorage.getItem(this.key(jid)) ?? "";
     } catch {
-      return "";
+      // armazenamento indisponível: sem rascunho salvo
     }
+    draftCache.set(jid, text);
+    return text;
   },
   set(jid: string, text: string) {
+    const value = text.trim() ? text : "";
+    if (draftCache.get(jid) === value) return;
+    draftCache.set(jid, value);
     try {
-      if (text.trim()) localStorage.setItem(this.key(jid), text);
+      if (value) localStorage.setItem(this.key(jid), value);
       else localStorage.removeItem(this.key(jid));
     } catch {
-      // armazenamento indisponível: o rascunho vale só enquanto a conversa estiver aberta
+      // armazenamento indisponível: o rascunho vale só enquanto o app estiver aberto
     }
+    draftListeners.get(jid)?.forEach((fn) => fn());
+  },
+  subscribe(jid: string, fn: () => void) {
+    let set = draftListeners.get(jid);
+    if (!set) draftListeners.set(jid, (set = new Set()));
+    set.add(fn);
+    return () => {
+      set.delete(fn);
+      if (!set.size) draftListeners.delete(jid);
+    };
   },
 };
+
+/** Rascunho ainda não enviado de uma conversa, atualizado enquanto se digita. */
+export function useDraft(jid: string): string {
+  return useSyncExternalStore(
+    useCallback((fn: () => void) => drafts.subscribe(jid, fn), [jid]),
+    () => drafts.get(jid),
+  );
+}

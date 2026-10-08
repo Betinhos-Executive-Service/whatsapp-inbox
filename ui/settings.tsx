@@ -1,4 +1,4 @@
-import { Bell, ChartColumn, Download, Monitor, Moon, Sun, Zap, KeyRound, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
+import { Bell, Briefcase, ChartColumn, Download, Monitor, Moon, Sun, Zap, KeyRound, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type AiStatus, type AppState, type Classifier, type Label, type Prefs, type QuickReply, type Theme } from "./api.ts";
 import { desktop, useAccount, type ReleaseInfo, type UpdateState } from "./desktop.ts";
@@ -382,6 +382,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const [aiText, setAiText] = useState("");
   const [savedAiText, setSavedAiText] = useState("");
   const [quick, setQuick] = useState<QuickReply[]>([]);
+  const [importingQuick, setImportingQuick] = useState(false);
   const [savedQuick, setSavedQuick] = useState<QuickReply[]>([]);
   const [prefs, setPrefs] = useState<Prefs>(state.prefs);
   const [key, setKey] = useState("");
@@ -848,6 +849,28 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
               </ul>
               <Button variant="ghost" size="compact" icon={<Plus size={16} aria-hidden />} disabled={quick.length >= 100} onClick={() => setQuick((l) => [...l, { shortcut: "", text: "" }])}>
                 Adicionar resposta rápida
+              </Button>
+              <Button
+                variant="ghost"
+                size="compact"
+                icon={<Briefcase size={16} aria-hidden />}
+                disabled={importingQuick || !sameQuick(quick, savedQuick)}
+                title={sameQuick(quick, savedQuick) ? undefined : "Salve as alterações antes de importar."}
+                onClick={async () => {
+                  setImportingQuick(true);
+                  try {
+                    const r = await api.importQuickReplies();
+                    setQuick(r.list);
+                    setSavedQuick(r.list);
+                    notify("success", r.found ? `WhatsApp Business: ${r.added} nova(s), ${r.updated} atualizada(s).` : "Nenhuma resposta rápida encontrada no WhatsApp Business.");
+                  } catch (e) {
+                    notify("error", (e as Error).message);
+                  } finally {
+                    setImportingQuick(false);
+                  }
+                }}
+              >
+                {importingQuick ? "Importando…" : "Importar do WhatsApp Business"}
               </Button>
             </section>
           )}
