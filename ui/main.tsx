@@ -1745,9 +1745,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             aria-pressed={notesOpen}
             aria-label={chat.note || chat.reminderAt !== null ? "Notas e lembretes (com conteúdo)" : "Notas e lembretes"}
             title="Notas e lembretes"
+            icon={<StickyNote size={16} aria-hidden />}
             onClick={() => setSide((v) => (v === "notes" ? null : "notes"))}
           >
-            <StickyNote size={16} aria-hidden />
             <span className="chat-pane__notes-label">Notas</span>
             {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden className="chat-pane__notes-alarm" />}
           </Button>

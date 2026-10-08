@@ -886,9 +886,7 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 .chat-pane__who:focus-visible { box-shadow: 0 0 0 2px var(--bt-focus-border); }
 .chat-pane__who[aria-pressed='true'] { background-color: var(--bt-color-action-soft); }
 .chat-pane__tools { flex: 0 1 auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--bt-space-2); min-width: 0; }
-.chat-pane__actions { flex: 0 0 auto; order: 2; display: flex; align-items: center; gap: var(--bt-space-1-5); padding-left: var(--bt-space-3); border-left: var(--bt-border-width-default) solid var(--bt-color-border); }
-.chat-pane__notes-toggle { gap: var(--bt-space-1-5); }
-.chat-pane__tools .chat-pane__notes-toggle { align-self: auto; }
+.chat-pane__actions { flex: 0 0 auto; order: 2; display: flex; align-items: center; gap: var(--bt-space-1-5); padding-left: var(--bt-space-3); border-left: var(--bt-border-width-default) solid var(--bt-color-border); }.chat-pane__tools .chat-pane__notes-toggle { align-self: auto; }
 .chat-pane__notes-toggle { position: relative; }
 .chat-pane__notes-toggle.has-content::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: var(--bt-radius-full); background-color: var(--bt-color-action); }
 .chat-pane__divider { width: 1px; height: 20px; flex: 0 0 auto; background-color: var(--bt-color-border); }
