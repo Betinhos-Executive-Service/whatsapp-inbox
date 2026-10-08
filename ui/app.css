@@ -1362,6 +1362,7 @@ kbd {
 .participants__row > .participant { flex: 1; min-width: 0; }
 /* Links e prévia de link */
 .wa-link { color: var(--bt-color-action); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.wa-mention { padding: 0 4px; border-radius: 4px; color: var(--bt-color-action); background-color: var(--bt-color-action-soft); font-weight: var(--bt-font-weight-semibold, 600); white-space: nowrap; }
 .wa-link:hover { text-decoration-thickness: 2px; }
 .wa-link:focus-visible { outline: none; border-radius: 2px; box-shadow: 0 0 0 2px var(--bt-focus-border); }
 .link-card {

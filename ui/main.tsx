@@ -679,6 +679,13 @@ function mergeTail(list: Message[], fresh: Message[]): Message[] {
   return [...list.filter((x) => !x.pending), ...added].sort((a, b) => a.at - b.at).concat(pending);
 }
 
+/** Encaixa pelo horário: mensagem atrasada (entregue depois de reconectar) não vai parar no fim. Pendentes ficam por último. */
+function insertByTime(list: Message[], m: Message): Message[] {
+  let i = list.length;
+  while (i > 0 && (list[i - 1].pending || list[i - 1].at > m.at)) i--;
+  return [...list.slice(0, i), m, ...list.slice(i)];
+}
+
 /** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
 /** Texto exibido da mensagem (legenda, sem "[Imagem]" nem o nome do arquivo). */
 function captionOf(m: Message, body: string): string {
@@ -1119,7 +1126,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       setMessages((list) => {
         if (!list || list.some((x) => x.id === m.id)) return list;
         const i = m.fromMe ? list.findIndex((x) => x.pending === "sending" && x.text === m.text) : -1;
-        return i >= 0 ? list.map((x, j) => (j === i ? m : x)) : [...list, m];
+        return i >= 0 ? list.map((x, j) => (j === i ? m : x)) : insertByTime(list, m);
       });
     };
     // Apagada, editada, reação ou status de entrega: troca no lugar.
@@ -1187,7 +1194,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       const older = await api.messages(chat.jid, before);
       keepOffset.current = scroller.current ? scroller.current.scrollHeight - scroller.current.scrollTop : null;
       setHasMore(older.length >= 80);
-      setMessages((list) => [...older, ...(list ?? [])]);
+      setMessages((list) => {
+        // O corte inclui o segundo da mais antiga: descarta as que já estão na tela.
+        const known = new Set((list ?? []).map((x) => x.id));
+        return [...older.filter((x) => !known.has(x.id)), ...(list ?? [])];
+      });
     } catch (e) {
       notify("error", (e as Error).message);
     } finally {
