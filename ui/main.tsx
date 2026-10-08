@@ -322,7 +322,7 @@ function ChatList(props: {
   onStarred: () => void;
 }) {
   const account = useAccount();
-  const [tab, setTab] = useState<Tab>("aberta");
+  const [tab, setTab] = useState<Tab>("todas");
   const [menu, setMenu] = useState<{ jid: string; x: number; y: number } | null>(null);
   const openMenu = useCallback((jid: string, x: number, y: number) => setMenu({ jid, x, y }), []);
   const closeMenu = useCallback(() => setMenu(null), []);
