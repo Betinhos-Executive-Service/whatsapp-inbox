@@ -38,3 +38,14 @@ test("parseAudioSummary lê JSON com texto em volta e corrige prioridade inváli
   assert.equal(s.prioridade, "media");
   assert.throws(() => parseAudioSummary("sem json"), /resumo legível/);
 });
+
+test("perfil pela IA: lê JSON com texto em volta, limpa listas e recusa resposta vazia", async () => {
+  const { parsePersona } = await import("../server/ai.ts");
+  const p = parsePersona('Segue: {"resumo":"Cliente  corporativo","trabalho":["Diretor na Acme"," "],"pagamento":"não é lista","atencao":["a","b","c","d","e","f"]}');
+  assert.equal(p.resumo, "Cliente corporativo");
+  assert.deepEqual(p.trabalho, ["Diretor na Acme"]);
+  assert.deepEqual(p.pagamento, []);
+  assert.equal(p.atencao.length, 5);
+  assert.throws(() => parsePersona('{"resumo":"","trabalho":[]}'));
+  assert.throws(() => parsePersona("sem json"));
+});

@@ -4,7 +4,7 @@
 import { z } from "zod";
 import type { Label, LabelExample, Message } from "./db.ts";
 import type { TokenUsage } from "./pricing.ts";
-import { audioSummaryPrompt, parseAudioSummary, type AudioSummary, draftPrompt, guardDraft, polishPrompt, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
+import { audioSummaryPrompt, parseAudioSummary, parsePersona, personaPrompt, type AudioSummary, type Persona, draftPrompt, guardDraft, polishPrompt, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
 import { buildState, PRIORITIES, PRIORITY_CRITERIA, type Classification } from "./jev.ts";
 
 /** Modelos da DeepSeek que o app oferece. Os dois têm contexto de 1M tokens. */
@@ -79,9 +79,11 @@ export class DeepSeekAI {
     return { messages: o.contextMessages, chars: o.messageChars };
   }
 
-  private async complete(apiKey: string, { system, user }: Prompt, task: DeepSeekTask, json = false): Promise<{ text: string; usage: TokenUsage }> {
+  /** minTokens: piso de saída para respostas longas (perfil), acima do limite configurado da tarefa. */
+  private async complete(apiKey: string, { system, user }: Prompt, task: DeepSeekTask, json = false, minTokens = 0): Promise<{ text: string; usage: TokenUsage }> {
     const o = this.options();
-    const { maxTokens, temperature } = o[task];
+    const maxTokens = Math.max(o[task].maxTokens, minTokens);
+    const { temperature } = o[task];
     const thinking = o.thinking;
     let res: Response;
     try {
@@ -149,6 +151,11 @@ export class DeepSeekAI {
   async summarizeAudio(apiKey: string, contactName: string, transcript: string): Promise<{ summary: AudioSummary; usage: TokenUsage }> {
     const { text, usage } = await this.complete(apiKey, audioSummaryPrompt(contactName, transcript), "summary", true);
     return { summary: parseAudioSummary(text), usage };
+  }
+
+  async persona(apiKey: string, contactName: string, messages: Message[]): Promise<{ persona: Persona; usage: TokenUsage }> {
+    const { text, usage } = await this.complete(apiKey, personaPrompt(contactName, messages), "summary", true, 1500);
+    return { persona: parsePersona(text), usage };
   }
 
   /** Mesmas respostas do Jev (etiqueta, espera resposta, urgência, prioridade) mais o motivo em uma frase. */

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type Chat, type Participant, type ParticipantAction, type ParticipantResult, type Profile } from "./api.ts";
 import { Avatar } from "./avatar.tsx";
 import { AddParticipantsDialog, GroupInfoDialog } from "./dialogs.tsx";
+import { MediaSection, PersonaSection } from "./profile-sections.tsx";
 import { ResizeHandle } from "./resize.tsx";
 import { Button, Dialog, Menu, Select } from "./ds/index.ts";
 
@@ -196,6 +197,8 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
           </section>
         )}
 
+        {!current.isGroup && <PersonaSection jid={current.jid} name={current.name} notify={notify} />}
+
         {isChat && (
           <section className="stack profile__section">
             <h5 className="eyebrow">
@@ -293,6 +296,8 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
             </section>
           </>
         )}
+
+        <MediaSection jid={current.jid} />
 
         {profile && !current.isGroup && connected && (
           <section className="stack profile__section">
