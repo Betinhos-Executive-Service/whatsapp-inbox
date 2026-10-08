@@ -5,6 +5,7 @@ import {
   BellOff,
   Pin,
   Ban,
+  Check,
   CheckCircle2,
   Forward,
   MoreVertical,
@@ -42,12 +43,13 @@ import {
   Sticker,
   Timer,
   UserRoundPlus,
+  PencilLine,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
-import { ChatItemMenu, drafts, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
+import { ChatItemMenu, drafts, isMuted, useDraft, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
@@ -87,6 +89,7 @@ import { AckIcon, canEdit, CopyButton, EditBar, ReactButton, ReactionList } from
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
 import { firstLink, toggleWa } from "./wa-text.ts";
 import { LinkCard } from "./link-preview.tsx";
+import { ChatPeek, PEEK_DELAY } from "./hover-preview.tsx";
 import { ContactCards, ContactPicker } from "./contacts.tsx";
 import { SelectionBar } from "./selection.tsx";
 import { selectionText } from "./selection-text.ts";
@@ -216,21 +219,30 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
 }
 
 /** Memo: chegada de mensagem numa conversa não redesenha as outras 200 da lista. */
-const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu }: { chat: Chat; selected: boolean; onOpen: (jid: string) => void; onMenu: (jid: string, x: number, y: number) => void }) {
+const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek }: { chat: Chat; selected: boolean; onOpen: (jid: string) => void; onMenu: (jid: string, x: number, y: number) => void; onPeek: (jid: string | null, el?: HTMLElement) => void }) {
   const urgent = (chat.ai?.urgent ?? 0) >= 0.5;
   const reminderDue = chat.reminderAt !== null && chat.reminderAt <= Date.now();
   const level = priorityLevel(priorityScore(chat));
   // Prioridade dita pela IA aparece sempre; "baixa" só quando não há nada mais relevante.
   const aiPriority = chat.ai?.priority ?? null;
   const showPriority = !!aiPriority && chat.status !== "resolvida" && (aiPriority !== "baixa" || (!level && !urgent && chat.reminderAt === null));
+  // Rascunho não enviado toma o lugar da prévia, como no WhatsApp; na conversa aberta ele já está no campo.
+  const draft = useDraft(chat.jid).trim();
+  const showDraft = !!draft && !selected;
   return (
     <li>
       <button
         className="chat-item"
         aria-current={selected ? "true" : undefined}
-        onClick={() => onOpen(chat.jid)}
+        onClick={() => {
+          onPeek(null);
+          onOpen(chat.jid);
+        }}
+        onMouseEnter={(e) => onPeek(chat.jid, e.currentTarget)}
+        onMouseLeave={() => onPeek(null)}
         onContextMenu={(e) => {
           e.preventDefault();
+          onPeek(null);
           // Pelo teclado (tecla Menu / Shift+F10) não há ponto do mouse: abre sob o item.
           const box = e.currentTarget.getBoundingClientRect();
           const keyboard = e.clientX === 0 && e.clientY === 0;
@@ -246,10 +258,20 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu }: { ch
             <span className={`chat-item__time${chat.unread || chat.markedUnread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>
           </span>
           <span className="chat-item__row">
-            <span className="chat-item__preview">
-              {chat.lastFromMe && <span className="chat-item__me">Você: </span>}
-              {chat.lastText ? <WaInline text={chat.lastText} /> : "Sem mensagens"}
-            </span>
+            {showDraft ? (
+              <span className="chat-item__preview chat-item__preview--draft" title={`Rascunho não enviado: ${draft}`}>
+                <span className="chat-item__draft">
+                  <PencilLine size={12} aria-hidden />
+                  Rascunho:
+                </span>{" "}
+                {draft.replace(/\s+/g, " ")}
+              </span>
+            ) : (
+              <span className="chat-item__preview">
+                {chat.lastFromMe && <span className="chat-item__me">Você: </span>}
+                {chat.lastText ? <WaInline text={chat.lastText} /> : "Sem mensagens"}
+              </span>
+            )}
             {chat.unread > 0 ? (
               <span className="count" aria-label={`${chat.unread} não lidas`}>
                 {chat.unread > 99 ? "99+" : chat.unread}
@@ -333,6 +355,17 @@ function ChatList(props: {
   const openMenu = useCallback((jid: string, x: number, y: number) => setMenu({ jid, x, y }), []);
   const closeMenu = useCallback(() => setMenu(null), []);
   const menuChat = menu ? props.byJid.get(menu.jid) : undefined;
+  // Prévia ao parar o mouse num item: só com mouse de verdade, e nunca da conversa já aberta.
+  const [peek, setPeek] = useState<{ jid: string; rect: DOMRect } | null>(null);
+  const peekTimer = useRef(0);
+  const onPeek = useCallback((jid: string | null, el?: HTMLElement) => {
+    window.clearTimeout(peekTimer.current);
+    setPeek(null);
+    if (!jid || !el || !matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+    peekTimer.current = window.setTimeout(() => setPeek({ jid, rect: el.getBoundingClientRect() }), PEEK_DELAY);
+  }, []);
+  useEffect(() => () => window.clearTimeout(peekTimer.current), []);
+  const peekChat = peek && peek.jid !== props.selected && !menu ? props.byJid.get(peek.jid) : undefined;
   const [showArchived, setShowArchived] = useState(false);
   const [label, setLabel] = useState("");
   const [query, setQuery] = useState("");
@@ -515,7 +548,7 @@ function ChatList(props: {
           </div>
         )}
       </header>
-      <div className="list-pane__scroll">
+      <div className="list-pane__scroll" onScroll={peek ? () => onPeek(null) : undefined}>
         {(showArchived || counts.arquivadas > 0) && (
           <button type="button" className="archived-toggle" aria-pressed={showArchived} onClick={() => setShowArchived((v) => !v)}>
             {showArchived ? <ArrowLeft size={16} aria-hidden /> : <Archive size={16} aria-hidden />}
@@ -557,7 +590,7 @@ function ChatList(props: {
         ) : (
           <ul className="chat-list">
             {filtered.slice(0, limit).map((c) => (
-              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} onMenu={openMenu} />
+              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} onMenu={openMenu} onPeek={onPeek} />
             ))}
           </ul>
         )}
@@ -568,6 +601,7 @@ function ChatList(props: {
         )}
         {messageQuery && <MessageHits hits={hits} chats={props.byJid} loading={hitsLoading} onOpen={props.onOpenAt} />}
       </div>
+      {peek && peekChat && <ChatPeek key={peek.jid} chat={peekChat} anchor={peek.rect} />}
       {menu && menuChat && <ChatItemMenu chat={menuChat} x={menu.x} y={menu.y} onChange={(patch) => props.onPatch(menuChat.jid, patch)} onClose={closeMenu} />}
     </section>
   );
@@ -702,7 +736,32 @@ function captionOf(m: Message, body: string): string {
   return caption;
 }
 
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText, rich }: {
+/** Primeira das `count` mensagens recebidas mais recentes (onde entra a faixa de não lidas). Se nem todas
+ * foram carregadas, fica na mais antiga recebida da lista. */
+function firstUnread(list: Message[], count: number): { id: string; count: number } | null {
+  if (count <= 0) return null;
+  let seen = 0;
+  let id: string | null = null;
+  for (let i = list.length - 1; i >= 0 && seen < count; i--) {
+    const m = list[i];
+    if (m.fromMe || m.kind === "system") continue;
+    id = m.id;
+    seen++;
+  }
+  return id ? { id, count } : null;
+}
+
+function UnreadDivider({ count }: { count: number }) {
+  return (
+    <div className="unread-divider" role="separator">
+      <span>{count === 1 ? "1 mensagem não lida" : `${count} mensagens não lidas`}</span>
+    </div>
+  );
+}
+
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText, rich, unreadMark }: {
+  /** Faixa "N mensagens não lidas" antes desta mensagem (fica até sair da conversa). */
+  unreadMark: { id: string; count: number } | null;
   /** Enquete, evento e convite: votar e entrar no grupo. */
   rich: RichActions;
   messages: Message[];
@@ -770,6 +829,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         return (
           <div key={m.id} data-message-id={m.id} className={`message-row${selected ? " message-row--selecting" : ""}${isSelected ? " message-row--selected" : ""}${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}${m.id === hitId ? " message-row--hit" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
+            {unreadMark?.id === m.id && <UnreadDivider count={unreadMark.count} />}
             <div
               className="message-line"
               onDoubleClick={(e) => {
@@ -801,14 +861,19 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
               }}
             >
               {selected && (
-                <input
-                  type="checkbox"
-                  className="message-check"
-                  aria-label={isSelected ? "Desmarcar mensagem" : "Selecionar mensagem"}
-                  checked={isSelected}
-                  disabled={!selectable}
-                  onChange={() => {}}
-                />
+                <span className="message-check">
+                  <input
+                    type="checkbox"
+                    className="message-check__input"
+                    aria-label={isSelected ? "Desmarcar mensagem" : "Selecionar mensagem"}
+                    checked={isSelected}
+                    disabled={!selectable}
+                    onChange={() => {}}
+                  />
+                  <span className="message-check__box" aria-hidden>
+                    <Check size={13} strokeWidth={3} />
+                  </span>
+                </span>
               )}
               {isGroup && !m.fromMe &&
                 (sender && !continues ? (
@@ -1053,16 +1118,33 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const stickToBottom = useRef(true);
   const keepOffset = useRef<number | null>(null);
   const pendingFocus = useRef<string | null>(null);
+  // Como no WhatsApp: com não lidas, a conversa abre na primeira delas, sob a faixa
+  // "N mensagens não lidas"; sem não lidas, abre no fim. A faixa fica até sair da conversa.
+  const [unreadAtOpen] = useState(() => chat.unread);
+  const [unreadMark, setUnreadMark] = useState<{ id: string; count: number } | null>(null);
+  const pendingUnread = useRef(false);
+  // Aberta pela busca (mensagens ao redor da achada): o fim da conversa pode não estar carregado.
+  const atLatest = useRef(true);
+  // Botão "ir para o fim" e quantas mensagens chegaram abaixo enquanto se lia acima.
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const [newBelow, setNewBelow] = useState(0);
 
   useEffect(() => {
     let alive = true;
     setMessages(null);
     stickToBottom.current = !focus;
+    atLatest.current = !focus;
     (focus ? api.messagesAround(chat.jid, focus.id) : api.messages(chat.jid))
       .then((list) => {
         if (!alive) return;
         // Abre já rolado e destacado na mensagem achada (ver o useLayoutEffect abaixo).
         pendingFocus.current = focus?.id ?? null;
+        if (!focus && unreadAtOpen > 0) {
+          const mark = firstUnread(list, unreadAtOpen);
+          setUnreadMark(mark);
+          pendingUnread.current = !!mark;
+          stickToBottom.current = !mark;
+        }
         setMessages(list);
         setHasMore(focus ? true : list.length >= 80);
       })
@@ -1070,11 +1152,20 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     return () => {
       alive = false;
     };
-  }, [chat.jid, notify, focus]);
+  }, [chat.jid, notify, focus, unreadAtOpen]);
 
   // Rascunho por conversa: volta ao abrir e é guardado enquanto digita (não durante uma edição).
-  useEffect(() => setDraft(drafts.get(chat.jid)), [chat.jid]);
+  // Na troca, o texto da conversa anterior ainda está no estado: pula um ciclo para não gravá-lo na nova.
+  const draftLoading = useRef(false);
   useEffect(() => {
+    draftLoading.current = true;
+    setDraft(drafts.get(chat.jid));
+  }, [chat.jid]);
+  useEffect(() => {
+    if (draftLoading.current) {
+      draftLoading.current = false;
+      return;
+    }
     if (!editing) drafts.set(chat.jid, draft);
   }, [chat.jid, draft, editing]);
 
@@ -1085,6 +1176,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       if (m.chatJid !== chat.jid) return;
       const el = scroller.current;
       stickToBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      if (!stickToBottom.current && !m.fromMe) setNewBelow((n) => n + 1);
       setMessages((list) => {
         if (!list || list.some((x) => x.id === m.id)) return list;
         const i = m.fromMe ? list.findIndex((x) => x.pending === "sending" && x.text === m.text) : -1;
@@ -1125,6 +1217,12 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       const id = pendingFocus.current;
       pendingFocus.current = null;
       jump(id);
+    } else if (pendingUnread.current) {
+      // Faixa de não lidas no topo da área visível; se o que vem abaixo dela é curto, o navegador para no fim.
+      pendingUnread.current = false;
+      const divider = el.querySelector<HTMLElement>(".unread-divider");
+      if (divider) el.scrollTop += divider.getBoundingClientRect().top - el.getBoundingClientRect().top - 8;
+      else el.scrollTop = el.scrollHeight;
     } else if (keepOffset.current !== null) {
       el.scrollTop = el.scrollHeight - keepOffset.current;
       keepOffset.current = null;
@@ -1162,7 +1260,26 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
   }, [chat.jid, notify]);
 
-  type Outgoing = { text: string; quotedId?: string; quotedChat?: string; mentions: string[]; mentionAll?: boolean };
+  // Seta "ir para o fim": desce até a última mensagem (recarrega o fim se a conversa veio da busca).
+  const jumpToEnd = async () => {
+    setNewBelow(0);
+    if (!atLatest.current) {
+      try {
+        const list = await api.messages(chat.jid);
+        atLatest.current = true;
+        stickToBottom.current = true;
+        setHasMore(list.length >= 80);
+        setMessages(list);
+      } catch (e) {
+        notify("error", (e as Error).message);
+      }
+      return;
+    }
+    const el = scroller.current;
+    el?.scrollTo({ top: el.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  };
+
+  type Outgoing ={ text: string; quotedId?: string; quotedChat?: string; mentions: string[]; mentionAll?: boolean };
   const pendingSeq = useRef(0);
   // Payload de cada bolha otimista, para "Tentar de novo".
   const outbox = useRef(new Map<string, Outgoing>());
@@ -1228,7 +1345,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       // Otimista: o texto novo aparece na hora; volta ao original se o servidor recusar.
       const original = editing;
       setEditing(null);
-      setDraft("");
+      setDraft(drafts.get(chat.jid));
       if (text === original.text) return;
       replaceMessage({ ...original, text, editedAt: Date.now() });
       try {
@@ -1616,9 +1733,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setDraft(m.text);
     requestAnimationFrame(() => composer.current?.focus());
   }, []);
+  // Ao sair da edição, volta o rascunho que estava no campo antes dela.
   const cancelEdit = () => {
     setEditing(null);
-    setDraft("");
+    setDraft(drafts.get(chat.jid));
   };
 
   // "digitando" do contato: assina ao abrir a conversa e limpa sozinho se o aviso de parada não vier.
@@ -1912,6 +2030,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         onScroll={(e) => {
           const el = e.currentTarget;
           stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+          setAwayFromBottom(el.scrollHeight - el.scrollTop - el.clientHeight > 300 || !atLatest.current);
+          if (stickToBottom.current && atLatest.current) setNewBelow(0);
         }}
       >
         {messages === null ? (
@@ -1952,7 +2072,22 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onToggleSelect={toggleSelect}
             onOpenContact={openContact}
             onCopyText={copyText}
+            unreadMark={unreadMark}
           />
+        )}
+        {messages && awayFromBottom && (
+          <div className="messages__jump">
+            <button
+              type="button"
+              className="jump-end"
+              aria-label={newBelow ? `Ir para a última mensagem, ${newBelow} ${newBelow === 1 ? "nova" : "novas"}` : "Ir para a última mensagem"}
+              title="Ir para a última mensagem"
+              onClick={() => void jumpToEnd()}
+            >
+              <ChevronDown size={20} aria-hidden />
+              {newBelow > 0 && <span className="count">{newBelow > 99 ? "99+" : newBelow}</span>}
+            </button>
+          </div>
         )}
       </div>
       {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
@@ -2064,29 +2199,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           />
         ) : (
           <>
-        <Button
-          variant="ghost"
-          aria-label="Anexar arquivo"
-          title="Anexar imagem, vídeo ou documento (ou arraste para a conversa, ou cole com Ctrl+V)"
-          disabled={!connected || sending}
-          onClick={() => fileInput.current?.click()}
-          icon={<Paperclip size={18} aria-hidden />}
-        />
         <EmojiButton disabled={!connected} onPick={insertEmoji} onClose={() => composer.current?.focus()} />
-        <Button
-          variant="ghost"
-          aria-label="Enviar contato"
-          title="Enviar contato"
-          disabled={!connected || sending}
-          onClick={() => setPickingContact(true)}
-          icon={<Contact size={18} aria-hidden />}
-        />
         <Menu
           align="start"
           trigger={(t) => (
-            <Button {...t} variant="ghost" aria-label="Enviar enquete, localização ou figurinha" title="Enquete, localização ou figurinha" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
+            <Button {...t} variant="ghost" aria-label="Anexar arquivo, contato, enquete, localização ou figurinha" title="Anexar (arquivo, contato, enquete, localização ou figurinha)" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
           )}
           actions={[
+            { id: "file", label: "Arquivo", icon: <Paperclip size={16} aria-hidden />, onSelect: () => fileInput.current?.click() },
+            { id: "contact", label: "Contato", icon: <Contact size={16} aria-hidden />, onSelect: () => setPickingContact(true) },
             { id: "poll", label: "Enquete", icon: <ListChecks size={16} aria-hidden />, onSelect: () => setComposeDialog("poll") },
             { id: "location", label: "Localização", icon: <MapPin size={16} aria-hidden />, onSelect: () => setComposeDialog("location") },
             { id: "sticker", label: "Figurinha", icon: <Sticker size={16} aria-hidden />, onSelect: () => setComposeDialog("sticker") },

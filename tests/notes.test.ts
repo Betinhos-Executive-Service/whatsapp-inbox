@@ -45,3 +45,15 @@ test("respostas rápidas mantêm a ordem e substituem a lista inteira", () => {
   s.saveQuickReplies([{ shortcut: "ola", text: "Olá, {nome}!" }]);
   assert.deepEqual(s.listQuickReplies(), [{ shortcut: "ola", text: "Olá, {nome}!" }]);
 });
+
+test("importação do WhatsApp Business: atalho normalizado, mesmo atalho atualiza, novos no fim", async () => {
+  const { mergeQuickReplies } = await import("../server/http.ts");
+  const r = mergeQuickReplies([{ shortcut: "pix", text: "antigo" }], [
+    { shortcut: "/Pix", text: "Chave nova" },
+    { shortcut: "Bom Dia ação", text: "Bom dia!" },
+    { shortcut: "vazio", text: "  " },
+  ]);
+  assert.deepEqual(r.list, [{ shortcut: "pix", text: "Chave nova" }, { shortcut: "bom-dia-acao", text: "Bom dia!" }]);
+  assert.equal(r.added, 1);
+  assert.equal(r.updated, 1);
+});

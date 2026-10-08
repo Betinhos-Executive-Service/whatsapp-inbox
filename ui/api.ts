@@ -279,7 +279,7 @@ export const api = {
   reminders: (jid: string) => request<Reminder[]>("GET", `${chatPath(jid)}/reminders`),
   addReminder: (jid: string, dueAt: number, text: string) => request<Reminder>("POST", `${chatPath(jid)}/reminders`, { dueAt, text }),
   doneReminder: (id: number) => request<Chat>("POST", `/api/reminders/${id}/done`, {}),
-  deleteReminder: (id: number) => request<Chat>("DELETE", `/api/reminders/${id}`),
+  deleteReminder: (id: number) => request<Chat>("DELETE", `/api/reminders/${id}`, {}),
   ai: () => request<AiStatus>("GET", "/api/ai"),
   mcpStatus: () => request<McpStatus>("GET", "/api/mcp/status"),
   mcpRegister: () => request<McpStatus>("POST", "/api/mcp/register", {}),
@@ -300,6 +300,8 @@ export const api = {
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
   quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
+  importQuickReplies: () =>
+    request<{ list: QuickReply[]; added: number; updated: number; found: number }>("POST", "/api/quick-replies/import", {}),
   cachedTranscript: (jid: string, id: string) =>
     request<{ text: string | null; summary: AudioSummary | null }>("GET", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`),
   summarizeAudio: (jid: string, id: string, force = false) =>
