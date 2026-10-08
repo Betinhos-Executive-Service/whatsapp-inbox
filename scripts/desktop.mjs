@@ -49,6 +49,16 @@ await esbuild.build({
   format: "esm",
   packages: "external",
 });
+// Servidor MCP para o Claude Code: o exe roda este arquivo em modo Node (ELECTRON_RUN_AS_NODE=1).
+// Tudo empacotado (SDK e zod ficam dentro), porque o instalador não leva node_modules.
+await esbuild.build({
+  ...nodeOptions,
+  entryPoints: [resolve(root, "server/mcp-main.ts")],
+  outfile: resolve(root, "dist-electron/mcp.mjs"),
+  format: "esm",
+  // Dependências CommonJS do SDK usam require(); em ESM ele precisa ser recriado.
+  banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
+});
 await esbuild.build({
   ...nodeOptions,
   entryPoints: [resolve(root, "desktop/preload.ts")],
