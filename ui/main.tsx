@@ -47,7 +47,7 @@ import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayo
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
-import { ChatItemMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
+import { ChatItemMenu, drafts, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
@@ -600,17 +600,18 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
         ))}
       </div>
       <span className="chat-pane__divider" aria-hidden />
+      {/* Um seletor só: a primeira etiqueta marcada é a principal, as demais são extras. */}
       <Select
-        aria-label="Etiqueta"
+        multiple
+        aria-label="Etiquetas (a primeira é a principal)"
         size="compact"
         className="field--label"
         placeholder="Sem etiqueta"
         searchable={labels.length > 8}
-        value={chat.label ?? null}
-        onChange={(v) => onChange({ label: v || null })}
+        value={[chat.label, ...chat.extraLabels].filter((l): l is string => !!l && labels.includes(l))}
+        onChange={(list) => onChange({ label: list[0] ?? null, extraLabels: list.slice(1) })}
         options={labels.map((l) => ({ value: l, label: l }))}
       />
-      <ExtraLabelsPicker chat={chat} labels={labels} onChange={onChange} />
       {(() => {
         // Classificar e o palpite da IA são um controle só: o botão mostra o resultado e refaz ao clicar.
         const ai = chat.ai;

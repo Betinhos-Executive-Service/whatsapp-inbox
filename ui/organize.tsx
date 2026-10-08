@@ -2,7 +2,7 @@ import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, ChevronLeft,
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Chat, ChatPatch, SearchHit } from "./api.ts";
 import { dayLabel, formatTime, listTime } from "./format.ts";
-import { Button, Dialog, Select } from "./ds/index.ts";
+import { Button, Dialog } from "./ds/index.ts";
 
 /** Silenciar "sempre": maior data que o JavaScript representa. */
 const FOREVER = 8_640_000_000_000_000;
@@ -250,24 +250,6 @@ export function ChatItemMenu({ chat, x, y, onChange, onClose }: { chat: Chat; x:
         </>
       )}
     </div>
-  );
-}
-
-/** Etiquetas extras da conversa, além da principal. */
-export function ExtraLabelsPicker({ chat, labels, onChange }: { chat: Chat; labels: string[]; onChange: (patch: ChatPatch) => void }) {
-  const options = labels.filter((l) => l !== chat.label);
-  if (!options.length) return null;
-  return (
-    <Select
-      multiple
-      size="compact"
-      searchable={options.length > 8}
-      aria-label="Etiquetas extras desta conversa"
-      placeholder="Mais etiquetas"
-      options={options.map((l) => ({ value: l, label: l }))}
-      value={chat.extraLabels.filter((l) => options.includes(l))}
-      onChange={(extraLabels) => onChange({ extraLabels })}
-    />
   );
 }
 
