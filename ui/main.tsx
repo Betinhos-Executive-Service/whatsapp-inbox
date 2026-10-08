@@ -70,6 +70,7 @@ import {
   ReplyBar,
   type MentionPick,
 } from "./conversation.tsx";
+import { AgentBar, ClaudeAgentButton } from "./claude-agent.tsx";
 import { ProfilePanel, type ProfileTarget } from "./profile.tsx";
 import { applyTheme, storedTheme } from "./theme.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
@@ -1954,6 +1955,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         </div>
         {/* Ações rápidas ficam sempre na linha do perfil, mesmo quando a classificação desce. */}
         <div className="chat-pane__actions">
+          <ClaudeAgentButton jid={chat.jid} available={!!ai?.claude.configured} notify={notify} />
           <Button
             variant="secondary"
             size="compact"
@@ -2160,6 +2162,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         {showMention && <MentionMenu items={mentionItems} active={mentionActive} onPick={pickMention} onHover={setMentionActive} />}
         {showEmoji && <EmojiShortcutMenu items={emojiItems} active={emojiActive} onPick={pickEmoji} onHover={setEmojiActive} />}
         {editing && <EditBar key={editing.id} message={editing} onCancel={cancelEdit} />}
+        {!editing && <AgentBar jid={chat.jid} hasDraft={!!chat.pendingDraft} notify={notify} />}
         {chat.pendingDraft && !editing && (
           <PendingDraftBar key={chat.pendingDraft.createdAt} draft={chat.pendingDraft} busy={pendingBusy} onSend={() => void sendPending()} onEdit={() => void editPending()} onDiscard={() => void discardPending()} />
         )}
@@ -2505,7 +2508,10 @@ function App() {
   useEffect(() => {
     reload();
     const es = new EventSource("/api/events");
-    es.onopen = () => setOnline(true);
+    es.onopen = () => {
+      setOnline(true);
+      window.dispatchEvent(new Event("inbox:agent-sync"));
+    };
     es.onerror = () => setOnline(false);
     es.addEventListener("state", (e) => setState(JSON.parse((e as MessageEvent).data)));
     es.addEventListener("connection", (e) => {
@@ -2517,6 +2523,7 @@ function App() {
       reload();
       api.state().then(setState).catch(() => undefined);
     });
+    es.addEventListener("agent", (e) => window.dispatchEvent(new CustomEvent("inbox:agent", { detail: JSON.parse((e as MessageEvent).data) })));
     es.addEventListener("ai", (e) => window.dispatchEvent(new CustomEvent("inbox:ai", { detail: JSON.parse((e as MessageEvent).data) })));
     es.addEventListener("reminder", (e) => {
       const { chat } = JSON.parse((e as MessageEvent).data) as { chat: Chat };

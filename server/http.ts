@@ -9,6 +9,7 @@ import { STATUSES, type Store } from "./db.ts";
 import { linkPreview } from "./link-preview.ts";
 import { EXT_BY_TYPE, TYPE_BY_EXT } from "./mime.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
+import { voucherSchema, type Voucher } from "./voucher.ts";
 
 /** Nome do arquivo baixado: o original, ou "arquivo" + extensão do tipo; sem extensão o Windows não sabe abrir. */
 export function downloadName(mimetype: string, fileName: string | null): string {
@@ -101,6 +102,13 @@ export type Api = {
     register: () => Promise<void>;
     unregister: () => Promise<void>;
   };
+  /** Botão Claude: analisar (só leitura) e, depois do OK da pessoa, agendar. Um por conversa. */
+  agent: {
+    list: () => unknown[];
+    start: (jid: string, step: "analisar" | "agendar") => unknown;
+    /** Some com o resultado da tela (não cancela execução em andamento). */
+    dismiss: (jid: string) => void;
+  };
   ai: {
     status: () => unknown;
     draft: (jid: string, text?: string) => Promise<string>;
@@ -120,6 +128,8 @@ export type Api = {
     usage: (days: number | null) => unknown;
     setUsdBrl: (rate: number | null) => void;
   };
+  /** Gera o PDF do voucher e o deixa como rascunho pendente da conversa, com a legenda. */
+  proposeVoucher: (jid: string, caption: string, voucher: Voucher) => Promise<unknown>;
   /** Caminho de uma cópia consistente do banco, para download. */
   backup: () => Promise<string>;
   subscribe: (res: ServerResponse) => void;
@@ -598,6 +608,18 @@ export function createHandler(api: Api) {
         const body = parse(draftSchema, await readJson(req));
         return json(res, 200, { text: await api.ai.draft(jid, body.text) });
       }
+      if (action === "/agent" && method === "POST") {
+        const { step } = parse(z.object({ step: z.enum(["analisar", "agendar"]) }), await readJson(req));
+        return json(res, 202, api.agent.start(jid, step));
+      }
+      if (action === "/agent" && method === "DELETE") {
+        api.agent.dismiss(jid);
+        return json(res, 200, { ok: true });
+      }
+      if (action === "/voucher" && method === "POST") {
+        const { legenda, voucher } = parse(z.object({ legenda: z.string().max(4096).default(""), voucher: voucherSchema }), await readJson(req));
+        return json(res, 200, await api.proposeVoucher(jid, legenda.trim(), voucher));
+      }
       if (action === "/summary" && method === "POST") {
         await readJson(req);
         return json(res, 200, await api.ai.summarize(jid));
@@ -640,6 +662,7 @@ export function createHandler(api: Api) {
       });
       return json(res, 200, await api.mcp.status());
     }
+    if (path === "/api/agent" && method === "GET") return json(res, 200, api.agent.list());
     if (path === "/api/ai" && method === "GET") return json(res, 200, api.ai.status());
     if (path === "/api/ai/usage" && method === "GET") {
       const days = url.searchParams.get("days");

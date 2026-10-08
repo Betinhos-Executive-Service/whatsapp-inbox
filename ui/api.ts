@@ -50,6 +50,19 @@ export type Chat = {
   pendingDraft: { text: string; hasMedia: boolean; source: string; createdAt: number } | null;
 };
 
+/** Botão Claude: 1) analisar a conversa (só leitura); 2) agendar, depois que você confere o resumo. */
+export type AgentStep = "analisar" | "agendar";
+export type AgentJob = {
+  jid: string;
+  step: AgentStep;
+  status: "rodando" | "pronto" | "erro";
+  startedAt: number;
+  finishedAt: number | null;
+  analysis: { resultado: "pronto" | "faltam_dados" | "ja_existia" | "nao_e_agendamento"; resumo: string; previa: string; os: string[] } | null;
+  scheduled: { resultado: "agendado" | "ja_existia" | "erro"; resumo: string; os: string[] } | null;
+  error: string | null;
+};
+
 export type PendingDraft = {
   text: string;
   quotedId: string | null;
@@ -308,6 +321,9 @@ export const api = {
   aiUsage: (days: number | null) => request<AiUsageSummary>("GET", `/api/ai/usage?days=${days ?? "all"}`),
   setAiUsageRate: (rate: number) => request<{ ok: true }>("PUT", "/api/ai/usage/rate", { rate }),
   draft: (jid: string, text?: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, text ? { text } : {}),
+  agentJobs: () => request<AgentJob[]>("GET", "/api/agent"),
+  agentStart: (jid: string, step: AgentStep) => request<AgentJob>("POST", `${chatPath(jid)}/agent`, { step }),
+  agentDismiss: (jid: string) => request<{ ok: true }>("DELETE", `${chatPath(jid)}/agent`),
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
   persona: (jid: string) => request<{ persona: Persona | null }>("GET", `${chatPath(jid)}/persona`),
   generatePersona: (jid: string) => request<{ persona: Persona }>("POST", `${chatPath(jid)}/persona`, {}),

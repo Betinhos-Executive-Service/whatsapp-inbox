@@ -1,5 +1,5 @@
 // Compila a interface (ui/) para dist/ com esbuild e grava a versão do build no bundle.
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 export const root = resolve(import.meta.dirname, "..");
@@ -43,7 +43,7 @@ export function uiOptions({ version, date }, { dev = false } = {}) {
 }
 
 /**
- * Copia o index.html. Com o metafile do build, avisa o navegador logo no HTML quais arquivos
+ * Copia o index.html (e o template do voucher). Com o metafile do build, avisa o navegador logo no HTML quais arquivos
  * o app.js vai pedir (pedaço compartilhado e fonte principal), em vez de descobri-los depois.
  */
 export async function copyHtml(metafile) {
@@ -58,4 +58,6 @@ export async function copyHtml(metafile) {
     html = html.replace("  </head>", `    ${links.join("\n    ")}\n  </head>`);
   }
   await writeFile(resolve(dist, "index.html"), html);
+  // Template do voucher de confirmação: o servidor lê de dist/voucher para gerar o PDF.
+  await cp(resolve(root, "voucher"), resolve(dist, "voucher"), { recursive: true });
 }

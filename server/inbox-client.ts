@@ -71,5 +71,7 @@ export function createInboxClient({ fetch: doFetch, file }: { fetch: typeof glob
     update: (jid: string, patch: ChatPatchInput) => request<Chat>("PATCH", chatPath(jid), patch),
     openChat: (phone: string) => request<Chat>("POST", "/api/open-chat", { phone }),
     setPendingDraft: (jid: string, draft: PendingDraftInput) => request<Chat>("PUT", `${chatPath(jid)}/pending-draft`, draft),
+    /** O app gera o PDF do voucher e o deixa como rascunho pendente, com a legenda. */
+    proposeVoucher: (jid: string, body: { legenda: string; voucher: unknown }) => request<Chat>("POST", `${chatPath(jid)}/voucher`, body),
   };
 }

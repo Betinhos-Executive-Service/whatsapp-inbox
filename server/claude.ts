@@ -121,7 +121,12 @@ export class ClaudePlanAI {
     return { messages: o.contextMessages, chars: o.messageChars };
   }
 
-  private async complete({ system, user }: Prompt): Promise<{ text: string; usage: TokenUsage }> {
+  /** Execução com ferramentas próprias (agente): `disallowed` vence permissões globais do Claude Code. */
+  async agent(prompt: Prompt, tools: { allowed: string[]; disallowed: string[]; timeoutMs: number }): Promise<{ text: string; usage: TokenUsage }> {
+    return this.complete(prompt, { ...tools, hint: "" });
+  }
+
+  private async complete({ system, user }: Prompt, tools?: { allowed: string[]; disallowed: string[]; hint: string; timeoutMs: number }): Promise<{ text: string; usage: TokenUsage }> {
     const bin = this.bin();
     if (!bin) throw new Error("Claude Code não encontrado neste PC. Instale e faça login com `claude` no terminal.");
     mkdirSync(this.cwd, { recursive: true });
@@ -130,11 +135,12 @@ export class ClaudePlanAI {
       "-p",
       "--output-format", "json",
       "--model", this.model(),
-      "--append-system-prompt", system + DATAVERSE_HINT,
-      "--allowedTools", CLAUDE_ALLOWED_TOOLS.join(","),
+      "--append-system-prompt", system + (tools ? tools.hint : DATAVERSE_HINT),
+      "--allowedTools", (tools?.allowed ?? CLAUDE_ALLOWED_TOOLS).join(","),
+      ...(tools?.disallowed.length ? ["--disallowedTools", tools.disallowed.join(",")] : []),
       ...(effort === "default" ? [] : ["--effort", effort]),
     ];
-    const raw = await this.run(bin, args, user, this.cwd, EFFORT_TIMEOUT[effort]);
+    const raw = await this.run(bin, args, user, this.cwd, Math.max(EFFORT_TIMEOUT[effort], tools?.timeoutMs ?? 0));
     let data: ResultJson;
     try {
       data = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)) as ResultJson;

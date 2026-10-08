@@ -128,3 +128,22 @@ test("MCP: propor_midia lê o arquivo local, deduz o tipo e recusa arquivo inexi
     await close();
   }
 });
+
+test("MCP: propor_voucher manda os dados ao app e recusa data inválida", async () => {
+  const { calls, call, close } = await setup(({ method, path }) => (method === "POST" && path.endsWith("/voucher") ? Response.json(chat()) : null));
+  try {
+    const servicos = [{ os: "OS-1896", dataHoraSaida: "2026-10-09T08:30:00-03:00", trajeto: "Hotel / GRU" }];
+    const ok = await call("propor_voucher", { jid: PN, legenda: "*Confirmação*", servicos, passageiros: ["Ana"], empresa: "ACME" });
+    assert.equal(ok.isError, undefined);
+    const body = calls.at(-1)!.body as { legenda: string; voucher: { servicos: unknown[]; empresa: string; email: string } };
+    assert.equal(calls.at(-1)!.path, `/api/chats/${encodeURIComponent(PN)}/voucher`);
+    assert.equal(body.legenda, "*Confirmação*");
+    assert.deepEqual(body.voucher.servicos, servicos);
+    assert.equal(body.voucher.empresa, "ACME");
+    assert.equal(body.voucher.email, "");
+    const bad = await call("propor_voucher", { jid: PN, legenda: "x", servicos: [{ os: "OS-1", dataHoraSaida: "amanhã" }] });
+    assert.equal(bad.isError, true);
+  } finally {
+    await close();
+  }
+});

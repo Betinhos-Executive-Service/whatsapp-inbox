@@ -48,6 +48,8 @@ export function fakeApi(store: Store, over: Partial<Api> = {}): Api {
     logout: async () => undefined,
     reset: async () => undefined,
     backup: async () => "",
+    proposeVoucher: async (jid) => store.getChat(jid),
+    agent: { list: () => [], start: (jid, step) => ({ jid, step }), dismiss: () => undefined },
     media: async () => ({ body: Buffer.from("0123456789"), mimetype: "audio/ogg", fileName: null }),
     transcribe: async () => "oi",
     cachedTranscript: async () => ({ text: null, summary: null }),

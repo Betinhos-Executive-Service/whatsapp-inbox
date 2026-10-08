@@ -35,9 +35,18 @@ Com a classificação automática ligada, cada conversa que recebe mensagem é c
 
 ## Claude Code (servidor MCP)
 
-Em **Configurações › IA › Claude Code**, clique em **Conectar**: o app registra um servidor MCP (`whatsapp-inbox`, escopo do usuário) no Claude Code deste PC. Nas sessões do Claude você passa a ter `listar_conversas`, `ler_mensagens`, `buscar_mensagens`, `ler_midia` (áudio vira transcrição, imagem vem como imagem), `perfil_contato`, `marcar_lida`, `atualizar_conversa`, `abrir_conversa`, `propor_resposta` e `propor_midia`.
+Em **Configurações › IA › Claude Code**, clique em **Conectar**: o app registra um servidor MCP (`whatsapp-inbox`, escopo do usuário) no Claude Code deste PC. Nas sessões do Claude você passa a ter `listar_conversas`, `ler_mensagens`, `buscar_mensagens`, `ler_midia` (áudio vira transcrição, imagem vem como imagem), `perfil_contato`, `marcar_lida`, `atualizar_conversa`, `abrir_conversa`, `propor_resposta`, `propor_midia` e `propor_voucher` (gera o PDF do voucher de confirmação com o modelo da Tela Voucher e deixa como rascunho).
 
 O Claude nunca envia: `propor_*` cria um **rascunho pendente** na conversa, que aparece no composer com **Enviar**, **Editar** e **Descartar**. O processo MCP fala com o app pela API local (`x-inbox-token`); o app grava porta e token da execução em `mcp.json` (pasta de dados; em dev `data/mcp.json`), então o Inbox precisa estar aberto. Reinicie as sessões do Claude Code depois de conectar. Em desenvolvimento, o comando registrado é `node server/mcp-main.ts`; no app instalado é o próprio executável em modo Node com `dist-electron/mcp.mjs`.
+
+## Botão Claude: agendar pela conversa
+
+O botão com a marca do Claude, no topo da conversa, prepara o agendamento com o Claude Code deste PC (skill `assistente-betinhos`):
+
+1. **Analisar:** o Claude lê as últimas mensagens (áudio e imagem pelo MCP) e consulta o Dataverse de produção **só para leitura**. Acima do campo de mensagem aparece o resumo do serviço para conferir. Se faltar dado, ele deixa como rascunho a mensagem pedindo o que falta; se não for agendamento, só avisa.
+2. **Agendar:** só depois de você clicar em **Agendar**, ele cria a OS como *Solicitado*, vincula os passageiros e deixa na conversa o rascunho com o **voucher em PDF** e a mensagem de confirmação. Se o serviço já existia, o botão vira **Gerar voucher**.
+
+Nada é enviado ao cliente sem você clicar em **Enviar**. Cada etapa leva de 1 a 3 minutos e continua se você trocar de conversa. O app registra o MCP no Claude Code sozinho, se ainda não estiver registrado. O PDF é impresso pelo Edge (ou Chrome) em modo headless; contatos do suporte e política de cancelamento usam o padrão da Tela Voucher.
 
 ## Dados
 

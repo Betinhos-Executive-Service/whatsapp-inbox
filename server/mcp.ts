@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { Chat, Message } from "./db.ts";
 import type { InboxClient } from "./inbox-client.ts";
 import { typeByExtension } from "./mime.ts";
+import { voucherSchema } from "./voucher.ts";
 
 // Só tipos de db.ts: importar valores puxaria o node:sqlite para o processo MCP.
 const STATUSES = ["aberta", "aguardando", "resolvida"] as const satisfies readonly Chat["status"][];
@@ -227,6 +228,23 @@ export function createMcpServer(client: InboxClient): McpServer {
       const fileName = basename(caminhoArquivo);
       await client.setPendingDraft(jid, { text: legenda ?? "", source: "claude", media: { fileName, mimetype: typeByExtension(fileName), data: body.toString("base64") } });
       return text(PROPOSED);
+    }),
+  );
+
+  server.registerTool(
+    "propor_voucher",
+    {
+      title: "Propor voucher de confirmação",
+      description: "Gera o PDF do voucher de confirmação (mesmo modelo da Tela Voucher do Dynamics) com os dados das OS lidos do Dataverse e cria um rascunho na conversa com o PDF e a legenda. NÃO envia: a pessoa confirma no WhatsApp Inbox. Use só dados consultados; campo vazio fica vazio.",
+      inputSchema: {
+        jid: z.string(),
+        legenda: z.string().max(4096).describe("Mensagem de confirmação ao cliente, em pt-BR, com formatação do WhatsApp."),
+        ...voucherSchema.shape,
+      },
+    },
+    guarded(async ({ jid, legenda, ...voucher }) => {
+      await client.proposeVoucher(jid, { legenda, voucher });
+      return text(`Voucher gerado. ${PROPOSED}`);
     }),
   );
 
