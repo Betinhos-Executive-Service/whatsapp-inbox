@@ -267,11 +267,11 @@ ul, ol { margin: 0; padding: 0; }
 .chat-item {
   display: flex; gap: var(--bt-space-3); width: 100%;
   padding: var(--bt-space-2-5) var(--bt-space-4);
-  border: 0; border-left: var(--bt-border-width-severity) solid transparent;
+  border: 0;
   background: transparent; text-align: left; cursor: pointer;
   transition: background-color var(--bt-duration-fast) ease;
 }
-.chat-item[aria-current='true'] { background-color: var(--bt-color-action-soft); border-left-color: var(--bt-color-action); }
+.chat-item[aria-current='true'] { background-color: var(--bt-color-action-soft); }
 .chat-item:focus-visible { box-shadow: inset 0 0 0 2px var(--bt-focus-border); }
 @media (hover: hover) and (pointer: fine) {
   .chat-item:not([aria-current='true']):hover { background-color: var(--bt-color-surface-soft); }
@@ -432,7 +432,7 @@ ul, ol { margin: 0; padding: 0; }
 .forward-dialog > * { flex-shrink: 0; }
 .forward-dialog__head { display: flex; align-items: center; justify-content: space-between; gap: var(--bt-space-2); }
 .forward-dialog__preview {
-  padding: var(--bt-space-2) var(--bt-space-2-5); border-left: var(--bt-border-width-severity) solid var(--bt-color-action); border-radius: var(--bt-radius-xs);
+  padding: var(--bt-space-2-5) var(--bt-space-3); border: var(--bt-border-width-default) solid var(--bt-color-border); border-radius: var(--bt-radius-sm);
   background-color: var(--bt-color-surface-neutral); font-size: var(--bt-font-size-13); color: var(--bt-color-slate-700);
   overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; white-space: pre-wrap;
 }
@@ -484,7 +484,7 @@ ul, ol { margin: 0; padding: 0; }
 .wa--live.wa--b { font-weight: inherit; -webkit-text-stroke: 0.45px currentColor; }
 .wa--live.wa--code, .wa--live.wa--mono { font-family: inherit; font-size: inherit; padding: 0; border: 0; background-color: var(--bt-color-surface-soft); }
 .wa-mark { color: var(--bt-color-text-secondary); font-weight: 400; font-style: normal; -webkit-text-stroke: 0; text-decoration: none; }
-.wa-quote { display: block; padding-left: var(--bt-space-2); border-left: 3px solid var(--bt-color-border); color: var(--bt-color-slate-700); }
+.wa-quote { display: block; padding: var(--bt-space-1) var(--bt-space-2); border-radius: var(--bt-radius-xs); background-color: var(--bt-color-surface-soft); color: var(--bt-color-slate-700); }
 .wa-list { display: flex; gap: var(--bt-space-1-5); }
 .wa-list__mark { flex: 0 0 auto; min-width: 1em; color: var(--bt-color-text-secondary); }
 
@@ -993,7 +993,7 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 .quote {
   display: flex; flex-direction: column; gap: 1px; width: 100%; min-width: 160px;
   margin: 0 0 var(--bt-space-1-5); padding: var(--bt-space-1-5) var(--bt-space-2-5);
-  border: 0; border-left: var(--bt-border-width-severity) solid var(--bt-color-action);
+  border: var(--bt-border-width-default) solid var(--bt-color-border);
   border-radius: var(--bt-radius-sm); background-color: var(--bt-color-surface-soft);
   text-align: left; cursor: pointer;
 }
@@ -1339,7 +1339,7 @@ kbd {
 .wa-link:focus-visible { outline: none; border-radius: 2px; box-shadow: 0 0 0 2px var(--bt-focus-border); }
 .link-card {
   display: flex; flex-direction: column; width: 100%; min-width: 200px; max-width: 360px; margin: 0 0 var(--bt-space-1-5); overflow: hidden;
-  border-left: var(--bt-border-width-severity) solid var(--bt-color-action); border-radius: var(--bt-radius-sm);
+  border: var(--bt-border-width-default) solid var(--bt-color-border); border-radius: var(--bt-radius-sm);
   background-color: var(--bt-color-surface-soft); color: inherit; text-decoration: none;
 }
 .bubble--me .link-card { background-color: var(--bt-color-surface); }
@@ -1354,7 +1354,7 @@ kbd {
 /* Seleção de várias mensagens */
 .message-row--selecting .message-line { cursor: pointer; border-radius: var(--bt-radius-sm); }
 .message-row--selecting .bubble { user-select: none; }
-.message-row--selected .message-line { background-color: var(--bt-color-action-soft); box-shadow: inset 3px 0 0 var(--bt-color-action); }
+.message-row--selected .message-line { background-color: var(--bt-color-action-soft); }
 .message-check { flex: none; align-self: center; width: 18px; height: 18px; margin: 0 var(--bt-space-1); accent-color: var(--bt-color-action); cursor: pointer; }
 .message-row--me .message-check { margin-right: auto; }
 .selection-bar {
