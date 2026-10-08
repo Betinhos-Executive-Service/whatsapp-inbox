@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, ChevronLeft, ChevronRight, Clock, Keyboard, MessageSquareText, Pin, PinOff, Tags, X } from "lucide-react";
+import { Archive, ArchiveRestore, AudioLines, Bell, BellOff, Check, ChevronLeft, ChevronRight, Clock, Keyboard, Mail, MailOpen, MessageSquareText, Pin, PinOff, Tags, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Chat, ChatPatch, SearchHit } from "./api.ts";
 import { dayLabel, formatTime, listTime } from "./format.ts";
@@ -176,6 +176,15 @@ export function ChatItemMenu({ chat, x, y, onChange, onClose }: { chat: Chat; x:
           <MenuItem icon={chat.archived ? <ArchiveRestore size={16} aria-hidden /> : <Archive size={16} aria-hidden />} onClick={() => pick({ archived: !chat.archived })}>
             {chat.archived ? "Desarquivar" : "Arquivar"}
           </MenuItem>
+          {chat.unread > 0 || chat.markedUnread ? (
+            <MenuItem icon={<MailOpen size={16} aria-hidden />} onClick={() => pick({ markedUnread: false })}>
+              Marcar como lida
+            </MenuItem>
+          ) : (
+            <MenuItem icon={<Mail size={16} aria-hidden />} onClick={() => pick({ markedUnread: true })}>
+              Marcar como não lida
+            </MenuItem>
+          )}
           <span className="ctx-menu__sep" role="separator" />
           {muted ? (
             <MenuItem icon={<Bell size={16} aria-hidden />} hint={chat.mutedUntil! >= FOREVER ? "sempre" : `até ${untilLabel(chat.mutedUntil!)}`} onClick={() => pick({ mutedUntil: null })}>

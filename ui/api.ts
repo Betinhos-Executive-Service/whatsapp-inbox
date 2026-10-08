@@ -40,7 +40,24 @@ export type Chat = {
   snoozedUntil: number | null;
   /** Transcrição automática: null segue a opção global. */
   autoTranscribe: "on" | "off" | null;
+  /** Marcada como não lida (aqui ou no celular). */
+  markedUnread: boolean;
+  /** Mensagens temporárias: prazo em segundos; null = desligadas. */
+  ephemeral: number | null;
+  /** Mensagens fixadas que ainda valem, a mais recente primeiro. */
+  pins: { id: string; until: number; text: string | null; fromMe: boolean }[];
 };
+
+export type CallInfo = { video: boolean; outcome: "ringing" | "missed" | "rejected" | "connected" | "elsewhere" | "failed"; seconds: number | null; group: boolean; outgoing: boolean };
+/** Conteúdo além do texto: enquete, localização, contato, evento, convite, ligação, prévia de link. */
+export type Extra =
+  | { type: "poll"; question: string; options: string[]; selectable: number }
+  | { type: "location"; lat: number; lng: number; name: string | null; address: string | null; url: string | null; live: boolean }
+  | { type: "event"; name: string; description: string | null; start: number | null; end: number | null; place: string | null; link: string | null; canceled: boolean }
+  | { type: "invite"; groupJid: string; groupName: string | null; code: string; expiration: number | null; caption: string | null }
+  | ({ type: "call" } & CallInfo);
+
+export type PollResult = { options: { name: string; count: number; mine: boolean; voters: string[] }[]; voters: number };
 
 export type UsageKind = "classificar" | "rascunho" | "resumo";
 export type UsageProvider = "jev" | "deepseek" | "local" | "claude";
@@ -89,6 +106,7 @@ export type ChatPatch = {
   mutedUntil?: number | null;
   snoozedUntil?: number | null;
   autoTranscribe?: "on" | "off" | null;
+  markedUnread?: boolean;
 };
 
 /** Mensagem achada na busca; `snippet` marca o termo entre \u0002 e \u0003. */
@@ -114,6 +132,11 @@ export type Message = {
   ack: number | null;
   editedAt: number | null;
   reactions: { emoji: string; fromMe: boolean }[];
+  extra: Extra | null;
+  /** Só em enquete: votos somados por opção. */
+  poll: PollResult | null;
+  /** Favoritada (estrela). */
+  starred: boolean;
   /** Só no cliente: envio otimista ainda sem confirmação do servidor. */
   pending?: "sending" | "failed";
 };
@@ -129,8 +152,20 @@ export type Participant = { jid: string; name: string; phone: string | null; adm
 export type Profile = {
   about: string | null;
   aboutAt: number | null;
-  group: { subject: string; description: string | null; createdAt: number | null; size: number; participants: Participant[] } | null;
+  blocked: boolean;
+  group: {
+    subject: string;
+    description: string | null;
+    createdAt: number | null;
+    size: number;
+    participants: Participant[];
+    meAdmin: boolean;
+    /** Só admins mudam nome e descrição. */
+    restrict: boolean;
+  } | null;
 };
+export type ParticipantAction = "add" | "remove" | "promote" | "demote";
+export type ParticipantResult = { jid: string; ok: boolean; reason: string | null };
 
 /** Foto de perfil servida pelo app (miniatura em cache; full = tamanho cheio). */
 export const photoUrl = (jid: string, full = false, v = 0) =>
@@ -186,8 +221,26 @@ export const api = {
   messages: (jid: string, before?: number) =>
     request<Message[]>("GET", `${chatPath(jid)}/messages${before ? `?before=${before}` : ""}`),
   read: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/read`, {}),
-  send: (jid: string, text: string, opts: { quotedId?: string; mentions?: string[]; mentionAll?: boolean } = {}) =>
+  send: (jid: string, text: string, opts: { quotedId?: string; quotedChat?: string; mentions?: string[]; mentionAll?: boolean } = {}) =>
     request<Chat>("POST", `${chatPath(jid)}/send`, { text, ...opts }),
+  sendPoll: (jid: string, poll: { question: string; options: string[]; multiple: boolean }) => request<Chat>("POST", `${chatPath(jid)}/poll`, poll),
+  vote: (jid: string, id: string, options: string[]) => request<Message | null>("POST", `${chatPath(jid)}/vote`, { id, options }),
+  sendLocation: (jid: string, place: { lat: number; lng: number; name?: string; address?: string }) => request<Chat>("POST", `${chatPath(jid)}/location`, place),
+  sendSticker: (jid: string, from: { chatJid: string; id: string }) => request<Chat>("POST", `${chatPath(jid)}/sticker`, from),
+  stickers: () => request<{ chatJid: string; id: string }[]>("GET", "/api/stickers"),
+  star: (jid: string, id: string, starred: boolean) => request<{ message: Message | null; synced: boolean }>("POST", `${chatPath(jid)}/star`, { id, starred }),
+  starred: () => request<Message[]>("GET", "/api/starred"),
+  /** seconds null desafixa. */
+  pin: (jid: string, id: string, seconds: number | null) => request<Chat>("POST", `${chatPath(jid)}/pin`, { id, seconds }),
+  setEphemeral: (jid: string, seconds: number) => request<Chat>("POST", `${chatPath(jid)}/ephemeral`, { seconds }),
+  setBlocked: (jid: string, blocked: boolean) => request<{ blocked: boolean }>("POST", `${chatPath(jid)}/block`, { blocked }),
+  /** Conversa com um número (conferido no WhatsApp) ou com um contato/participante conhecido. */
+  openChat: (target: { phone: string } | { jid: string }) => request<Chat>("POST", "/api/open-chat", target),
+  createGroup: (subject: string, participants: string[]) => request<Chat>("POST", "/api/groups", { subject, participants }),
+  updateParticipants: (jid: string, action: ParticipantAction, participants: string[]) =>
+    request<ParticipantResult[]>("POST", `${chatPath(jid)}/participants`, { action, participants }),
+  updateGroupInfo: (jid: string, info: { subject?: string; description?: string }) => request<Chat>("POST", `${chatPath(jid)}/group-info`, info),
+  acceptInvite: (jid: string, id: string) => request<Chat>("POST", `${chatPath(jid)}/accept-invite`, { id }),
   deleteMessage: (jid: string, id: string, mode: "everyone" | "me") =>
     request<{ chat: Chat; synced: boolean }>("POST", `${chatPath(jid)}/delete`, { id, mode }),
   participants: (jid: string) => request<Participant[]>("GET", `${chatPath(jid)}/participants`),
@@ -201,7 +254,6 @@ export const api = {
   sendMedia: (jid: string, file: OutgoingMedia) => request<Chat>("POST", `${chatPath(jid)}/send-media`, file),
   update: (jid: string, patch: ChatPatch & { note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
   sendContacts: (jid: string, contacts: { name: string; phone: string }[]) => request<Chat>("POST", `${chatPath(jid)}/send-contacts`, { contacts }),
-  openChat: (phone: string) => request<Chat>("POST", "/api/open-chat", { phone }),
   linkPreview: (url: string) => request<LinkPreview | null>("GET", `/api/link-preview?url=${encodeURIComponent(url)}`),
   search: (q: string) => request<SearchHit[]>("GET", `/api/search?q=${encodeURIComponent(q)}`),
   /** Da mensagem achada até a mais nova, para abrir a conversa nela. */

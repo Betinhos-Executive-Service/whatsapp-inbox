@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { Store, type Message } from "../server/db.ts";
 import { ClaudePlanAI, CLAUDE_ALLOWED_TOOLS, type ClaudeRun } from "../server/claude.ts";
 
-const msg = (fromMe: boolean, text: string, at: number): Message => ({ chatJid: "x", id: String(at), fromMe, at, text, kind: "text", media: null, contacts: null, quoted: null, deleted: false, sender: null, ack: null, editedAt: null, reactions: [] });
+const msg = (fromMe: boolean, text: string, at: number): Message => ({ chatJid: "x", id: String(at), fromMe, at, text, kind: "text", media: null, contacts: null, quoted: null, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false });
 const conversa = [msg(false, "Bom dia! Preciso de carro amanhã às 7h para Guarulhos. Qual o valor?", 1_760_000_000_000)];
 
 function fakeRun(result: unknown, seen: { args?: string[]; input?: string; cwd?: string } = {}): ClaudeRun {

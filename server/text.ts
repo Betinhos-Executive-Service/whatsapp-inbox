@@ -65,7 +65,6 @@ const IGNORED = new Set([
   "keepInChatMessage",
   "pinInChatMessage",
   "encReactionMessage",
-  "callLogMesssage",
   // Cabeçalho de álbum: as fotos chegam como mensagens próprias.
   "albumMessage",
   "editedMessage",
@@ -180,6 +179,10 @@ export function extractText(content: Content): Extracted | null {
       return { text: m.hydratedTemplate?.hydratedContentText?.trim() || "[Mensagem de modelo]", kind: "other" };
     case "requestPhoneNumberMessage":
       return { text: "[Pedido de número de telefone]", kind: "other" };
+    case "callLogMesssage": {
+      const call = callFromLog(m);
+      return { text: callText(call), kind: "call" };
+    }
     default:
       // O tipo fica no `kind` para diagnóstico (ex.: other:fooMessage).
       return { text: "[Mensagem não suportada]", kind: `other:${type}` };
@@ -212,4 +215,136 @@ export function revokedId(content: Content): string | null {
   const p = content?.protocolMessage;
   // type 0 = REVOKE no protocolo do WhatsApp.
   return p && (p.type === 0 || p.type === "REVOKE") && p.key?.id ? String(p.key.id) : null;
+}
+
+// ---- conteúdo rico: o que a tela precisa além do texto (enquete, localização, contato, evento, convite, ligação, prévia de link)
+
+export type CallOutcome = "ringing" | "missed" | "rejected" | "connected" | "elsewhere" | "failed";
+export type CallInfo = { video: boolean; outcome: CallOutcome; seconds: number | null; group: boolean; outgoing: boolean };
+
+export type Extra =
+  | { type: "poll"; question: string; options: string[]; selectable: number; secret: string | null }
+  | { type: "location"; lat: number; lng: number; name: string | null; address: string | null; url: string | null; live: boolean }
+  | { type: "event"; name: string; description: string | null; start: number | null; end: number | null; place: string | null; link: string | null; canceled: boolean }
+  | { type: "invite"; groupJid: string; groupName: string | null; code: string; expiration: number | null; caption: string | null }
+  | ({ type: "call" } & CallInfo);
+
+const num = (v: unknown): number | null => {
+  if (v == null) return null;
+  const n = Number(typeof v === "object" && "toNumber" in v ? (v as { toNumber: () => number }).toNumber() : v);
+  return Number.isFinite(n) ? n : null;
+};
+const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+const b64 = (v: unknown): string | null => (v instanceof Uint8Array && v.length ? Buffer.from(v).toString("base64") : typeof v === "string" && v ? v : null);
+
+/** proto.Message.CallLogMessage.CallOutcome; "silenciada" conta como perdida. */
+const CALL_OUTCOMES: Record<number, CallOutcome> = { 0: "connected", 1: "missed", 2: "failed", 3: "rejected", 4: "elsewhere", 5: "ringing", 6: "missed", 7: "missed" };
+
+function callFromLog(m: Record<string, any>): CallInfo {
+  const seconds = num(m?.durationSecs);
+  return {
+    video: m?.isVideo === true,
+    outcome: CALL_OUTCOMES[Number(m?.callOutcome ?? 1)] ?? "missed",
+    seconds: seconds && seconds > 0 ? seconds : null,
+    group: Array.isArray(m?.participants) && m.participants.length > 1,
+    outgoing: false,
+  };
+}
+
+const duration = (s: number) => (s < 60 ? `${s} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`);
+
+/** Texto da ligação como aparece na conversa. */
+export function callText(c: CallInfo): string {
+  const what = `Chamada de ${c.video ? "vídeo" : "voz"}${c.group ? " em grupo" : ""}`;
+  switch (c.outcome) {
+    case "ringing":
+      return `${what} recebida. Atenda no celular.`;
+    case "missed":
+      return c.outgoing ? `${what} não atendida` : `${what} perdida`;
+    case "rejected":
+      return `${what} recusada`;
+    case "elsewhere":
+      return `${what} atendida em outro aparelho`;
+    case "failed":
+      return `${what} não completada`;
+    default:
+      return c.seconds ? `${what} · ${duration(c.seconds)}` : what;
+  }
+}
+
+/** Dados ricos da mensagem; null quando é só texto ou mídia. `secret` (enquete) vem do messageContextInfo. */
+export function extractExtra(content: Content, secret?: unknown): Extra | null {
+  if (!content) return null;
+  const type = Object.keys(content).find((k) => !IGNORED.has(k) && content[k] != null);
+  const m = type ? content[type] : null;
+  if (!type || !m || typeof m !== "object") return null;
+  switch (type) {
+    case "pollCreationMessage":
+    case "pollCreationMessageV2":
+    case "pollCreationMessageV3": {
+      const options = (Array.isArray(m.options) ? m.options : []).map((o: { optionName?: unknown }) => String(o?.optionName ?? "")).filter(Boolean);
+      return {
+        type: "poll",
+        question: str(m.name) ?? "Enquete",
+        options,
+        selectable: Number(m.selectableOptionsCount ?? 0) || 0,
+        secret: b64(secret ?? content.messageContextInfo?.messageSecret),
+      };
+    }
+    case "locationMessage":
+    case "liveLocationMessage": {
+      const lat = num(m.degreesLatitude);
+      const lng = num(m.degreesLongitude);
+      if (lat === null || lng === null) return null;
+      return { type: "location", lat, lng, name: str(m.name), address: str(m.address), url: str(m.url), live: type === "liveLocationMessage" };
+    }
+    case "eventMessage": {
+      const start = num(m.startTime);
+      const end = num(m.endTime);
+      return {
+        type: "event",
+        name: str(m.name) ?? "Evento",
+        description: str(m.description),
+        start: start ? start * 1000 : null,
+        end: end ? end * 1000 : null,
+        place: str(m.location?.name) ?? str(m.location?.address),
+        link: str(m.joinLink),
+        canceled: m.isCanceled === true,
+      };
+    }
+    case "groupInviteMessage": {
+      if (!str(m.groupJid) || !str(m.inviteCode)) return null;
+      const exp = num(m.inviteExpiration);
+      return { type: "invite", groupJid: String(m.groupJid), groupName: str(m.groupName), code: String(m.inviteCode), expiration: exp ? exp * 1000 : null, caption: str(m.caption) };
+    }
+    case "callLogMesssage":
+      return { type: "call", ...callFromLog(m) };
+    default:
+      return null;
+  }
+}
+
+/** Mudança de mensagens temporárias (protocolMessage EPHEMERAL_SETTING): segundos, 0 = desligou. */
+export function ephemeralChange(content: Content): number | null {
+  const p = content?.protocolMessage;
+  if (!p || (p.type !== 3 && p.type !== "EPHEMERAL_SETTING")) return null;
+  return num(p.ephemeralExpiration) ?? 0;
+}
+
+/** Fixar ou desafixar uma mensagem na conversa (pinInChatMessage). */
+export type PinAction = { id: string; pin: boolean; seconds: number };
+export function extractPin(content: Content): PinAction | null {
+  const p = content?.pinInChatMessage;
+  if (!p?.key?.id) return null;
+  const pin = p.type === 1 || p.type === "PIN_FOR_ALL";
+  return { id: String(p.key.id), pin, seconds: num(content?.messageContextInfo?.messageAddOnDurationInSecs) || 7 * 86400 };
+}
+
+/** Prazo das mensagens temporárias em palavras. */
+export function ephemeralLabel(seconds: number): string {
+  if (seconds >= 86400 && seconds % 86400 === 0) {
+    const days = seconds / 86400;
+    return days === 1 ? "24 horas" : `${days} dias`;
+  }
+  return seconds >= 3600 ? `${Math.round(seconds / 3600)} horas` : `${Math.round(seconds / 60)} minutos`;
 }

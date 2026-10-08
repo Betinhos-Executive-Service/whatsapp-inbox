@@ -34,6 +34,14 @@ import {
   Clock3,
   ChevronUp,
   ChevronDown,
+  ListChecks,
+  MapPin,
+  MessageSquarePlus,
+  Plus,
+  Star,
+  Sticker,
+  Timer,
+  UserRoundPlus,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -42,7 +50,9 @@ import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatP
 import { ChatItemMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
-import { Button, SearchBox, Select } from "./ds/index.ts";
+import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
+import { LocationDialog, NewChatDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
+import { isRich, PinnedBar, RichContent, type RichActions } from "./rich.tsx";
 import {
   applyMentions,
   canRevoke,
@@ -89,6 +99,12 @@ declare const __BUILD_DATE__: string;
 
 // O index.html já pintou o tema salvo; aqui passa a acompanhar o Windows quando for "Sistema".
 applyTheme(storedTheme());
+
+/** Resposta em particular: a mensagem do grupo vai citada na conversa individual `to`. */
+type PrivateReply = { to: string; message: Message; from: { jid: string; name: string; isGroup: boolean } };
+
+/** Prazo das temporárias em palavras (mesma regra do servidor). */
+const ephemeralLabel = (s: number) => (s % 86400 === 0 ? (s === 86400 ? "24 horas" : `${s / 86400} dias`) : `${Math.round(s / 3600)} horas`);
 
 type Tab = Status | "todas";
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
@@ -226,17 +242,19 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu }: { ch
             <span className="chat-item__name">{chat.name}</span>
             {isMuted(chat) && <BellOff className="chat-item__flag" size={14} aria-label="Silenciada" />}
             {chat.pinnedAt && <Pin className="chat-item__flag" size={14} aria-label="Fixada" />}
-            <span className={`chat-item__time${chat.unread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>
+            <span className={`chat-item__time${chat.unread || chat.markedUnread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>
           </span>
           <span className="chat-item__row">
             <span className="chat-item__preview">
               {chat.lastFromMe && <span className="chat-item__me">Você: </span>}
               {chat.lastText ? <WaInline text={chat.lastText} /> : "Sem mensagens"}
             </span>
-            {chat.unread > 0 && (
+            {chat.unread > 0 ? (
               <span className="count" aria-label={`${chat.unread} não lidas`}>
                 {chat.unread > 99 ? "99+" : chat.unread}
               </span>
+            ) : (
+              chat.markedUnread && <span className="count count--dot" role="img" aria-label="Marcada como não lida" />
             )}
           </span>
           {(chat.label || chat.extraLabels.length > 0 || urgent || chat.reminderAt !== null || level || showPriority || isSnoozed(chat)) && (
@@ -300,6 +318,8 @@ function ChatList(props: {
   loaded: boolean;
   /** Arquivar ou fixar pelo clique direito, sem abrir a conversa. */
   onPatch: (jid: string, patch: ChatPatch) => void;
+  onNewChat: () => void;
+  onStarred: () => void;
 }) {
   const account = useAccount();
   const [tab, setTab] = useState<Tab>("aberta");
@@ -413,6 +433,8 @@ function ChatList(props: {
             <h1 className="heading-page">Conversas</h1>
           </div>
           <div className="cluster">
+            <Button variant="ghost" aria-label="Nova conversa ou grupo" title="Nova conversa ou grupo" icon={<MessageSquarePlus size={18} aria-hidden />} disabled={props.connection.status !== "conectado"} onClick={props.onNewChat} />
+            <Button variant="ghost" aria-label="Mensagens favoritas" title="Mensagens favoritas" icon={<Star size={18} aria-hidden />} onClick={props.onStarred} />
             {account && account.count < account.max && (
               <Button variant="ghost" aria-label="Adicionar conta do WhatsApp" title="Adicionar conta do WhatsApp" icon={<UserPlus size={18} aria-hidden />} onClick={() => void desktop()?.addAccount()} />
             )}
@@ -666,7 +688,9 @@ function captionOf(m: Message, body: string): string {
   return caption;
 }
 
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText, rich }: {
+  /** Enquete, evento e convite: votar e entrar no grupo. */
+  rich: RichActions;
   messages: Message[];
   isGroup: boolean;
   hasMore: boolean;
@@ -714,7 +738,19 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         const continues = !newDay && prev.fromMe === m.fromMe && parts[i - 1].author === author && m.at - prev.at < 5 * 60_000;
         const caption = captionOf(m, body);
         const sender = m.sender;
-        const link = !m.deleted && !m.media && !m.contacts ? firstLink(caption) : null;
+        // Aviso do grupo ou da conversa (entrou, saiu, temporárias, fixou): linha central, sem balão nem ações.
+        if (m.kind === "system") {
+          return (
+            <div key={m.id} data-message-id={m.id} className="message-row message-row--system">
+              {newDay && <div className="day">{dayLabel(m.at)}</div>}
+              <p className="notice" title={new Date(m.at).toLocaleString("pt-BR")}>
+                {m.text}
+              </p>
+            </div>
+          );
+        }
+        const richView = isRich(m);
+        const link = !m.deleted && !m.media && !m.contacts && !richView ? firstLink(caption) : null;
         const selectable = !!selected && !m.pending && !m.deleted;
         const isSelected = selectable && selected.has(m.id);
         return (
@@ -762,7 +798,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   </span>
                 ))}
               <div className="bubble-wrap">
-              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" ? " bubble--media" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}${m.deleted ? " bubble--deleted" : ""}${m.pending ? ` bubble--${m.pending}` : ""}`}>
+              <div className={`bubble${m.fromMe ? " bubble--me" : ""}${m.kind !== "text" && !richView ? " bubble--media" : ""}${richView ? " bubble--rich" : ""}${continues ? " bubble--cont" : ""}${m.media?.type === "sticker" ? " bubble--sticker" : ""}${m.deleted ? " bubble--deleted" : ""}${m.pending ? ` bubble--${m.pending}` : ""}`}>
                 {author && !continues &&
                   (sender ? (
                     <button type="button" className={`bubble__author bubble__author--link tone-${authorTone(author)}`} onClick={() => onAuthor(sender, author)}>
@@ -781,6 +817,8 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   <p className="bubble__text bubble__text--deleted">
                     <Ban size={14} aria-hidden /> {m.fromMe ? "Você apagou esta mensagem" : "Esta mensagem foi apagada"}
                   </p>
+                ) : richView ? (
+                  <RichContent m={m} canAct={canAct} actions={rich} />
                 ) : (
                   <>
                     {m.media && <MediaView m={m} caption={caption} />}
@@ -801,6 +839,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   </span>
                 ) : (
                   <span className="bubble__meta">
+                    {m.starred && !m.deleted && <Star className="bubble__star" size={11} aria-label="Favorita" />}
                     {m.editedAt !== null && !m.deleted && <span className="bubble__edited">Editada</span>}
                     <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
                       {formatTime(m.at)}
@@ -812,14 +851,14 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
               {!m.pending && <ReactionList m={m} onReact={onReact} />}
               </div>
               {!m.pending && !selected && <div className="message-actions" role="group" aria-label="Ações da mensagem">
-                {!m.deleted && (
+                {!m.deleted && m.kind !== "call" && (
                   <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Responder" title="Responder" disabled={!canAct} onClick={() => onReply(m)}>
                     <Reply size={16} aria-hidden />
                   </button>
                 )}
-                {!m.deleted && <ReactButton m={m} onReact={onReact} disabled={!canAct} />}
-                {!m.deleted && (!m.media || caption) && <CopyButton m={m} onCopy={onCopy} />}
-                {!m.deleted && (
+                {!m.deleted && m.kind !== "call" && <ReactButton m={m} onReact={onReact} disabled={!canAct} />}
+                {!m.deleted && !richView && (!m.media || caption) && <CopyButton m={m} onCopy={onCopy} />}
+                {!m.deleted && m.kind !== "call" && (
                   <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Encaminhar" title="Encaminhar" disabled={!canAct} onClick={() => onForward(m)}>
                     <Forward size={16} aria-hidden />
                   </button>
@@ -854,7 +893,11 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   );
 });
 
-function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, onOpen, quickReplies, onSetupAi, sendTyping, focus }: {
+function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, onOpen, quickReplies, onSetupAi, sendTyping, focus, privateReply, onPrivateReply }: {
+  /** Resposta em particular vinda de um grupo: abre a conversa já citando a mensagem do grupo. */
+  privateReply: PrivateReply | null;
+  /** "Responder em particular" numa mensagem de grupo. */
+  onPrivateReply: (m: Message) => void;
   chat: Chat;
   /** Abre outra conversa (ex.: "Conversar" de um cartão de contato). */
   onOpen: (chat: Chat) => void;
@@ -887,6 +930,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setSide("profile");
   }, []);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
+  // Citação de outra conversa (responder em particular a alguém do grupo).
+  const [replyFrom, setReplyFrom] = useState<{ jid: string; name: string; isGroup: boolean } | null>(null);
+  const [composeDialog, setComposeDialog] = useState<"poll" | "location" | "sticker" | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [forwarding, setForwarding] = useState<Message[] | null>(null);
   const [selected, setSelected] = useState<Set<string> | null>(null);
@@ -933,12 +979,21 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     });
     recorder.cancel();
     setReplyTo(null);
+    setReplyFrom(null);
+    setComposeDialog(null);
     setEditing(null);
     setForwarding(null);
     setPresence(null);
     setParticipants(null);
     picks.current = [];
   }, [chat.jid]);
+  // Veio de "Responder em particular": já abre citando a mensagem do grupo.
+  useEffect(() => {
+    if (!privateReply || privateReply.to !== chat.jid) return;
+    setReplyTo(privateReply.message);
+    setReplyFrom({ jid: privateReply.from.jid, name: privateReply.from.name, isGroup: privateReply.from.isGroup });
+    requestAnimationFrame(() => composer.current?.focus());
+  }, [privateReply, chat.jid]);
   useEffect(() => {
     const id = requestAnimationFrame(() => composer.current?.focus());
     return () => cancelAnimationFrame(id);
@@ -1056,10 +1111,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, [messages]);
 
   useEffect(() => {
-    if (chat.unread <= 0) return;
-    onChat({ ...chat, unread: 0 });
+    if (chat.unread <= 0 && !chat.markedUnread) return;
+    onChat({ ...chat, unread: 0, markedUnread: false });
     api.read(chat.jid).then(onChat).catch(() => undefined);
-  }, [chat.jid, chat.unread, onChat]);
+  }, [chat.jid, chat.unread, chat.markedUnread, onChat]);
 
   // Estável entre renders para o memo de <Messages>; lê a lista atual pela ref.
   const oldestAt = useRef<number | null>(null);
@@ -1080,7 +1135,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
   }, [chat.jid, notify]);
 
-  type Outgoing = { text: string; quotedId?: string; mentions: string[]; mentionAll?: boolean };
+  type Outgoing = { text: string; quotedId?: string; quotedChat?: string; mentions: string[]; mentionAll?: boolean };
   const pendingSeq = useRef(0);
   // Payload de cada bolha otimista, para "Tentar de novo".
   const outbox = useRef(new Map<string, Outgoing>());
@@ -1090,7 +1145,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       if (!out) return;
       setMessages((list) => list && list.map((x) => (x.id === localId ? { ...x, pending: "sending" } : x)));
       try {
-        const updated = await api.send(chat.jid, out.text, { quotedId: out.quotedId, mentions: out.mentions.length ? out.mentions : undefined, mentionAll: out.mentionAll });
+        const updated = await api.send(chat.jid, out.text, { quotedId: out.quotedId, quotedChat: out.quotedChat, mentions: out.mentions.length ? out.mentions : undefined, mentionAll: out.mentionAll });
         outbox.current.delete(localId);
         onChat(updated);
         // A versão real chega pelo SSE e já substitui a bolha; se não chegou, recarrega o fim da conversa.
@@ -1133,22 +1188,27 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
     stickToBottom.current = true;
     const quotedId = replyTo?.id;
+    // Resposta em particular: a citada é do grupo; anexo e voz saem sem a citação.
+    const quotedChat = replyTo && replyFrom ? replyFrom.jid : undefined;
+    const mediaQuotedId = quotedChat ? undefined : quotedId;
+    const quoteIsGroup = replyFrom ? replyFrom.isGroup : chat.isGroup;
     if (!attachments.length) {
       // Otimista: a bolha aparece na hora e o campo libera; o servidor confirma depois.
       const withMentions = applyMentions(text, picks.current);
       const localId = `local-${++pendingSeq.current}`;
       const quoted = replyTo
-        ? { id: replyTo.id, text: splitAuthor(replyTo, chat.isGroup).body, fromMe: replyTo.fromMe, author: replyTo.fromMe ? null : splitAuthor(replyTo, chat.isGroup).author }
+        ? { id: replyTo.id, text: splitAuthor(replyTo, quoteIsGroup).body, fromMe: replyTo.fromMe, author: replyTo.fromMe ? null : splitAuthor(replyTo, quoteIsGroup).author }
         : null;
       // "@todos" (ou "@all") digitado à mão também menciona o grupo inteiro.
       const mentionAll = chat.isGroup && (withMentions.mentionAll || /(^|\s)@(todos|all)(?=$|[\s.,;:!?])/i.test(text));
-      outbox.current.set(localId, { text: withMentions.text, quotedId, mentions: withMentions.mentions, mentionAll: mentionAll || undefined });
+      outbox.current.set(localId, { text: withMentions.text, quotedId, quotedChat, mentions: withMentions.mentions, mentionAll: mentionAll || undefined });
       setMessages((list) => [
         ...(list ?? []),
-        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, contacts: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], pending: "sending" },
+        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, contacts: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false, pending: "sending" },
       ]);
       setDraft("");
       setReplyTo(null);
+      setReplyFrom(null);
       picks.current = [];
       void deliver(localId);
       return;
@@ -1159,11 +1219,12 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       // A resposta (citação) vai só no primeiro.
       for (const [i, a] of attachments.entries()) {
         const file = a.voice ?? (await fileToOutgoing(a.file, i === 0 && text ? text : undefined));
-        onChat(await api.sendMedia(chat.jid, i === 0 && quotedId ? { ...file, quotedId } : file));
+        onChat(await api.sendMedia(chat.jid, i === 0 && mediaQuotedId ? { ...file, quotedId: mediaQuotedId } : file));
         removeAttachment(a.id);
       }
       setDraft("");
       setReplyTo(null);
+      setReplyFrom(null);
       picks.current = [];
     } catch (e) {
       notify("error", `Mensagem não enviada. ${(e as Error).message}`);
@@ -1179,8 +1240,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     try {
       voice = await recorder.finish();
       if (!voice) return notify("error", "Gravação curta demais; segure por pelo menos meio segundo.");
-      onChat(await api.sendMedia(chat.jid, replyTo ? { ...voice, quotedId: replyTo.id } : voice));
+      onChat(await api.sendMedia(chat.jid, replyTo && !replyFrom ? { ...voice, quotedId: replyTo.id } : voice));
       setReplyTo(null);
+      setReplyFrom(null);
     } catch (e) {
       // Não perde a gravação: volta para a bandeja de anexos, pronta para reenviar.
       if (voice) {
@@ -1290,6 +1352,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
 
   const reply = useCallback((m: Message) => {
     setReplyTo(m);
+    setReplyFrom(null);
     requestAnimationFrame(() => composer.current?.focus());
   }, []);
   const copy = useCallback(
@@ -1341,7 +1404,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     [notify],
   );
   const openContact = useCallback(
-    (digits: string) => void api.openChat(digits).then(onOpen, (e: Error) => notify("error", `Não foi possível abrir a conversa. ${e.message}`)),
+    (digits: string) => void api.openChat({ phone: digits }).then(onOpen, (e: Error) => notify("error", `Não foi possível abrir a conversa. ${e.message}`)),
     [onOpen, notify],
   );
   const startSelect = useCallback((m: Message) => setSelected(new Set(m.pending || m.deleted ? [] : [m.id])), []);
@@ -1378,6 +1441,74 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, forwarding]);
+  const star = useCallback(
+    async (m: Message) => {
+      const starred = !m.starred;
+      setMessages((list) => list && list.map((x) => (x.id === m.id ? { ...x, starred } : x)));
+      try {
+        const { message, synced } = await api.star(chat.jid, m.id, starred);
+        if (message) setMessages((list) => list && list.map((x) => (x.id === message.id ? message : x)));
+        notify(synced ? "success" : "error", synced ? (starred ? "Mensagem favoritada." : "Mensagem tirada das favoritas.") : `Mensagem ${starred ? "favoritada" : "desfavoritada"} só neste computador. O celular não confirmou.`);
+      } catch (e) {
+        setMessages((list) => list && list.map((x) => (x.id === m.id ? { ...x, starred: m.starred } : x)));
+        notify("error", `Não foi possível ${starred ? "favoritar" : "desfavoritar"}. ${(e as Error).message}`);
+      }
+    },
+    [chat.jid, notify],
+  );
+  const pin = useCallback(
+    async (m: Message, seconds: number | null) => {
+      try {
+        onChat(await api.pin(chat.jid, m.id, seconds));
+        notify("success", seconds ? "Mensagem fixada para todos." : "Mensagem desafixada.");
+      } catch (e) {
+        notify("error", `Não foi possível ${seconds ? "fixar" : "desafixar"}. ${(e as Error).message}`);
+      }
+    },
+    [chat.jid, notify, onChat],
+  );
+  const unpin = useCallback(
+    (id: string) => {
+      const m = messages?.find((x) => x.id === id);
+      void pin(m ?? ({ id } as Message), null);
+    },
+    [messages, pin],
+  );
+  const rich = useMemo<RichActions>(
+    () => ({
+      onVote: (m, options) => {
+        // Otimista: o voto aparece na hora; volta se o WhatsApp recusar.
+        const before = m;
+        const mine = new Set(options);
+        const poll = m.poll && {
+          ...m.poll,
+          options: m.poll.options.map((o) => {
+            const was = o.mine;
+            const now = mine.has(o.name);
+            return { ...o, mine: now, count: o.count + (now && !was ? 1 : !now && was ? -1 : 0) };
+          }),
+        };
+        if (poll) setMessages((list) => list && list.map((x) => (x.id === m.id ? { ...x, poll } : x)));
+        api
+          .vote(chat.jid, m.id, options)
+          .then((updated) => updated && setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x))))
+          .catch((e: Error) => {
+            setMessages((list) => list && list.map((x) => (x.id === before.id ? before : x)));
+            notify("error", `Voto não enviado. ${e.message}`);
+          });
+      },
+      onAcceptInvite: (m) => {
+        api
+          .acceptInvite(chat.jid, m.id)
+          .then((group) => {
+            notify("success", `Você entrou no grupo ${group.name}.`);
+            onOpen(group);
+          })
+          .catch((e: Error) => notify("error", `Não foi possível entrar no grupo. ${e.message}`));
+      },
+    }),
+    [chat.jid, notify, onOpen],
+  );
   const [menuAt, setMenuAt] = useState<MenuAt | null>(null);
   const openMenu = useCallback((message: Message, x: number, y: number) => setMenuAt({ message, x, y }), []);
   const closeMenu = useCallback(() => setMenuAt(null), []);
@@ -1584,6 +1715,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
                 <>
                   {chat.phone && <span className="hint">+{chat.phone}</span>}
                   {chat.isGroup && <span className="hint">Grupo · ver participantes</span>}
+                  {chat.ephemeral && (
+                    <span className="hint chat-pane__ephemeral" title="Mensagens temporárias ligadas. Mude no perfil da conversa.">
+                      <Timer size={12} aria-hidden /> Temporárias: {ephemeralLabel(chat.ephemeral)}
+                    </span>
+                  )}
                 </>
               )}
             </span>
@@ -1665,6 +1801,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           </div>
         </div>
       )}
+      <PinnedBar key={chat.jid} chat={chat} canAct={connected} onJump={jump} onUnpin={unpin} />
       <div className="chat-pane__body">
       <div className="messages" ref={scroller} aria-live="polite" aria-busy={messages === null}>
         {messages === null ? (
@@ -1700,6 +1837,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onRetry={retry}
             onDiscard={discard}
             onMenu={openMenu}
+            rich={rich}
             selected={selected}
             onToggleSelect={toggleSelect}
             onOpenContact={openContact}
@@ -1708,7 +1846,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         )}
       </div>
       {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
-      {side === "profile" && profileTarget && <ProfilePanel target={profileTarget} connected={connected} onClose={() => setSide(null)} />}
+      {side === "profile" && profileTarget && <ProfilePanel target={profileTarget} chat={chat} connected={connected} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
       </div>
       {menuAt && (
         <MessageMenu
@@ -1720,7 +1858,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
               ? { jid: menuAt.message.sender, name: splitAuthor(menuAt.message, true).author ?? "participante" }
               : null
           }
-          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onSelect: startSelect }}
+          pinned={chat.pins.some((p) => p.id === menuAt.message.id && p.until > Date.now())}
+          canPrivateReply={chat.isGroup && !menuAt.message.fromMe && !!menuAt.message.sender}
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect }}
           onClose={closeMenu}
         />
       )}
@@ -1747,6 +1887,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }}
         />
       )}
+      {composeDialog === "poll" && <PollDialog onClose={() => setComposeDialog(null)} onSend={async (poll) => onChat(await api.sendPoll(chat.jid, poll))} />}
+      {composeDialog === "location" && <LocationDialog onClose={() => setComposeDialog(null)} onSend={async (place) => onChat(await api.sendLocation(chat.jid, place))} />}
+      {composeDialog === "sticker" && <StickerDialog onClose={() => setComposeDialog(null)} onSend={async (from) => onChat(await api.sendSticker(chat.jid, from))} />}
       {deleting && <DeleteDialog message={deleting} busy={false} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
       {selected && (
         <SelectionBar
@@ -1772,7 +1915,19 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         {showMention && <MentionMenu items={mentionItems} active={mentionActive} onPick={pickMention} onHover={setMentionActive} />}
         {showEmoji && <EmojiShortcutMenu items={emojiItems} active={emojiActive} onPick={pickEmoji} onHover={setEmojiActive} />}
         {editing && <EditBar key={editing.id} message={editing} onCancel={cancelEdit} />}
-        {replyTo && <ReplyBar key={replyTo.id} message={replyTo} isGroup={chat.isGroup} chatName={chat.name} onCancel={() => setReplyTo(null)} />}
+        {replyTo && (
+          <ReplyBar
+            key={replyTo.id}
+            message={replyTo}
+            isGroup={replyFrom ? replyFrom.isGroup : chat.isGroup}
+            chatName={replyFrom ? replyFrom.name : chat.name}
+            onCancel={() => {
+              setReplyTo(null);
+              setReplyFrom(null);
+            }}
+          />
+        )}
+        {replyTo && replyFrom && <p className="hint reply-origin">Resposta em particular a uma mensagem de {replyFrom.name}</p>}
         {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} disabled={sending} />}
         <input
           ref={fileInput}
@@ -1812,6 +1967,17 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           disabled={!connected || sending}
           onClick={() => setPickingContact(true)}
           icon={<Contact size={18} aria-hidden />}
+        />
+        <Menu
+          align="start"
+          trigger={(t) => (
+            <Button {...t} variant="ghost" aria-label="Enviar enquete, localização ou figurinha" title="Enquete, localização ou figurinha" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
+          )}
+          actions={[
+            { id: "poll", label: "Enquete", icon: <ListChecks size={16} aria-hidden />, onSelect: () => setComposeDialog("poll") },
+            { id: "location", label: "Localização", icon: <MapPin size={16} aria-hidden />, onSelect: () => setComposeDialog("location") },
+            { id: "sticker", label: "Figurinha", icon: <Sticker size={16} aria-hidden />, onSelect: () => setComposeDialog("sticker") },
+          ]}
         />
         <Button
           variant="ghost"
@@ -2007,14 +2173,19 @@ function App() {
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [focus, setFocus] = useState<{ id: string; seq: number } | null>(null);
+  const [privateReply, setPrivateReply] = useState<PrivateReply | null>(null);
+  const [dialog, setDialog] = useState<"new-chat" | "starred" | null>(null);
   const openChat = useCallback((jid: string | null) => {
     setFocus(null);
+    setPrivateReply(null);
     setSelected(jid);
   }, []);
   const openAt = useCallback((jid: string, id: string) => {
     setSelected(jid);
     setFocus((f) => ({ id, seq: (f?.seq ?? 0) + 1 }));
   }, []);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
   const visible = useRef<string[]>([]);
   const onVisible = useCallback((jids: string[]) => {
     visible.current = jids;
@@ -2050,6 +2221,41 @@ function App() {
       });
     }, 30);
   }, []);
+
+  /** Abre uma conversa que pode ser nova (número, contato recebido, grupo em que entrou). */
+  const openTarget = useCallback(
+    (target: { phone: string } | Chat) => {
+      if ("jid" in target) {
+        upsert(target);
+        return openChat(target.jid);
+      }
+      api
+        .openChat(target)
+        .then((chat) => {
+          upsert(chat);
+          openChat(chat.jid);
+        })
+        .catch((e: Error) => push("error", `Não foi possível abrir a conversa. ${e.message}`));
+    },
+    [upsert, openChat, push],
+  );
+
+  /** "Responder em particular": abre a conversa com quem escreveu no grupo, já citando a mensagem. */
+  const startPrivateReply = useCallback(
+    (m: Message) => {
+      const group = chats.get(m.chatJid);
+      if (!m.sender || !group) return;
+      api
+        .openChat({ jid: m.sender })
+        .then((chat) => {
+          upsert(chat);
+          openChat(chat.jid);
+          setPrivateReply({ to: chat.jid, message: m, from: { jid: group.jid, name: group.name, isGroup: true } });
+        })
+        .catch((e: Error) => push("error", `Não foi possível abrir a conversa em particular. ${e.message}`));
+    },
+    [chats, upsert, openChat, push],
+  );
 
   const reload = useCallback(() => {
     api
@@ -2140,6 +2346,8 @@ function App() {
         .update(jid, patch)
         .then((c) => {
           upsert(c);
+          // Marcar como não lida a conversa aberta fecha a conversa (senão ela seria lida de novo na hora).
+          if (patch.markedUnread && jid === selectedRef.current) openChat(null);
           if (patch.archived === undefined) return;
           push("success", `${c.name} ${patch.archived ? "arquivada" : "desarquivada"}.`, {
             label: "Desfazer",
@@ -2148,7 +2356,7 @@ function App() {
         })
         .catch((err) => push("error", `Não foi possível atualizar a conversa. ${(err as Error).message}`));
     },
-    [upsert, push],
+    [upsert, push, openChat],
   );
 
   // Atalhos globais (ver ShortcutsDialog). Dentro de campos, só Ctrl+K e Ctrl+E valem.
@@ -2258,6 +2466,8 @@ function App() {
             onSettings={() => setSettingsOpen(true)}
             loaded={loaded}
             onPatch={patchChat}
+            onNewChat={() => setDialog("new-chat")}
+            onStarred={() => setDialog("starred")}
           />
           {current ? (
             <ChatView
@@ -2277,6 +2487,8 @@ function App() {
               }}
               quickReplies={quickReplies}
               sendTyping={!!state?.prefs.sendTyping}
+              privateReply={privateReply}
+              onPrivateReply={startPrivateReply}
               onSetupAi={() => {
                 setSettingsTab("ia");
                 setSettingsOpen(true);
@@ -2313,6 +2525,8 @@ function App() {
         </Suspense>
       )}
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
+      {dialog === "new-chat" && <NewChatDialog onClose={() => setDialog(null)} onOpen={openTarget} />}
+      {dialog === "starred" && <StarredDialog chats={chats} onClose={() => setDialog(null)} onOpenAt={openAt} />}
       <UpdateDialog />
       <Toasts toasts={toasts} dismiss={dismiss} />
       <div className="build-badge" aria-hidden="true">

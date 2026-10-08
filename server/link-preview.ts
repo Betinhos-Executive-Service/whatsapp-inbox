@@ -121,3 +121,52 @@ export function linkPreview(raw: string): Promise<LinkPreview | null> {
   if (cache.size > 300) cache.delete(cache.keys().next().value!);
   return value;
 }
+
+// ---- prévia ao enviar: o WhatsApp leva título, descrição e miniatura dentro da própria mensagem
+
+const SEND_WAIT = 3500;
+const MAX_THUMB = 100 * 1024;
+
+/** Primeiro link do texto: como foi escrito e a URL completa (sem pontuação final). */
+export function firstUrl(text: string): { matched: string; url: string } | null {
+  const m = /\b(?:https?:\/\/|www\.)[^\s<>"'`]+/i.exec(text);
+  if (!m) return null;
+  const matched = m[0].replace(/[.,;:!?)\]}]+$/, "");
+  return { matched, url: /^https?:\/\//i.test(matched) ? matched : `https://${matched}` };
+}
+
+/** Miniatura JPEG pequena da prévia (o app não redimensiona imagem); outra coisa fica sem miniatura. */
+async function thumbnail(raw: string): Promise<Buffer | undefined> {
+  let url = await safeUrl(raw);
+  const signal = AbortSignal.timeout(SEND_WAIT);
+  for (let hop = 0; hop < 4; hop++) {
+    const res = await fetch(url, { redirect: "manual", signal, headers: { accept: "image/jpeg,image/*" } });
+    const next = res.headers.get("location");
+    if (res.status >= 300 && res.status < 400 && next) {
+      await res.body?.cancel();
+      url = await safeUrl(new URL(next, url).href);
+      continue;
+    }
+    const size = Number(res.headers.get("content-length") ?? 0);
+    if (!res.ok || !/image\/jpe?g/i.test(res.headers.get("content-type") ?? "") || size > MAX_THUMB) {
+      await res.body?.cancel();
+      return undefined;
+    }
+    const body = Buffer.from(await res.arrayBuffer());
+    return body.length <= MAX_THUMB ? body : undefined;
+  }
+  return undefined;
+}
+
+/** Prévia do primeiro link para ir junto da mensagem enviada; espera no máximo 3,5 s. null = sem prévia. */
+export async function sendPreview(text: string): Promise<{ "canonical-url": string; "matched-text": string; title: string; description?: string; jpegThumbnail?: Buffer } | null> {
+  const hit = firstUrl(text);
+  if (!hit) return null;
+  const build = async () => {
+    const p = await linkPreview(hit.url);
+    if (!p) return null;
+    const jpegThumbnail = p.image ? await thumbnail(p.image).catch(() => undefined) : undefined;
+    return { "canonical-url": p.url, "matched-text": hit.matched, title: p.title, ...(p.description ? { description: p.description } : {}), ...(jpegThumbnail ? { jpegThumbnail } : {}) };
+  };
+  return Promise.race([build().catch(() => null), new Promise<null>((r) => setTimeout(r, SEND_WAIT, null).unref())]);
+}
