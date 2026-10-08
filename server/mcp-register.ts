@@ -6,9 +6,10 @@ export const MCP_NAME = "whatsapp-inbox";
 /** Como abrir o processo MCP: `node server/mcp-main.ts` em dev, o próprio exe (modo Node) no pacote. */
 export type McpEntry = { command: string; args: string[]; env: Record<string, string> };
 
+/** Nome antes de `-e`: a opção é variádica e engoliria o nome; `--` encerra as opções. */
 export function addArgs(entry: McpEntry): string[] {
   const env = Object.entries(entry.env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-  return ["mcp", "add", "--scope", "user", ...env, MCP_NAME, "--", entry.command, ...entry.args];
+  return ["mcp", "add", "--scope", "user", MCP_NAME, ...env, "--", entry.command, ...entry.args];
 }
 
 export const removeArgs = (): string[] => ["mcp", "remove", "--scope", "user", MCP_NAME];

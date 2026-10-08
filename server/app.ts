@@ -71,6 +71,11 @@ export type RunningApp = {
   close: () => Promise<void>;
 };
 
+/** O `claude` colore o erro no terminal; na tela só o texto. */
+const rethrowPlain = (e: Error): never => {
+  throw new Error(e.message.replace(/\u001b\[[0-9;]*m/g, ""));
+};
+
 // Estado do número conectado: não vai junto ao copiar configurações para outra conta.
 // "poll_lid…" (endereço das enquetes) também é do número: filtrado pelo prefixo.
 const PER_NUMBER_SETTINGS = new Set(["account", "contacts_backfill", "wa_version"]);
@@ -627,12 +632,12 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         if (!options.mcpEntry) throw new Error("Registro indisponível neste modo de execução.");
         // Registrar de novo por cima dá erro no Claude Code: remove antes (ignora se não existia).
         await runClaude(bin, removeArgs(), "", options.dataDir, 30_000).catch(() => undefined);
-        await runClaude(bin, addArgs(options.mcpEntry), "", options.dataDir, 30_000);
+        await runClaude(bin, addArgs(options.mcpEntry), "", options.dataDir, 30_000).catch(rethrowPlain);
       },
       unregister: async () => {
         const bin = findClaudeBin();
         if (!bin) throw new Error("Claude Code não encontrado neste PC.");
-        await runClaude(bin, removeArgs(), "", options.dataDir, 30_000);
+        await runClaude(bin, removeArgs(), "", options.dataDir, 30_000).catch(rethrowPlain);
       },
     },
     ai: {

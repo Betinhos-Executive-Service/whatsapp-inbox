@@ -4,12 +4,12 @@ import { addArgs, displayCommand, getArgs, isRegistered, removeArgs } from "../s
 
 const entry = { command: "C:\\Program Files\\WhatsApp Inbox\\WhatsApp Inbox.exe", args: ["C:\\app\\dist-electron\\mcp.mjs"], env: { ELECTRON_RUN_AS_NODE: "1", INBOX_MCP_FILE: "C:\\dados\\mcp.json" } };
 
-test("claude mcp add: variáveis antes do nome, `--` antes do comando, sem shell", () => {
+test("claude mcp add: nome antes das variáveis (opção variádica), `--` antes do comando, sem shell", () => {
   assert.deepEqual(addArgs(entry), [
-    "mcp", "add", "--scope", "user",
+    "mcp", "add", "--scope", "user", "whatsapp-inbox",
     "-e", "ELECTRON_RUN_AS_NODE=1",
     "-e", "INBOX_MCP_FILE=C:\\dados\\mcp.json",
-    "whatsapp-inbox", "--",
+    "--",
     "C:\\Program Files\\WhatsApp Inbox\\WhatsApp Inbox.exe", "C:\\app\\dist-electron\\mcp.mjs",
   ]);
   assert.deepEqual(removeArgs(), ["mcp", "remove", "--scope", "user", "whatsapp-inbox"]);
@@ -18,9 +18,8 @@ test("claude mcp add: variáveis antes do nome, `--` antes do comando, sem shell
 
 test("comando copiável coloca aspas só em caminhos com espaço", () => {
   const cmd = displayCommand(entry);
-  assert.ok(cmd.startsWith("claude mcp add --scope user -e ELECTRON_RUN_AS_NODE=1 "));
-  assert.ok(cmd.includes('"C:\\Program Files\\WhatsApp Inbox\\WhatsApp Inbox.exe" C:\\app\\dist-electron\\mcp.mjs'));
-  assert.ok(cmd.includes(" whatsapp-inbox -- "));
+  assert.ok(cmd.startsWith("claude mcp add --scope user whatsapp-inbox -e ELECTRON_RUN_AS_NODE=1 "));
+  assert.ok(cmd.includes('-- "C:\\Program Files\\WhatsApp Inbox\\WhatsApp Inbox.exe" C:\\app\\dist-electron\\mcp.mjs'));
 });
 
 test("isRegistered: só quando o comando deu certo e não disse que não achou", () => {
