@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { startApp, type RunningApp } from "../server/app.ts";
+import { removeMcpFile, writeMcpFile } from "../server/mcp-file.ts";
 import type { Chat, Message, Reminder } from "../server/db.ts";
 import { inQuietHours, type Prefs } from "../server/prefs.ts";
 import type { ConnectionState } from "../server/whatsapp.ts";
@@ -47,6 +48,7 @@ const counter = new UnreadCounter();
 
 const iconPath = () => join(app.getAppPath(), "dist", "icon.ico");
 const userData = () => app.getPath("userData");
+const mcpFile = () => join(userData(), "mcp.json");
 const chatKey = (inst: Instance, jid: string) => `${inst.account.id}:${jid}`;
 const multiple = () => registry.accounts.length > 1;
 const active = () => instances.get(registry.active) ?? null;
@@ -196,6 +198,8 @@ async function startInstance(account: Account): Promise<Instance> {
     });
     inst.connection = inst.app.connection();
     inst.origin = `http://127.0.0.1:${inst.app.port}`;
+    // O servidor MCP do Claude Code fala só com a conta principal: grava onde ela está nesta execução.
+    if (isPrimary(inst)) writeMcpFile(mcpFile(), { port: inst.app.port, token: inst.app.token, account: account.id, pid: process.pid });
     void view.webContents.loadURL(inst.origin);
   } catch (error) {
     inst.error = error instanceof Error ? error.message : String(error);
@@ -640,6 +644,7 @@ function buildTrayMenu() {
 }
 
 async function closeAll() {
+  removeMcpFile(mcpFile());
   const running = [...instances.values()].map((inst) => inst.app).filter((a): a is RunningApp => !!a);
   for (const inst of instances.values()) inst.app = null;
   await Promise.all(running.map((a) => a.close().catch((e: Error) => console.error("Falha ao encerrar uma conta:", e))));
