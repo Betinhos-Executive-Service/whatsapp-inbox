@@ -18,6 +18,28 @@ const TYPE_BY_EXT: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8",
   ".csv": "text/csv; charset=utf-8",
 };
+/** Extensão pelo tipo, para foto, áudio e vídeo (o WhatsApp não manda nome de arquivo para eles). */
+const EXT_BY_TYPE: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "video/mp4": ".mp4",
+  "video/3gpp": ".3gp",
+  "audio/ogg": ".ogg",
+  "audio/mpeg": ".mp3",
+  "audio/mp4": ".m4a",
+  "audio/aac": ".aac",
+  "application/pdf": ".pdf",
+};
+
+/** Nome do arquivo baixado: o original, ou "arquivo" + extensão do tipo; sem extensão o Windows não sabe abrir. */
+export function downloadName(mimetype: string, fileName: string | null): string {
+  const base = fileName?.trim() || "arquivo";
+  if (extname(base)) return base;
+  return base + (EXT_BY_TYPE[mimetype.split(";")[0].trim().toLowerCase()] ?? "");
+}
+
 export function servedType(mimetype: string, fileName: string | null): string {
   if (mimetype && mimetype !== "application/octet-stream") return mimetype;
   return TYPE_BY_EXT[extname(fileName ?? "").toLowerCase()] ?? (mimetype || "application/octet-stream");
@@ -448,7 +470,7 @@ export function createHandler(api: Api) {
       // nosniff: o arquivo abre na visualização só pelo tipo declarado (um "PDF" com HTML dentro não vira página).
       const headers: Record<string, string> = { "content-type": servedType(file.mimetype, file.fileName), "cache-control": "private, max-age=31536000, immutable", "accept-ranges": "bytes", "x-content-type-options": "nosniff" };
       if (url.searchParams.has("download")) {
-        headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName ?? "arquivo")}`;
+        headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName(file.mimetype, file.fileName))}`;
       }
       const size = file.body.length;
       const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");

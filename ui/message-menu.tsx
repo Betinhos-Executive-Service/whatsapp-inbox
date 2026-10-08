@@ -139,7 +139,7 @@ export function MessageMenu({ at, canAct, hasText, author, actions, onClose }: {
       )}
       {items.map((item) =>
         item.href ? (
-          <a key={item.id} role="menuitem" className="bt-menu__item" href={item.href} download onClick={() => onClose()}>
+          <a key={item.id} role="menuitem" className="bt-menu__item" href={item.href} download onClick={() => setTimeout(onClose)}>
             <span className="bt-menu__icon">{item.icon}</span>
             <span>{item.label}</span>
           </a>
