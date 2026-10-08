@@ -633,7 +633,7 @@ export function createHandler(api: Api) {
     }
     const reminderMatch = path.match(/^\/api\/reminders\/(\d+)(\/done)?$/);
     if (reminderMatch && ((reminderMatch[2] && method === "POST") || (!reminderMatch[2] && method === "DELETE"))) {
-      if (method === "POST") await readJson(req);
+      await readJson(req);
       const chatJid = store.finishReminder(Number(reminderMatch[1]), reminderMatch[2] ? "done" : "delete");
       if (!chatJid) throw new HttpError(404, "Lembrete não encontrado.");
       api.onChatChanged(chatJid);
