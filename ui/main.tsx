@@ -14,6 +14,7 @@ import {
   Trash2,
   CircleDot,
   Clock,
+  Hourglass,
   Inbox,
   LoaderCircle,
   Mic,
@@ -37,6 +38,7 @@ import {
   ChevronDown,
   ListChecks,
   MapPin,
+  MessageCircle,
   MessageSquarePlus,
   Plus,
   Star,
@@ -123,11 +125,11 @@ const STATUS_META: Record<Status, { label: string; icon: ReactNode }> = {
   aguardando: { label: "Aguardando", icon: <Clock size={16} aria-hidden /> },
   resolvida: { label: "Resolvida", icon: <CheckCircle2 size={16} aria-hidden /> },
 };
-/** Ícones menores para os botões de status no item da lista. */
+/** Ícones sem círculo próprio: o ativo ganha um círculo cheio na cor do status. */
 const STATUS_ICON_SM: Record<Status, ReactNode> = {
-  aberta: <CircleDot size={14} aria-hidden />,
-  aguardando: <Clock size={14} aria-hidden />,
-  resolvida: <CheckCircle2 size={14} aria-hidden />,
+  aberta: <MessageCircle size={13} strokeWidth={2.5} aria-hidden />,
+  aguardando: <Hourglass size={13} strokeWidth={2.5} aria-hidden />,
+  resolvida: <Check size={14} strokeWidth={3} aria-hidden />,
 };
 const PAGE = 200;
 
@@ -268,7 +270,11 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
         <span className="chat-item__body">
           <span className="chat-item__row">
             <span className="chat-item__name">{chat.name}</span>
-            {priority && <span className="sr-only">Prioridade {PRIORITY_TEXT[priority]}.</span>}
+            {priority && priority !== "baixa" ? (
+              <span className={`chat-item__priority chat-item__priority--${priority}`} role="img" aria-label={`Prioridade ${PRIORITY_TEXT[priority]}`} title={`Prioridade ${PRIORITY_TEXT[priority]}`} />
+            ) : (
+              priority && <span className="sr-only">Prioridade {PRIORITY_TEXT[priority]}.</span>
+            )}
             {isMuted(chat) && <BellOff className="chat-item__flag" size={14} aria-label="Silenciada" />}
             {chat.pinnedAt && <Pin className="chat-item__flag" size={14} aria-label="Fixada" />}
             <span className={`chat-item__time${chat.unread || chat.markedUnread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>
