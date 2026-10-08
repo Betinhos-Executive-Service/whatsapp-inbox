@@ -86,6 +86,7 @@ import { AckIcon, canEdit, CopyButton, EditBar, ReactButton, ReactionList } from
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
 import { firstLink, toggleWa } from "./wa-text.ts";
 import { LinkCard } from "./link-preview.tsx";
+import { ChatPeek, PEEK_DELAY } from "./hover-preview.tsx";
 import { ContactCards, ContactPicker } from "./contacts.tsx";
 import { SelectionBar } from "./selection.tsx";
 import { selectionText } from "./selection-text.ts";
@@ -215,7 +216,7 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
 }
 
 /** Memo: chegada de mensagem numa conversa não redesenha as outras 200 da lista. */
-const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu }: { chat: Chat; selected: boolean; onOpen: (jid: string) => void; onMenu: (jid: string, x: number, y: number) => void }) {
+const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek }: { chat: Chat; selected: boolean; onOpen: (jid: string) => void; onMenu: (jid: string, x: number, y: number) => void; onPeek: (jid: string | null, el?: HTMLElement) => void }) {
   const urgent = (chat.ai?.urgent ?? 0) >= 0.5;
   const reminderDue = chat.reminderAt !== null && chat.reminderAt <= Date.now();
   const level = priorityLevel(priorityScore(chat));
@@ -227,9 +228,15 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu }: { ch
       <button
         className="chat-item"
         aria-current={selected ? "true" : undefined}
-        onClick={() => onOpen(chat.jid)}
+        onClick={() => {
+          onPeek(null);
+          onOpen(chat.jid);
+        }}
+        onMouseEnter={(e) => onPeek(chat.jid, e.currentTarget)}
+        onMouseLeave={() => onPeek(null)}
         onContextMenu={(e) => {
           e.preventDefault();
+          onPeek(null);
           // Pelo teclado (tecla Menu / Shift+F10) não há ponto do mouse: abre sob o item.
           const box = e.currentTarget.getBoundingClientRect();
           const keyboard = e.clientX === 0 && e.clientY === 0;
@@ -327,6 +334,17 @@ function ChatList(props: {
   const openMenu = useCallback((jid: string, x: number, y: number) => setMenu({ jid, x, y }), []);
   const closeMenu = useCallback(() => setMenu(null), []);
   const menuChat = menu ? props.byJid.get(menu.jid) : undefined;
+  // Prévia ao parar o mouse num item: só com mouse de verdade, e nunca da conversa já aberta.
+  const [peek, setPeek] = useState<{ jid: string; rect: DOMRect } | null>(null);
+  const peekTimer = useRef(0);
+  const onPeek = useCallback((jid: string | null, el?: HTMLElement) => {
+    window.clearTimeout(peekTimer.current);
+    setPeek(null);
+    if (!jid || !el || !matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+    peekTimer.current = window.setTimeout(() => setPeek({ jid, rect: el.getBoundingClientRect() }), PEEK_DELAY);
+  }, []);
+  useEffect(() => () => window.clearTimeout(peekTimer.current), []);
+  const peekChat = peek && peek.jid !== props.selected && !menu ? props.byJid.get(peek.jid) : undefined;
   const [showArchived, setShowArchived] = useState(false);
   const [label, setLabel] = useState("");
   const [query, setQuery] = useState("");
@@ -509,7 +527,7 @@ function ChatList(props: {
           </div>
         )}
       </header>
-      <div className="list-pane__scroll">
+      <div className="list-pane__scroll" onScroll={peek ? () => onPeek(null) : undefined}>
         {(showArchived || counts.arquivadas > 0) && (
           <button type="button" className="archived-toggle" aria-pressed={showArchived} onClick={() => setShowArchived((v) => !v)}>
             {showArchived ? <ArrowLeft size={16} aria-hidden /> : <Archive size={16} aria-hidden />}
@@ -551,7 +569,7 @@ function ChatList(props: {
         ) : (
           <ul className="chat-list">
             {filtered.slice(0, limit).map((c) => (
-              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} onMenu={openMenu} />
+              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} onMenu={openMenu} onPeek={onPeek} />
             ))}
           </ul>
         )}
@@ -562,6 +580,7 @@ function ChatList(props: {
         )}
         {messageQuery && <MessageHits hits={hits} chats={props.byJid} loading={hitsLoading} onOpen={props.onOpenAt} />}
       </div>
+      {peek && peekChat && <ChatPeek key={peek.jid} chat={peekChat} anchor={peek.rect} />}
       {menu && menuChat && <ChatItemMenu chat={menuChat} x={menu.x} y={menu.y} onChange={(patch) => props.onPatch(menuChat.jid, patch)} onClose={closeMenu} />}
     </section>
   );
