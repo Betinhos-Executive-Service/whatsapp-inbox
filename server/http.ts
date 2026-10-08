@@ -241,6 +241,14 @@ const sendMediaSchema = z.object({
   quotedId: z.string().min(1).max(200).optional(),
 });
 
+/** Resposta proposta por uma IA (MCP); mesmos limites do envio de texto e de anexo. */
+const pendingDraftSchema = z.object({
+  text: z.string().max(4096).default(""),
+  quotedId: z.string().min(1).max(200).optional(),
+  source: z.string().trim().min(1).max(40).default("claude"),
+  media: z.object({ fileName: z.string().trim().min(1).max(255), mimetype: z.string().trim().min(1).max(128), data: z.string().min(1) }).optional(),
+});
+
 const sendSchema = z.object({
   text: z.string().trim().min(1).max(4096),
   quotedId: z.string().min(1).max(200).optional(),
@@ -346,8 +354,74 @@ export function createHandler(api: Api) {
       return json(res, 201, await api.createGroup(subject, participants));
     }
 
+    // Rascunho pendente: sub-rotas com dois segmentos (chatMatch só casa um).
+    const draftMatch = path.match(/^\/api\/chats\/([^/]+)\/pending-draft\/(media|send)$/);
+    if (draftMatch) {
+      const draftJid = decodeURIComponent(draftMatch[1]);
+      if (!store.hasChat(draftJid)) throw new HttpError(404, "Conversa não encontrada.");
+      const draft = store.getPendingDraft(draftJid);
+      if (!draft) throw new HttpError(404, "Não há rascunho pendente nesta conversa.");
+      if (draftMatch[2] === "media" && method === "GET") {
+        if (!draft.media) throw new HttpError(404, "O rascunho não tem anexo.");
+        res.writeHead(200, {
+          "content-type": servedType(draft.media.mimetype, draft.media.fileName),
+          "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(downloadName(draft.media.mimetype, draft.media.fileName))}`,
+          "content-length": String(draft.media.body.length),
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+        });
+        return res.end(draft.media.body);
+      }
+      if (draftMatch[2] === "send" && method === "POST") {
+        await readJson(req);
+        const quotedId = draft.quotedId ?? undefined;
+        if (quotedId && !store.messageKey(draftJid, quotedId)) throw new HttpError(404, "A mensagem respondida não está mais salva.");
+        // Só limpa depois do envio dar certo: em falha o rascunho continua para tentar de novo.
+        if (draft.media) await api.sendMedia(draftJid, { ...draft.media, caption: draft.text || undefined }, quotedId);
+        else await api.send(draftJid, draft.text, { quotedId });
+        store.clearPendingDraft(draftJid);
+        api.onChatChanged(draftJid);
+        return json(res, 200, store.getChat(draftJid));
+      }
+    }
+
     if (jid) {
       if (!store.hasChat(jid)) throw new HttpError(404, "Conversa não encontrada.");
+      if (action === "/pending-draft") {
+        if (method === "PUT") {
+          const { text, quotedId, source, media } = parse(pendingDraftSchema, await readJson(req, Math.ceil((MAX_MEDIA * 4) / 3) + 64 * 1024));
+          const trimmed = text.trim();
+          if (!trimmed && !media) throw new HttpError(400, "Escreva um texto ou anexe um arquivo.");
+          if (quotedId && !store.messageKey(jid, quotedId)) throw new HttpError(404, "A mensagem respondida não está mais salva.");
+          let file = null;
+          if (media) {
+            const body = Buffer.from(media.data, "base64");
+            if (!body.length) throw new HttpError(400, "Arquivo vazio.");
+            if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
+            file = { body, mimetype: media.mimetype, fileName: media.fileName };
+          }
+          const chat = store.setPendingDraft(jid, { text: trimmed, quotedId, media: file, source });
+          api.onChatChanged(jid);
+          return json(res, 200, chat);
+        }
+        if (method === "GET") {
+          const draft = store.getPendingDraft(jid);
+          if (!draft) throw new HttpError(404, "Não há rascunho pendente nesta conversa.");
+          return json(res, 200, {
+            text: draft.text,
+            quotedId: draft.quotedId,
+            quoted: draft.quotedId ? store.getMessage(jid, draft.quotedId) : null,
+            media: draft.media ? { mimetype: draft.media.mimetype, fileName: draft.media.fileName } : null,
+            source: draft.source,
+            createdAt: draft.createdAt,
+          });
+        }
+        if (method === "DELETE") {
+          store.clearPendingDraft(jid);
+          api.onChatChanged(jid);
+          return json(res, 200, store.getChat(jid));
+        }
+      }
       if (action === "" && method === "PATCH") {
         const patch = parse(chatPatchSchema, await readJson(req));
         const known = new Set(store.listLabels().map((l) => l.name));
@@ -373,7 +447,8 @@ export function createHandler(api: Api) {
           return json(res, 200, list);
         }
         const before = Number(url.searchParams.get("before")) || null;
-        return json(res, 200, store.listMessages(jid, before));
+        const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 80));
+        return json(res, 200, store.listMessages(jid, before, limit));
       }
       if (action === "/read" && method === "POST") {
         await api.markRead(jid);

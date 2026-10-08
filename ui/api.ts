@@ -46,6 +46,17 @@ export type Chat = {
   ephemeral: number | null;
   /** Mensagens fixadas que ainda valem, a mais recente primeiro. */
   pins: { id: string; until: number; text: string | null; fromMe: boolean }[];
+  /** Resposta proposta por uma IA (Claude Code via MCP) à espera de você enviar, editar ou descartar. */
+  pendingDraft: { text: string; hasMedia: boolean; source: string; createdAt: number } | null;
+};
+
+export type PendingDraft = {
+  text: string;
+  quotedId: string | null;
+  quoted: Message | null;
+  media: { mimetype: string; fileName: string } | null;
+  source: string;
+  createdAt: number;
 };
 
 export type CallInfo = { video: boolean; outcome: "ringing" | "missed" | "rejected" | "connected" | "elsewhere" | "failed"; seconds: number | null; group: boolean; outgoing: boolean };
@@ -221,6 +232,10 @@ export const api = {
   messages: (jid: string, before?: number) =>
     request<Message[]>("GET", `${chatPath(jid)}/messages${before ? `?before=${before}` : ""}`),
   read: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/read`, {}),
+  pendingDraft: (jid: string) => request<PendingDraft>("GET", `${chatPath(jid)}/pending-draft`),
+  sendPendingDraft: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/pending-draft/send`, {}),
+  clearPendingDraft: (jid: string) => request<Chat>("DELETE", `${chatPath(jid)}/pending-draft`, {}),
+  pendingDraftMediaUrl: (jid: string) => `${chatPath(jid)}/pending-draft/media`,
   send: (jid: string, text: string, opts: { quotedId?: string; quotedChat?: string; mentions?: string[]; mentionAll?: boolean } = {}) =>
     request<Chat>("POST", `${chatPath(jid)}/send`, { text, ...opts }),
   sendPoll: (jid: string, poll: { question: string; options: string[]; multiple: boolean }) => request<Chat>("POST", `${chatPath(jid)}/poll`, poll),
