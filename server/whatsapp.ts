@@ -356,7 +356,8 @@ export class WhatsApp extends EventEmitter<{
     const creators = ref.fromMe ? this.withAlt(...this.meJids()) : this.withAlt(ref.participant ?? ref.rawJid);
     const voters = m.key.fromMe ? this.withAlt(...this.meJids()) : group ? this.withAlt(m.key.participant, m.key.participantAlt) : this.withAlt(m.key.remoteJid, m.key.remoteJidAlt, pollChat);
     const got = decryptVote({ encPayload: enc.encPayload, encIv: enc.encIv }, { secret: Buffer.from(ref.poll.secret, "base64"), pollId, creators, voters });
-    if (!got) return void console.warn(`Voto da enquete ${pollId} não decifrou.`);
+    if (!got) return void console.warn(`Voto da enquete ${pollId} não decifrou (criador ${creators.join("|")}, votante ${voters.join("|")}).`);
+    if (!quiet) console.info(`Voto da enquete ${pollId} decifrado com criador ${got.creator} e votante ${got.voter}.`);
     // A forma que serviu para "mim" (votante, se votei pelo celular; criador, se a enquete é minha) é a que
     // o WhatsApp usa nesta conversa: os votos enviados daqui passam a cifrar igual.
     const mine = m.key.fromMe ? got.voter : ref.fromMe ? got.creator : null;
@@ -839,11 +840,17 @@ export class WhatsApp extends EventEmitter<{
     const authorAlt = isLidUser(author) ? this.store.pnForLid(author) : this.store.lidForPn(author);
     const creator = ref.fromMe ? myJid : (isLidUser(author) === lidMode ? author : (authorAlt ?? author));
     const vote = encryptVote(valid, { secret: Buffer.from(ref.poll.secret, "base64"), pollId, creator, voter: myJid });
+    // Conversa 1:1 em LID: o voto segue para o LID do contato (como o WhatsApp Web), para o outro lado ver
+    // o remetente no mesmo JID da cifra. Em grupo, o participant da chave vai na mesma forma do criador.
+    const group = isJidGroup(ref.rawJid) === true;
+    const peerLid = group ? null : isLidUser(ref.rawJid) ? ref.rawJid : this.store.lidForPn(jidNormalizedUser(ref.rawJid));
+    const destination = !group && lidMode && peerLid ? peerLid : ref.rawJid;
+    console.info(`Voto da enquete ${pollId}: criador ${creator}, votante ${myJid}, destino ${destination}.`);
     await sock.relayMessage(
-      ref.rawJid,
+      destination,
       {
         pollUpdateMessage: {
-          pollCreationMessageKey: { remoteJid: ref.rawJid, id: pollId, fromMe: ref.fromMe, ...(ref.participant ? { participant: ref.participant } : {}) },
+          pollCreationMessageKey: { remoteJid: destination, id: pollId, fromMe: ref.fromMe, ...(group ? { participant: creator } : {}) },
           vote,
           senderTimestampMs: Date.now(),
         },
