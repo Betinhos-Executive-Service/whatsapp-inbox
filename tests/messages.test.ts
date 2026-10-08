@@ -75,3 +75,15 @@ test("foto: baixa uma vez, guarda em disco e lembra quem não tem foto", async (
   await cache.thumb(PN);
   assert.equal(downloads, 2, "foto trocada busca de novo");
 });
+
+test("mensagens no mesmo segundo saem na ordem de chegada, inclusive ao paginar", () => {
+  const s = new Store(":memory:");
+  s.addMessage(msg({ id: "z1", text: "antes", at: 1000 }), false);
+  for (const id of ["p1", "p2", "p3"]) s.addMessage(msg({ id, text: id, at: 5000 }), false);
+  s.addMessage(msg({ id: "z2", text: "depois", at: 9000 }), false);
+  assert.deepEqual(s.listMessages(PN, null).map((m) => m.id), ["z1", "p1", "p2", "p3", "z2"]);
+  assert.deepEqual(s.listMessages(PN, null, 2).map((m) => m.id), ["p3", "z2"]);
+  // A página anterior inclui o segundo da mais antiga na tela, para não pular as que empatam.
+  assert.deepEqual(s.listMessages(PN, 5000).map((m) => m.id), ["z1", "p1", "p2", "p3"]);
+  assert.equal(s.lastMessageKey(PN)?.id, "z2");
+});
