@@ -1735,7 +1735,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             jevReady={jevReady}
             classifierName={classifierName}
           />
-          <span className="chat-pane__divider" aria-hidden />
+        </div>
+        {/* Ações rápidas ficam sempre na linha do perfil, mesmo quando a classificação desce. */}
+        <div className="chat-pane__actions">
           <Button
             variant="secondary"
             size="compact"
