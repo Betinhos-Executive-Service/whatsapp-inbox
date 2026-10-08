@@ -52,6 +52,7 @@ export function fakeApi(store: Store, over: Partial<Api> = {}): Api {
     cachedTranscript: async () => ({ text: null, summary: null }),
     summarizeAudio: async () => ({}),
     transcribeRecording: async () => "texto",
+    mcp: { status: async () => ({ claudeFound: false, registered: false, command: null, file: "" }), register: async () => undefined, unregister: async () => undefined },
     ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setSummaryModel: () => undefined, setDeepseekOptions: () => undefined, setClaudeOptions: () => undefined, setJevContext: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
     subscribe: (res) => res.end(),
     onChatChanged: () => undefined,

@@ -90,6 +90,9 @@ export type AiUsageSummary = {
   topChats: { jid: string; name: string; calls: number; costUsd: number }[];
 };
 
+/** Registro do servidor MCP deste app no Claude Code do PC. */
+export type McpStatus = { claudeFound: boolean; registered: boolean; command: string | null; file: string };
+
 export type AiStatus = {
   instructions: string;
   customInstructions: boolean;
@@ -278,6 +281,9 @@ export const api = {
   doneReminder: (id: number) => request<Chat>("POST", `/api/reminders/${id}/done`, {}),
   deleteReminder: (id: number) => request<Chat>("DELETE", `/api/reminders/${id}`),
   ai: () => request<AiStatus>("GET", "/api/ai"),
+  mcpStatus: () => request<McpStatus>("GET", "/api/mcp/status"),
+  mcpRegister: () => request<McpStatus>("POST", "/api/mcp/register", {}),
+  mcpUnregister: () => request<McpStatus>("POST", "/api/mcp/unregister", {}),
   setAiProvider: (provider: AiStatus["provider"]) => request<AiStatus>("PUT", "/api/ai/provider", { provider }),
   setDeepseekModel: (model: DeepSeekModel) => request<AiStatus>("PUT", "/api/ai/deepseek-model", { model }),
   setSummaryModel: (choice: Partial<AiStatus["summary"]>) => request<AiStatus>("PUT", "/api/ai/summary-model", choice),

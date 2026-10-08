@@ -18,6 +18,9 @@ try {
     dataDir,
     distDir: join(root, "dist"),
     waDisabled: process.env.WA_DISABLED === "1",
+    // Em desenvolvimento o Claude Code roda o servidor MCP direto do código-fonte.
+    mcpEntry: { command: process.execPath, args: [join(root, "server", "mcp-main.ts")], env: { INBOX_MCP_FILE: mcpFile } },
+    mcpFile,
   });
   // Porta e token desta execução, para o servidor MCP (`node server/mcp-main.ts`) achar o app.
   writeMcpFile(mcpFile, { port: app.port, token: app.token, account: "dev", pid: process.pid });

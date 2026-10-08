@@ -195,6 +195,9 @@ async function startInstance(account: Account): Promise<Instance> {
         if (state.status === "conectado") warnDuplicate(inst);
         pushRail();
       },
+      // O Claude Code abre o próprio exe em modo Node para rodar o servidor MCP empacotado.
+      mcpEntry: { command: process.execPath, args: [join(app.getAppPath(), "dist-electron", "mcp.mjs")], env: { ELECTRON_RUN_AS_NODE: "1", INBOX_MCP_FILE: mcpFile() } },
+      mcpFile: mcpFile(),
     });
     inst.connection = inst.app.connection();
     inst.origin = `http://127.0.0.1:${inst.app.port}`;

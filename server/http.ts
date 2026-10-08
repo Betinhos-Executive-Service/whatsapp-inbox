@@ -22,6 +22,17 @@ export function servedType(mimetype: string, fileName: string | null): string {
   return TYPE_BY_EXT[extname(fileName ?? "").toLowerCase()] ?? (mimetype || "application/octet-stream");
 }
 
+export type McpStatus = {
+  /** Claude Code instalado neste PC. */
+  claudeFound: boolean;
+  /** Registrado no Claude Code (escopo do usuário). */
+  registered: boolean;
+  /** Comando copiável para registrar à mão; null quando este modo não tem entrada MCP. */
+  command: string | null;
+  /** Arquivo de descoberta (porta + token) desta execução. */
+  file: string;
+};
+
 export type Api = {
   store: Store;
   distDir: string;
@@ -83,6 +94,12 @@ export type Api = {
   /** Só o cache: não chama a Groq. */
   cachedTranscript: (jid: string, id: string) => Promise<{ text: string | null; summary: unknown }>;
   summarizeAudio: (jid: string, id: string, force?: boolean) => Promise<unknown>;
+  /** Registro do servidor MCP deste app no Claude Code do PC. */
+  mcp: {
+    status: () => Promise<McpStatus>;
+    register: () => Promise<void>;
+    unregister: () => Promise<void>;
+  };
   ai: {
     status: () => unknown;
     draft: (jid: string, text?: string) => Promise<string>;
@@ -580,6 +597,14 @@ export function createHandler(api: Api) {
       }
       res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "private, max-age=3600", "content-length": body.length });
       return res.end(body);
+    }
+    if (path === "/api/mcp/status" && method === "GET") return json(res, 200, await api.mcp.status());
+    if ((path === "/api/mcp/register" || path === "/api/mcp/unregister") && method === "POST") {
+      await readJson(req);
+      await (path === "/api/mcp/register" ? api.mcp.register() : api.mcp.unregister()).catch((error: Error) => {
+        throw new HttpError(502, error.message);
+      });
+      return json(res, 200, await api.mcp.status());
     }
     if (path === "/api/ai" && method === "GET") return json(res, 200, api.ai.status());
     if (path === "/api/ai/usage" && method === "GET") {

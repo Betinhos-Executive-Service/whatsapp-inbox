@@ -9,6 +9,7 @@ import { createHandler } from "./http.ts";
 import { cacheMedia, loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
 import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPTIONS, findClaudeBin, isClaudeModel, parseClaudeOptions, runClaude, type ClaudeModel } from "./claude.ts";
+import { addArgs, displayCommand, getArgs, isRegistered, removeArgs, type McpEntry } from "./mcp-register.ts";
 import { PhotoCache } from "./photos.ts";
 import { cachedAudioSummary, cachedTranscript, saveAudioSummary, saveTranscript, transcribeAudio } from "./groq.ts";
 import type { AudioSummary } from "./ai.ts";
@@ -46,6 +47,10 @@ export type AppOptions = {
   onRead?: (jid: string) => void;
   /** Conexão do WhatsApp mudou (QR, conectado…): o app desktop mostra no seletor de contas. */
   onConnection?: (state: ConnectionState) => void;
+  /** Como o Claude Code deve abrir o servidor MCP deste app (sem isso, o registro fica indisponível). */
+  mcpEntry?: McpEntry;
+  /** Arquivo de descoberta (porta + token) que o processo MCP lê; só informativo aqui. */
+  mcpFile?: string;
 };
 
 /** Configurações copiáveis entre contas: nunca conversas, número conectado ou auth. */
@@ -604,6 +609,31 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       broadcast("reload", null);
       // Desconectar e ler o QR de novo traz o histórico do número outra vez.
       if (reconnect) await connected().logout();
+    },
+    mcp: {
+      status: async () => {
+        const bin = findClaudeBin();
+        const entry = options.mcpEntry;
+        let registered = false;
+        if (bin) {
+          // `claude mcp get` sai com erro quando o servidor não existe: runClaude rejeita → não registrado.
+          registered = await runClaude(bin, getArgs(), "", options.dataDir, 30_000).then((out) => isRegistered(out, true), () => false);
+        }
+        return { claudeFound: !!bin, registered, command: entry ? displayCommand(entry, bin ?? "claude") : null, file: options.mcpFile ?? join(options.dataDir, "mcp.json") };
+      },
+      register: async () => {
+        const bin = findClaudeBin();
+        if (!bin) throw new Error("Claude Code não encontrado neste PC. Instale e faça login com `claude` no terminal.");
+        if (!options.mcpEntry) throw new Error("Registro indisponível neste modo de execução.");
+        // Registrar de novo por cima dá erro no Claude Code: remove antes (ignora se não existia).
+        await runClaude(bin, removeArgs(), "", options.dataDir, 30_000).catch(() => undefined);
+        await runClaude(bin, addArgs(options.mcpEntry), "", options.dataDir, 30_000);
+      },
+      unregister: async () => {
+        const bin = findClaudeBin();
+        if (!bin) throw new Error("Claude Code não encontrado neste PC.");
+        await runClaude(bin, removeArgs(), "", options.dataDir, 30_000);
+      },
     },
     ai: {
       status: aiState,
