@@ -107,7 +107,7 @@ async function publishRelease(version, files) {
   const assets = [...files.filter((f) => /\.(exe|blockmap)$/.test(f)), resolve(root, "release", "latest.yml")];
   git("fetch", "--tags", "--quiet");
   const previous = git("tag", "--list", "v*", "--sort=-v:refname").split(/\r?\n/).find((t) => t && t !== tag);
-  const changes = git("log", "--pretty=- %s", previous ? `${previous}..HEAD` : "HEAD")
+  const changes = git("log", "--no-merges", "--pretty=- %s", previous ? `${previous}..HEAD` : "HEAD")
     .split(/\r?\n/)
     .filter((l) => l && !l.startsWith("- release:") && !l.startsWith("- chore:"))
     .join("\n");

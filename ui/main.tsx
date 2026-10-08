@@ -2563,7 +2563,12 @@ function App() {
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       {dialog === "new-chat" && <NewChatDialog onClose={() => setDialog(null)} onOpen={openTarget} />}
       {dialog === "starred" && <StarredDialog chats={chats} onClose={() => setDialog(null)} onOpenAt={openAt} />}
-      <UpdateDialog />
+      <UpdateDialog
+        onShowVersions={() => {
+          setSettingsTab("geral");
+          setSettingsOpen(true);
+        }}
+      />
       <Toasts toasts={toasts} dismiss={dismiss} />
       <div className="build-badge" aria-hidden="true">
         {formatBuild(__APP_VERSION__, __BUILD_DATE__)}

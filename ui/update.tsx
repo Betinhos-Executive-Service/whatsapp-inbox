@@ -1,96 +1,143 @@
-import { Download, RefreshCw, TriangleAlert } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Download, History, RefreshCw, TriangleAlert, X } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import type { UpdateState } from "./desktop.ts";
+import type { ReleaseInfo, UpdateState } from "./desktop.ts";
 import { Button } from "./ds/index.ts";
 
+const SEEN_KEY = "update-toast-seen";
+const IGNORE = /^(merge |release:|chore|docs|test|ci|build|style)/i;
+
+/** Notas da release (mensagens de commit) em frases simples: sem prefixo técnico nem merges. */
+export function releaseChanges(notes: string): string[] {
+  const out: string[] = [];
+  for (const raw of notes.split(/\r?\n/)) {
+    let line = raw.replace(/^[-*•]\s*/, "").trim();
+    if (!line || IGNORE.test(line)) continue;
+    line = line.replace(/^\w+(\([^)]*\))?!?:\s*/, "").replace(/\s*\(#\d+\)$/, "").trim();
+    if (!line) continue;
+    line = line[0].toUpperCase() + line.slice(1);
+    if (!/[.!?]$/.test(line)) line += ".";
+    if (!out.includes(line)) out.push(line);
+  }
+  return out;
+}
+
+const readSeen = () => {
+  try {
+    return localStorage.getItem(SEEN_KEY);
+  } catch {
+    return null;
+  }
+};
+const writeSeen = (version: string) => {
+  try {
+    localStorage.setItem(SEEN_KEY, version);
+  } catch {
+    // sem storage o aviso só volta na próxima abertura
+  }
+};
+
 /**
- * Aviso de versão nova, só no app desktop. Aparece toda vez que a pessoa entra no app
- * (abre ou volta pela bandeja) enquanto houver versão nova; "Depois" fecha até a próxima entrada.
+ * Aviso de versão nova em toast, só no app desktop. O app consulta a cada 2 minutos;
+ * cada versão nova aparece uma única vez, com o que mudou em linguagem simples.
  */
-export function UpdateDialog() {
+export function UpdateDialog({ onShowVersions }: { onShowVersions: () => void }) {
   const desktop = window.desktop;
   const [state, setState] = useState<UpdateState>({ status: "idle" });
-  const [dismissed, setDismissed] = useState(false);
-  const primary = useRef<HTMLButtonElement>(null);
+  const [shown, setShown] = useState<string | null>(null);
+  const [closed, setClosed] = useState(false);
+  const [changes, setChanges] = useState<string[] | null>(null);
 
   useEffect(() => {
     if (!desktop) return;
     void desktop.getUpdate().then(setState);
-    const offUpdate = desktop.onUpdate(setState);
-    const offRemind = desktop.onRemind(() => setDismissed(false));
-    return () => {
-      offUpdate();
-      offRemind();
-    };
+    return desktop.onUpdate(setState);
   }, [desktop]);
 
+  // Versão nova ainda não avisada: marca como vista e busca o que mudou desde a instalada.
+  const available = state.status === "available" ? state.version : null;
+  useEffect(() => {
+    if (!desktop || !available || readSeen() === available) return;
+    writeSeen(available);
+    setShown(available);
+    setClosed(false);
+    setChanges(null);
+    desktop
+      .listVersions()
+      .then((list: ReleaseInfo[]) => {
+        const i = list.findIndex((v) => v.current);
+        const newer = i >= 0 ? list.slice(0, i) : list.filter((v) => v.version === available);
+        setChanges(newer.flatMap((v) => releaseChanges(v.notes)));
+      })
+      .catch(() => setChanges([]));
+  }, [desktop, available]);
+
   const busy = state.status === "downloading" || state.status === "installing";
-  // "checking" e "latest" vêm do botão das Configurações; aviso só quando há o que fazer.
-  const actionable = ["available", "downloading", "installing", "error"].includes(state.status) && !(state.status === "error" && !state.version);
-  const open = !!desktop && actionable && (!dismissed || busy);
-
-  useEffect(() => {
-    if (open) requestAnimationFrame(() => primary.current?.focus());
-  }, [open, state.status]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) setDismissed(true);
-      if (e.key === "Tab") {
-        // Foco preso no aviso enquanto ele estiver aberto.
-        const items = [...document.querySelectorAll<HTMLElement>(".update-dialog button:not(:disabled)")];
-        if (!items.length) return e.preventDefault();
-        const i = items.indexOf(document.activeElement as HTMLElement);
-        e.preventDefault();
-        items[(i + (e.shiftKey ? -1 : 1) + items.length) % items.length].focus();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, busy]);
-
+  const failed = state.status === "error" && !!state.version;
+  const open = !!desktop && (busy || failed || (!!shown && state.status === "available" && !closed));
   if (!open || !desktop) return null;
+
   const version = "version" in state && state.version ? `v${state.version}` : "";
   const install = () => void desktop.installUpdate().then(setState);
+  const close = () => {
+    setClosed(true);
+    if (failed) setState({ status: "idle" });
+  };
 
   return (
-    <div className="modal">
-      <div className="modal__overlay" aria-hidden onClick={() => !busy && setDismissed(true)} />
-      <div className="modal__panel surface update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-title" aria-describedby="update-text">
-        <div className="update-dialog__icon" aria-hidden>
-          {state.status === "error" ? <TriangleAlert size={20} /> : <Download size={20} />}
+    <div className="update-toast surface" role="status" aria-live="polite" aria-labelledby="update-title">
+      <div className="update-toast__head">
+        <span className="update-toast__icon" aria-hidden>
+          {failed ? <TriangleAlert size={16} /> : <Download size={16} />}
+        </span>
+        <strong id="update-title" className="update-toast__title">
+          {failed ? "A atualização não terminou" : `Versão nova ${version}`}
+        </strong>
+        {!busy && (
+          <button type="button" className="update-toast__close" aria-label="Fechar aviso" onClick={close}>
+            <X size={16} aria-hidden />
+          </button>
+        )}
+      </div>
+
+      {state.status === "available" && (
+        <div className="update-toast__body">
+          <p className="hint">O que mudou:</p>
+          {changes === null ? (
+            <p className="hint">Carregando…</p>
+          ) : changes.length ? (
+            <ul className="update-toast__changes">
+              {changes.slice(0, 6).map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+              {changes.length > 6 && <li className="hint">E mais {changes.length - 6} melhorias.</li>}
+            </ul>
+          ) : (
+            <p className="hint">Melhorias e correções.</p>
+          )}
         </div>
-        <h2 id="update-title" className="heading-card">
-          {state.status === "error" ? "A atualização não terminou" : `Versão nova disponível ${version}`}
-        </h2>
-        <p id="update-text" className="hint update-dialog__text">
-          {state.status === "available" && "Atualizar agora baixa a versão nova, fecha o app e mostra a instalação. Leva até 1 minuto e o app abre de novo sozinho. As conversas e a conexão continuam."}
-          {state.status === "downloading" && `Baixando a atualização… ${state.percent}%`}
-          {state.status === "installing" && "Instalando. O app vai fechar e uma janela de instalação aparece; em até 1 minuto ele abre de novo sozinho. Não precisa fazer nada."}
-          {state.status === "error" && `Não foi possível baixar ou instalar. Verifique a internet e tente de novo. (${state.message})`}
-        </p>
-        {state.status === "downloading" && (
+      )}
+      {state.status === "downloading" && (
+        <>
+          <p className="hint">Baixando a atualização… {state.percent}%</p>
           <div className="progress" role="progressbar" aria-label="Download da atualização" aria-valuemin={0} aria-valuemax={100} aria-valuenow={state.percent}>
             <div className="progress__bar" style={{ transform: `scaleX(${state.percent / 100})` }} />
           </div>
-        )}
-        <div className="cluster update-dialog__actions">
-          <Button variant="secondary" onClick={() => setDismissed(true)} disabled={busy}>
-            Depois
+        </>
+      )}
+      {state.status === "installing" && <p className="hint">Instalando. O app fecha e abre de novo sozinho em até 1 minuto.</p>}
+      {failed && state.status === "error" && <p className="hint">Verifique a internet e tente de novo. ({state.message})</p>}
+
+      {!busy && (
+        <div className="cluster update-toast__actions">
+          <Button variant="ghost" icon={<History size={16} aria-hidden />} onClick={() => { setClosed(true); onShowVersions(); }}>
+            Ver versões
           </Button>
-          <Button
-            ref={primary}
-            variant="primary"
-            onClick={install}
-            loading={busy}
-            icon={state.status === "error" ? <RefreshCw size={16} aria-hidden /> : <Download size={16} aria-hidden />}
-          >
-            {state.status === "error" ? "Tentar de novo" : busy ? "Atualizando…" : "Atualizar agora"}
+          <Button variant="primary" onClick={install} icon={failed ? <RefreshCw size={16} aria-hidden /> : <Download size={16} aria-hidden />}>
+            {failed ? "Tentar de novo" : "Atualizar agora"}
           </Button>
         </div>
-      </div>
+      )}
     </div>
   );
 }

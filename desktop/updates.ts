@@ -1,5 +1,5 @@
 // Atualização pelo GitHub Releases (Betinhos-Executive-Service/whatsapp-inbox).
-// Só consulta e baixa quando a pessoa pede: a janela mostra o aviso e o botão "Atualizar agora".
+// Consulta a cada 2 minutos; só baixa quando a pessoa pede pelo toast ("Atualizar agora").
 import { app, ipcMain, type IpcMainInvokeEvent } from "electron";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -14,7 +14,7 @@ export type UpdateState =
   | { status: "installing"; version: string }
   | { status: "error"; version: string | null; message: string };
 
-const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
+const CHECK_EVERY_MS = 2 * 60 * 1000;
 const OWNER = "Betinhos-Executive-Service";
 const REPO = "whatsapp-inbox";
 const VERSION = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
