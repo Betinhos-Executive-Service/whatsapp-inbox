@@ -64,6 +64,7 @@ export type RunningApp = {
 };
 
 // Estado do número conectado: não vai junto ao copiar configurações para outra conta.
+// "poll_lid…" (endereço das enquetes) também é do número: filtrado pelo prefixo.
 const PER_NUMBER_SETTINGS = new Set(["account", "contacts_backfill", "wa_version"]);
 
 export async function startApp(options: AppOptions): Promise<RunningApp> {
@@ -713,12 +714,12 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     connection: () => (wa?.state ?? bootingState),
     logout: () => connected().logout(),
     exportSettings: () => ({
-      settings: store.listSettings().filter(([key]) => !PER_NUMBER_SETTINGS.has(key)),
+      settings: store.listSettings().filter(([key]) => !PER_NUMBER_SETTINGS.has(key) && !key.startsWith("poll_lid")),
       labels: store.listLabels(),
       quickReplies: store.listQuickReplies(),
     }),
     importSettings: (snapshot) => {
-      for (const [key, value] of snapshot.settings) if (!PER_NUMBER_SETTINGS.has(key)) store.setSetting(key, value);
+      for (const [key, value] of snapshot.settings) if (!PER_NUMBER_SETTINGS.has(key) && !key.startsWith("poll_lid")) store.setSetting(key, value);
       store.saveLabels(snapshot.labels);
       store.saveQuickReplies(snapshot.quickReplies);
       options.onPrefs?.(readPrefs(store));

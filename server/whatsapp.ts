@@ -355,11 +355,33 @@ export class WhatsApp extends EventEmitter<{
     const group = isJidGroup(m.key.remoteJid!) === true;
     const creators = ref.fromMe ? this.withAlt(...this.meJids()) : this.withAlt(ref.participant ?? ref.rawJid);
     const voters = m.key.fromMe ? this.withAlt(...this.meJids()) : group ? this.withAlt(m.key.participant, m.key.participantAlt) : this.withAlt(m.key.remoteJid, m.key.remoteJidAlt, pollChat);
-    const hashes = decryptVote({ encPayload: enc.encPayload, encIv: enc.encIv }, { secret: Buffer.from(ref.poll.secret, "base64"), pollId, creators, voters });
-    if (!hashes) return void console.warn(`Voto da enquete ${pollId} não decifrou.`);
+    const got = decryptVote({ encPayload: enc.encPayload, encIv: enc.encIv }, { secret: Buffer.from(ref.poll.secret, "base64"), pollId, creators, voters });
+    if (!got) return void console.warn(`Voto da enquete ${pollId} não decifrou.`);
+    // A forma que serviu para "mim" (votante, se votei pelo celular; criador, se a enquete é minha) é a que
+    // o WhatsApp usa nesta conversa: os votos enviados daqui passam a cifrar igual.
+    const mine = m.key.fromMe ? got.voter : ref.fromMe ? got.creator : null;
+    if (mine) this.rememberPollAddressing(pollChat!, isLidUser(mine) === true);
     const voter = m.key.fromMe ? "me" : this.canonical(group ? m.key.participant! : m.key.remoteJid!, group ? m.key.participantAlt : m.key.remoteJidAlt);
-    const message = this.store.recordVote(pollChat!, pollId, voter, optionsFromHashes(ref.poll.options, hashes), timestamp(m));
+    const message = this.store.recordVote(pollChat!, pollId, voter, optionsFromHashes(ref.poll.options, got.hashes), timestamp(m));
     if (message && !quiet) this.emit("update", { message, chat: this.store.getChat(pollChat!)! });
+  }
+
+  /** Guarda se a conversa endereça enquetes pelo LID (por conversa e como padrão geral). */
+  private rememberPollAddressing(chatJid: string, lid: boolean) {
+    this.store.setSetting(`poll_lid:${chatJid}`, lid ? "1" : "0");
+    this.store.setSetting("poll_lid", lid ? "1" : "0");
+  }
+
+  /**
+   * Endereço das enquetes na conversa: o aprendido dos votos que chegaram; senão, o modo do grupo;
+   * senão, se o contato já escreve pelo LID; senão, o padrão aprendido em outras conversas.
+   */
+  private async pollUsesLid(chatJid: string, rawJid: string): Promise<boolean> {
+    const learned = this.store.getSetting(`poll_lid:${chatJid}`);
+    if (learned !== null) return learned === "1";
+    if (isJidGroup(rawJid)) return (await this.groupInfo(rawJid)).addressingMode === "lid";
+    if (isLidUser(rawJid) || this.store.lastIncomingIsLid(chatJid)) return true;
+    return this.store.getSetting("poll_lid") === "1";
   }
 
   /** Participantes citados num aviso de grupo (JSON com id/LID e número, ou o JID puro). */
@@ -809,11 +831,13 @@ export class WhatsApp extends EventEmitter<{
     const valid = options.filter((o) => ref.poll.options.includes(o));
     if (ref.poll.selectable === 1 && valid.length > 1) throw new Error("Esta enquete aceita só uma opção.");
     // A cifra usa os JIDs como a conversa endereça: LID ou número.
-    const group = isJidGroup(ref.rawJid) === true;
-    const lidMode = group ? (await this.groupInfo(ref.rawJid)).addressingMode === "lid" : isLidUser(ref.rawJid) === true;
+    const lidMode = await this.pollUsesLid(jid, ref.rawJid);
     const me = sock.user!;
     const myJid = jidNormalizedUser(lidMode && me.lid ? me.lid : me.id);
-    const creator = ref.fromMe ? myJid : jidNormalizedUser(ref.participant ?? ref.rawJid);
+    // Quem criou, na mesma forma (o par número/LID vem do mapa, quando conhecido).
+    const author = jidNormalizedUser(ref.participant ?? ref.rawJid);
+    const authorAlt = isLidUser(author) ? this.store.pnForLid(author) : this.store.lidForPn(author);
+    const creator = ref.fromMe ? myJid : (isLidUser(author) === lidMode ? author : (authorAlt ?? author));
     const vote = encryptVote(valid, { secret: Buffer.from(ref.poll.secret, "base64"), pollId, creator, voter: myJid });
     await sock.relayMessage(
       ref.rawJid,

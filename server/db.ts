@@ -835,6 +835,12 @@ export class Store {
     }
   }
 
+  /** A última mensagem recebida na conversa veio pelo LID? (a conversa já está no endereço novo do WhatsApp) */
+  lastIncomingIsLid(chatJid: string): boolean {
+    const r = this.q("select raw_jid, participant from messages where chat_jid = ? and from_me = 0 order by at desc limit 1").get(chatJid) as Row | undefined;
+    return !!r && String(r.participant ?? r.raw_jid).endsWith("@lid");
+  }
+
   /** Conversa da enquete pelo id: o voto pode chegar endereçado pelo LID, fora da conversa do número. */
   pollChat(id: string): string | null {
     const r = this.q("select chat_jid from messages where id = ? and kind = 'poll' limit 1").get(id) as Row | undefined;
