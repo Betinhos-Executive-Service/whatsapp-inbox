@@ -328,7 +328,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     client.on("message", ({ message, chat, live }) => {
       broadcast("message", { message, chat });
       if (live && !message.fromMe) {
-        scheduleClassify(chat.jid);
+        // Ligação e avisos não mudam o assunto da conversa: não pedem classificação.
+        if (message.kind !== "call" && message.kind !== "system") scheduleClassify(chat.jid);
         if (message.media?.type === "audio") readMedia(chat.jid, message.id).catch(() => undefined);
         if (message.media?.type === "audio" && shouldAutoTranscribe(chat)) {
           const ref = { chatJid: chat.jid, id: message.id };
@@ -430,10 +431,28 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     await connected().send(jid, text);
   };
   const markRead = async (jid: string) => {
+    const wasMarked = store.clearMarkedUnread(jid);
     const keys = store.markRead(jid);
     broadcast("chat", store.getChat(jid));
     options.onRead?.(jid);
     await wa?.markRead(keys).catch(() => undefined); // recibo de leitura é cortesia, não bloqueia
+    // Estava marcada como não lida: tira a marca também no celular.
+    if (wasMarked) await wa?.syncUnread(jid, false).catch(() => undefined);
+  };
+
+  /** "11 99999-0000" ou "+55 11 99999-0000" → só dígitos com DDI; sem DDI, assume Brasil (55). */
+  const phoneDigits = (phone: string): string => {
+    let digits = phone.replace(/\D/g, "").replace(/^00/, "");
+    if (!phone.trim().startsWith("+") && (digits.length === 10 || digits.length === 11)) digits = `55${digits}`;
+    if (digits.length < 8 || digits.length > 15) throw new Error("Número inválido. Use DDD e número, com DDI se for de fora do Brasil.");
+    return digits;
+  };
+
+  /** Conversa nova ou existente: vira visível na lista e é avisada à tela. */
+  const showChat = (jid: string) => {
+    const chat = store.openChat(jid);
+    broadcast("chat", chat);
+    return chat;
   };
   const avatar = (jid: string) => photos.thumb(jid);
 
@@ -445,14 +464,64 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     distDir: options.distDir,
     state: publicState,
     send: (jid, text, opts) =>
-      connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll }),
+      connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(opts.quotedChat ?? jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll }),
     sendMedia,
+    sendPoll: (jid, question, options, multiple) => connected().sendPoll(jid, question, options, multiple),
+    vote: (jid, id, options) => connected().votePoll(jid, id, options),
+    sendLocation: (jid, place) => connected().sendLocation(jid, place),
+    sendContacts: (jid, contacts) => connected().sendContacts(jid, contacts),
+    sendSticker: async (jid, from) => {
+      const m = store.getMessage(from.chatJid, from.id);
+      if (m?.media?.type !== "sticker") throw new Error("Figurinha não encontrada.");
+      const file = await readMedia(from.chatJid, from.id);
+      await sendMedia(jid, { body: file.body, mimetype: "image/webp", fileName: "figurinha.webp", sticker: true });
+    },
+    stickers: () => store.listStickers(),
+    star: async (jid, id, starred) => ({ synced: await connected().star(jid, id, starred) }),
+    pin: (jid, id, seconds) => connected().pinMessage(jid, id, seconds),
+    openChat: async (target) => {
+      if (target.phone) {
+        const jid = await connected().checkNumber(phoneDigits(target.phone));
+        if (!jid) throw new Error("Este número não tem WhatsApp. Confira o DDD e os dígitos.");
+        return showChat(jid);
+      }
+      // Participante de grupo ou contato recebido: o número quando conhecido (o LID vira conversa também).
+      return showChat(wa ? wa.conversationOf(target.jid!) : target.jid!);
+    },
+    setBlocked: (jid, blocked) => connected().setBlocked(jid, blocked),
+    setEphemeral: (jid, seconds) => connected().setEphemeral(jid, seconds),
+    syncUnread: (jid, unread) => {
+      wa?.syncUnread(jid, unread).catch((e: Error) => console.warn(`Marcar como ${unread ? "não lida" : "lida"} no celular falhou: ${e.message}`));
+    },
+    createGroup: async (subject, participants) => showChat(await connected().createGroup(subject, participants)),
+    updateParticipants: (jid, participants, action) => connected().updateParticipants(jid, participants, action),
+    updateGroupInfo: async (jid, info) => {
+      await connected().updateGroupInfo(jid, info);
+      broadcast("chat", store.getChat(jid));
+    },
+    acceptInvite: async (jid, id) => showChat(await connected().acceptInvite(jid, id)),
     react: (jid, id, emoji) => connected().react(jid, id, emoji),
     editMessage: (jid, id, text) => connected().editSent(jid, id, text),
     forward: async (from, id, to) => {
       const m = store.getMessage(from, id);
       if (!m || m.deleted) throw new Error("Esta mensagem não pode ser encaminhada.");
       const text = store.messageText(from, id) ?? "";
+      // Enquete, localização e contato vão no próprio formato, não como texto "[Enquete] …".
+      const extra = store.messageExtra(from, id);
+      if (extra?.type === "poll") return connected().sendPoll(to, extra.question, extra.options, extra.selectable !== 1);
+      if (extra?.type === "location") return connected().sendLocation(to, { lat: extra.lat, lng: extra.lng, name: extra.name ?? undefined, address: extra.address ?? undefined });
+      if (extra?.type === "contact") {
+        const contacts = extra.contacts.flatMap((c) => {
+          const phone = c.phones[0] ? (c.phones[0].waid ?? c.phones[0].number.replace(/\D/g, "")) : "";
+          return phone ? [{ name: c.name, phone }] : [];
+        });
+        if (contacts.length) return connected().sendContacts(to, contacts);
+      }
+      if (m.kind === "call" || m.kind === "system") throw new Error("Avisos e ligações não podem ser encaminhados.");
+      if (m.media?.type === "sticker") {
+        const file = await readMedia(from, id);
+        return sendMedia(to, { body: file.body, mimetype: "image/webp", fileName: "figurinha.webp", sticker: true });
+      }
       if (!m.media) return connected().send(to, text);
       // Mídia: baixa (ou lê do cache) e envia de novo, com a mesma legenda.
       const file = await readMedia(from, id);
