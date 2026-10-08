@@ -313,6 +313,7 @@ export function MessageHits({ hits, chats, loading, onOpen }: {
 
 const SHORTCUTS: [string, string][] = [
   ["Ctrl + K", "Buscar conversas e mensagens"],
+  ["Ctrl + F", "Pesquisar na conversa aberta (Enter / Shift+Enter navegam)"],
   ["Alt + ↓ / Alt + ↑", "Próxima / conversa anterior da lista"],
   ["Ctrl + Enter", "Marcar como resolvida (fora do campo de mensagem)"],
   ["Ctrl + E", "Arquivar ou desarquivar a conversa aberta"],

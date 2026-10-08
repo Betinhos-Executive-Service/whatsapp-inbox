@@ -31,6 +31,8 @@ import {
   WifiOff,
   X,
   Clock3,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -654,7 +656,7 @@ function captionOf(m: Message, body: string): string {
   return caption;
 }
 
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu }: {
   messages: Message[];
   isGroup: boolean;
   hasMore: boolean;
@@ -665,6 +667,8 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   canAct: boolean;
   /** Mensagem sendo respondida ou editada: fica destacada na conversa. */
   targetId: string | null;
+  /** Resultado atual da busca na conversa (Ctrl+F). */
+  hitId: string | null;
   onReply: (m: Message) => void;
   onDelete: (m: Message) => void;
   onCopy: (m: Message, quiet?: boolean) => Promise<boolean>;
@@ -695,7 +699,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         const caption = captionOf(m, body);
         const sender = m.sender;
         return (
-          <div key={m.id} data-message-id={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}`}>
+          <div key={m.id} data-message-id={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}${m.id === hitId ? " message-row--hit" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
             <div
               className="message-line"
@@ -1309,6 +1313,46 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     (jid: string, name: string) => openProfile({ jid, name, phone: jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : null, isGroup: false }),
     [openProfile],
   );
+  // ---- busca na conversa (Ctrl+F): procura nas mensagens já carregadas
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+  const findInput = useRef<HTMLInputElement>(null);
+  const findHits = useMemo(() => {
+    const q = normalize(findQuery.trim());
+    if (!q || !messages) return [];
+    return messages
+      .filter((m) => !m.deleted && normalize(captionOf(m, splitAuthor(m, chat.isGroup).body)).includes(q))
+      .map((m) => m.id)
+      .reverse(); // mais recente primeiro, como no WhatsApp
+  }, [findQuery, messages, chat.isGroup]);
+  const hitId = findOpen ? (findHits[Math.min(findIndex, findHits.length - 1)] ?? null) : null;
+  useEffect(() => setFindIndex(0), [findQuery]);
+  useEffect(() => {
+    if (!hitId) return;
+    scroller.current
+      ?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(hitId)}"]`)
+      ?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  }, [hitId]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+        requestAnimationFrame(() => findInput.current?.select());
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const closeFind = () => {
+    setFindOpen(false);
+    setFindQuery("");
+  };
+  const stepFind = (dir: 1 | -1) => {
+    if (!findHits.length) return;
+    setFindIndex((i) => (Math.min(i, findHits.length - 1) + dir + findHits.length) % findHits.length);
+  };
   const jump = useCallback(
     (id: string) => {
       const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
@@ -1447,9 +1491,55 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             <span className="chat-pane__notes-label">Notas</span>
             {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden className="chat-pane__notes-alarm" />}
           </Button>
+          <Button
+            variant="ghost"
+            size="compact"
+            aria-pressed={findOpen}
+            aria-label="Pesquisar na conversa (Ctrl+F)"
+            title="Pesquisar na conversa (Ctrl+F)"
+            icon={<Search size={16} aria-hidden />}
+            onClick={() => (findOpen ? closeFind() : (setFindOpen(true), requestAnimationFrame(() => findInput.current?.focus())))}
+          />
           <AiQuickPicker onMore={onSetupAi} />
         </div>
       </header>
+      {findOpen && (
+        <div className="chat-find" role="search">
+          <Search size={16} aria-hidden className="chat-find__icon" />
+          <input
+            ref={findInput}
+            className="chat-find__input"
+            type="search"
+            placeholder="Pesquisar nesta conversa"
+            aria-label="Pesquisar nesta conversa"
+            value={findQuery}
+            autoFocus
+            onChange={(e) => setFindQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                stepFind(e.shiftKey ? -1 : 1);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                closeFind();
+              }
+            }}
+          />
+          <span className="chat-find__count hint" role="status">
+            {findQuery.trim() ? (findHits.length ? `${Math.min(findIndex, findHits.length - 1) + 1} de ${findHits.length}` : "Nenhum resultado") : ""}
+          </span>
+          <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Resultado anterior (Shift+Enter)" title="Anterior (Shift+Enter)" disabled={findHits.length < 2} onClick={() => stepFind(1)}>
+            <ChevronUp size={16} aria-hidden />
+          </button>
+          <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Próximo resultado (Enter)" title="Próximo (Enter)" disabled={findHits.length < 2} onClick={() => stepFind(-1)}>
+            <ChevronDown size={16} aria-hidden />
+          </button>
+          <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Fechar pesquisa (Esc)" title="Fechar (Esc)" onClick={closeFind}>
+            <X size={16} aria-hidden />
+          </button>
+        </div>
+      )}
       <div className="chat-pane__body">
       <div className="messages" ref={scroller} aria-live="polite" aria-busy={messages === null}>
         {messages === null ? (
@@ -1473,6 +1563,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             chatName={chat.name}
             canAct={connected}
             targetId={editing?.id ?? replyTo?.id ?? null}
+            hitId={hitId}
             onReply={reply}
             onDelete={askDelete}
             onCopy={copy}
