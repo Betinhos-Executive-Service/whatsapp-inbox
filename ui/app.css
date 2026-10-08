@@ -547,10 +547,6 @@ ul, ol { margin: 0; padding: 0; }
 .modal__overlay { position: absolute; inset: 0; background-color: rgba(0, 26, 61, var(--bt-opacity-backdrop)); animation: fade var(--bt-duration-normal) var(--bt-ease-out); }
 .modal__panel { position: relative; width: min(100%, 420px); box-shadow: var(--bt-shadow-popover); animation: modal-in var(--bt-duration-normal) var(--bt-ease-out); }
 @keyframes modal-in { from { transform: scale(.96); opacity: 0; } }
-.update-dialog { display: flex; flex-direction: column; gap: var(--bt-space-2-5); padding: var(--bt-space-5); }
-.update-dialog__icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 11px; background-color: var(--bt-color-action-soft); color: var(--bt-color-action); }
-.update-dialog__text { font-size: var(--bt-font-size-13); }
-.update-dialog__actions { justify-content: flex-end; margin-top: var(--bt-space-1); }
 .progress { height: 6px; border-radius: var(--bt-radius-full); background-color: var(--bt-color-surface-soft); overflow: hidden; }
 .progress__bar { height: 100%; background-color: var(--bt-color-action); transform-origin: left; transition: transform var(--bt-duration-normal) var(--bt-ease-out); }
 
@@ -573,6 +569,23 @@ ul, ol { margin: 0; padding: 0; }
 .toast--error > svg { color: var(--bt-color-danger); flex: 0 0 auto; }
 .toast--success > svg { color: var(--bt-color-success); flex: 0 0 auto; }
 @keyframes toast-in { from { transform: translateY(-10px); opacity: 0; } }
+
+/* ---- aviso de versão nova (toast no canto, não bloqueia o app) */
+.update-toast {
+  position: fixed; z-index: var(--bt-z-index-toast); right: var(--bt-space-4); bottom: var(--bt-space-5);
+  width: min(380px, calc(100vw - 32px)); max-height: min(70vh, 480px); overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--bt-space-2); padding: var(--bt-space-3) var(--bt-space-4);
+  box-shadow: var(--bt-shadow-toast); animation: toast-in var(--bt-duration-normal) var(--bt-ease-out);
+}
+.update-toast__head { display: flex; align-items: center; gap: var(--bt-space-2); }
+.update-toast__icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; flex: 0 0 auto; background-color: var(--bt-color-action-soft); color: var(--bt-color-action); }
+.update-toast__title { flex: 1; }
+.update-toast__close { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 8px; background: none; color: var(--bt-color-text-tertiary); cursor: pointer; }
+.update-toast__close:hover { background-color: var(--bt-color-border); }
+.update-toast__close:focus-visible { outline: 0; box-shadow: var(--bt-focus-ring); }
+.update-toast__body { display: flex; flex-direction: column; gap: var(--bt-space-1); }
+.update-toast__changes { margin: 0; padding-left: var(--bt-space-4); display: flex; flex-direction: column; gap: var(--bt-space-1); font-size: var(--bt-font-size-13); }
+.update-toast__actions { justify-content: flex-end; }
 
 /* ---- versão do build: sutil, sem capturar clique, foco ou toque */
 .build-badge {

@@ -7,6 +7,7 @@ import { ClaudeOptionsPanel, DeepSeekOptionsPanel, JevContextField } from "./ai-
 import { applyTheme } from "./theme.ts";
 import { Button, buttonClassName, Checkbox, Field, Input, Radio, SegmentedControl, Textarea } from "./ds/index.ts";
 import { AiUsagePanel } from "./ai-usage.tsx";
+import { releaseChanges } from "./update.tsx";
 
 type Props = {
   open: boolean;
@@ -322,7 +323,7 @@ function UpdatePanel() {
             ? "Instalando a versão nova…"
             : state.status === "error"
               ? `Não foi possível verificar agora. Confira a internet. (${state.message})`
-              : "As versões novas aparecem sozinhas quando você abre o app.";
+              : "O app verifica versões novas a cada 2 minutos e avisa uma vez.";
   return (
     <div className="stack">
       <p className="hint">Versão instalada: {info ? `v${info.version}` : "…"}</p>
@@ -356,7 +357,7 @@ function UpdatePanel() {
                   description={
                     <>
                       Publicada em {new Date(v.date).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}
-                      {v.notes && <span className="version__notes">{v.notes}</span>}
+                      {releaseChanges(v.notes).length > 0 && <span className="version__notes">{releaseChanges(v.notes).map((c) => `• ${c}`).join("\n")}</span>}
                     </>
                   }
                 />

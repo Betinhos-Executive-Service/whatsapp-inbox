@@ -21,7 +21,7 @@ Na primeira vez, leia o código QR pelo celular (WhatsApp › Aparelhos conectad
 
 - Fechar a janela deixa o app na **bandeja** (perto do relógio), recebendo mensagens e classificando. Para sair, clique com o botão direito no ícone › **Sair**.
 - No mesmo menu: **Iniciar com o Windows**.
-- **Atualização:** quando sai versão nova no GitHub, o app avisa toda vez que você entra nele. **Atualizar agora** baixa, fecha por alguns segundos e reabre na versão nova. As conversas e a conexão continuam.
+- **Atualização:** o app verifica a cada 2 minutos e, quando sai versão nova no GitHub, mostra uma vez um aviso no canto com o que mudou em linguagem simples (e o botão **Ver versões** para o histórico). **Atualizar agora** baixa, fecha por alguns segundos e reabre na versão nova. As conversas e a conexão continuam.
 
 O Windows pode mostrar "O Windows protegeu o computador" na primeira instalação, porque o instalador não tem assinatura digital paga. Clique em **Mais informações › Executar assim mesmo**.
 
