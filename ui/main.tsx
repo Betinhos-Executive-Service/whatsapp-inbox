@@ -63,7 +63,7 @@ import { ResizeHandle } from "./resize.tsx";
 import { AttachmentTray, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
-import { EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji } from "./emoji.tsx";
+import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
 import type { Emoji } from "./emoji-data.ts";
 import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
 // Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
@@ -862,6 +862,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [quickOpen, setQuickOpen] = useState(false);
   const [emojiActive, setEmojiActive] = useState(0);
   const [emojiClosed, setEmojiClosed] = useState(false);
+  // Última troca de emoticon (":-)" → 🙂): Backspace logo em seguida desfaz.
+  const emoticonSwap = useRef<EmoticonSwap | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -1206,7 +1208,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
 
   // ":" + 2 letras abre as sugestões de emoji (":joinha" → 👍), como no WhatsApp.
   const emojiQ = showQuick || showMention ? null : emojiQuery(draft, caret);
-  const emojiItems = emojiQ !== null && !emojiClosed ? searchEmoji(emojiQ, 8) : [];
+  const emojiData = useEmojiData(emojiQ !== null);
+  const emojiItems = emojiQ !== null && emojiData && !emojiClosed ? searchEmoji(emojiQ, emojiData.EMOJIS, 8) : [];
   const showEmoji = emojiItems.length > 0;
   useEffect(() => {
     setEmojiActive(0);
@@ -1734,8 +1737,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
                   : "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha."
           }
           onChange={(e) => {
-            setDraft(e.target.value);
-            setCaret(e.target.selectionStart ?? e.target.value.length);
+            const el = e.target;
+            const at = el.selectionStart ?? el.value.length;
+            // Emoticon digitado (":-)", "<3", "(y)") vira emoji na hora, como no WhatsApp Web.
+            const swap = (e.nativeEvent as InputEvent).inputType === "insertText" ? convertEmoticon(el.value, at) : null;
+            emoticonSwap.current = swap?.swap ?? null;
+            setDraft(swap?.text ?? el.value);
+            setCaret(swap?.swap.caret ?? at);
+            if (swap) requestAnimationFrame(() => el.setSelectionRange(swap.swap.caret, swap.swap.caret));
             noteTyping();
           }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
@@ -1749,6 +1758,19 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             addFiles(files);
           }}
           onKeyDown={(e) => {
+            const swap = emoticonSwap.current;
+            if (swap && e.key === "Backspace" && e.currentTarget.selectionStart === swap.caret && e.currentTarget.selectionEnd === swap.caret) {
+              const undo = undoEmoticon(draft, swap);
+              emoticonSwap.current = null;
+              if (undo) {
+                e.preventDefault();
+                const el = e.currentTarget;
+                setDraft(undo.text);
+                setCaret(undo.caret);
+                requestAnimationFrame(() => el.setSelectionRange(undo.caret, undo.caret));
+                return;
+              }
+            }
             const marker = formatShortcut(e);
             if (marker) {
               e.preventDefault();

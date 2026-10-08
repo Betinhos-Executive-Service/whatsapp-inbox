@@ -1,10 +1,29 @@
 import { Car, Clock, Coffee, Flag, Heart, Lightbulb, PawPrint, Smile, Trophy, type LucideIcon } from "lucide-react";
-import { useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { EMOJI_CATEGORIES, EMOJIS, type Emoji, type EmojiCategory } from "./emoji-data.ts";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import type { Emoji, EmojiCategory } from "./emoji-data.ts";
 import { pushRecent, searchEmoji } from "./emoji-text.ts";
 import { Button, SearchBox } from "./ds/index.ts";
 
-export { emojiQuery, insertAt, insertEmojiShortcut, searchEmoji } from "./emoji-text.ts";
+export { convertEmoticon, emojiQuery, insertAt, insertEmojiShortcut, searchEmoji, undoEmoticon, type EmoticonSwap } from "./emoji-text.ts";
+
+type EmojiData = typeof import("./emoji-data.ts");
+let data: EmojiData | null = null;
+let loading: Promise<EmojiData> | null = null;
+
+/** O catálogo (~1.900 emojis) é um pedaço à parte, carregado no primeiro ":" ou na primeira abertura do painel. */
+export function useEmojiData(need: boolean): EmojiData | null {
+  const [loaded, setLoaded] = useState(data);
+  useEffect(() => {
+    if (!need || loaded) return;
+    let alive = true;
+    loading ??= import("./emoji-data.ts").then((m) => (data = m));
+    loading.then((m) => alive && setLoaded(m), () => (loading = null));
+    return () => {
+      alive = false;
+    };
+  }, [need, loaded]);
+  return loaded;
+}
 
 const RECENT_KEY = "inbox:emoji-recentes";
 const COLUMNS = 8;
@@ -12,7 +31,6 @@ const ICONS: Record<EmojiCategory | "recentes", LucideIcon> = {
   recentes: Clock, pessoas: Smile, natureza: PawPrint, comida: Coffee, atividades: Trophy,
   viagem: Car, objetos: Lightbulb, simbolos: Heart, bandeiras: Flag,
 };
-const label = (e: Emoji) => e.keys[0].replace(/_/g, " ");
 
 function loadRecent(): string[] {
   try {
@@ -56,7 +74,7 @@ export function EmojiShortcutMenu({ items, active, onPick, onHover }: {
           onMouseEnter={() => onHover(i)}
         >
           <span className="emoji-item__char" aria-hidden>{e.char}</span>
-          <span className="quick-menu__text">{e.keys.slice(0, 3).join(" ").replace(/_/g, " ")}</span>
+          <span className="quick-menu__text">{e.name}</span>
         </li>
       ))}
     </ul>
@@ -73,16 +91,18 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => vo
   const [active, setActive] = useState<EmojiCategory | "recentes">(recent.length ? "recentes" : "pessoas");
   const body = useRef<HTMLDivElement>(null);
   const sections = useRef(new Map<string, HTMLElement>());
+  const catalog = useEmojiData(true);
 
   const groups = useMemo(() => {
-    const byChar = new Map(EMOJIS.map((e) => [e.char, e]));
-    const recentList = recent.map((c) => byChar.get(c) ?? { char: c, keys: ["recente"], category: "pessoas" as const });
+    if (!catalog) return [];
+    const byChar = new Map(catalog.EMOJIS.map((e) => [e.char, e]));
+    const recentList = recent.map((c) => byChar.get(c) ?? { char: c, name: c, keys: [], category: "pessoas" as const });
     return [
       ...(recentList.length ? [{ id: "recentes" as const, label: "Recentes", items: recentList }] : []),
-      ...EMOJI_CATEGORIES.map((c) => ({ ...c, items: EMOJIS.filter((e) => e.category === c.id) })),
+      ...catalog.EMOJI_CATEGORIES.map((c) => ({ ...c, items: catalog.EMOJIS.filter((e) => e.category === c.id) })),
     ];
-  }, [recent]);
-  const results = search.trim() ? searchEmoji(search) : null;
+  }, [catalog, recent]);
+  const results = catalog && search.trim() ? searchEmoji(search, catalog.EMOJIS) : null;
 
   const pick = (e: Emoji) => {
     onPick(e.char);
@@ -100,7 +120,7 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => vo
   };
   // A aba acompanha a seção visível ao rolar.
   const onScroll = () => {
-    if (!body.current || results) return;
+    if (!body.current || results || !groups.length) return;
     const top = body.current.scrollTop + body.current.offsetTop + 8;
     let current: EmojiCategory | "recentes" = groups[0].id;
     for (const g of groups) {
@@ -140,8 +160,8 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => vo
       key={e.char}
       type="button"
       className="emoji-picker__cell"
-      title={`:${e.keys[0]}:`}
-      aria-label={label(e)}
+      title={e.name}
+      aria-label={e.name}
       tabIndex={first ? 0 : -1}
       // mousedown sem foco: o cursor do campo e o painel ficam onde estão
       onMouseDown={(ev) => ev.preventDefault()}
@@ -183,6 +203,7 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => vo
         onKeyDown={searchKeys}
       />
       <div className="emoji-picker__body" ref={body} onScroll={onScroll} onKeyDown={gridKeys}>
+        {!catalog && <p className="emoji-picker__empty">Carregando emojis…</p>}
         {results ? (
           results.length ? (
             <div className="emoji-picker__grid" role="group" aria-label="Resultados">
