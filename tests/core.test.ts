@@ -213,6 +213,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       markRead: async () => undefined,
       syncArchive: () => undefined,
       syncMute: () => undefined,
+      syncPin: () => undefined,
       classify: async () => null,
       saveSettings: () => undefined,
       logout: async () => undefined,

@@ -127,6 +127,8 @@ export class WhatsApp extends EventEmitter<{
   private pendingArchive = new Map<string, boolean>();
   /** Silenciar à espera de conexão ou da chave do celular (fim em ms; null = reativar). */
   private pendingMute = new Map<string, number | null>();
+  /** Fixar conversa à espera de conexão ou da chave do celular. */
+  private pendingPin = new Map<string, boolean>();
   /** Contatos bloqueados (JID da conversa), lidos ao conectar e mantidos pelos eventos. */
   private blocked = new Set<string>();
   private retries = 0;
@@ -640,6 +642,7 @@ export class WhatsApp extends EventEmitter<{
           if (c.name) this.store.setNames(jid, { saved: c.name });
           if (typeof c.archived === "boolean") this.store.updateChat(jid, { archived: c.archived });
           if (c.muteEndTime !== undefined) this.store.updateChat(jid, { mutedUntil: mutedUntilOf(c.muteEndTime) });
+          if (c.pinned && !this.store.getChat(jid)?.pinnedAt) this.store.updateChat(jid, { pinned: true });
           if (c.ephemeralExpiration != null) this.store.setEphemeral(jid, Number(c.ephemeralExpiration) || null);
           if (c.markedAsUnread) this.store.updateChat(jid, { markedUnread: true });
         }
@@ -668,6 +671,11 @@ export class WhatsApp extends EventEmitter<{
         } else if (u.unreadCount === 0 && (current.markedUnread || current.unread > 0)) {
           this.store.clearMarkedUnread(jid);
           this.store.markRead(jid);
+          changed = true;
+        }
+        // Fixar vem com o horário em que foi fixada; null = desafixada.
+        if (u.pinned !== undefined && !!u.pinned !== !!current.pinnedAt) {
+          this.store.updateChat(jid, { pinned: !!u.pinned });
           changed = true;
         }
         if (u.muteEndTime !== undefined && mutedUntilOf(u.muteEndTime) !== current.mutedUntil) {
@@ -1147,6 +1155,25 @@ export class WhatsApp extends EventEmitter<{
     }
   }
 
+  /** Fixa ou desafixa a conversa também no celular (lá o limite é 3). Sem conexão ou sem a chave, fica pendente. */
+  async setChatPinned(jid: string, pinned: boolean): Promise<void> {
+    this.pendingPin.set(jid, pinned);
+    if (this.sock) await this.pushPins(this.sock);
+  }
+
+  private async pushPins(sock: WASocket): Promise<void> {
+    for (const [jid, pinned] of [...this.pendingPin]) {
+      const rawJid = this.store.lastMessageKey(jid)?.rawJid ?? jid;
+      try {
+        await sock.chatModify({ pin: pinned }, rawJid);
+      } catch (error) {
+        if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(sock);
+        throw error;
+      }
+      if (this.pendingPin.get(jid) === pinned) this.pendingPin.delete(jid);
+    }
+  }
+
   /** O WhatsApp pede a última mensagem da conversa junto com o arquivar. */
   private async pushArchives(sock: WASocket): Promise<void> {
     for (const [jid, archived] of [...this.pendingArchive]) {
@@ -1175,6 +1202,7 @@ export class WhatsApp extends EventEmitter<{
       if (!(await this.hasAppStateKey(sock))) return void (await this.requestAppStateKey(sock));
       await this.pushArchives(sock);
       await this.pushMutes(sock);
+      await this.pushPins(sock);
       await sock.authState.keys.set({ "app-state-sync-version": { regular_low: null } });
       await sock.resyncAppState(["regular_low"], false);
     } catch (error) {
