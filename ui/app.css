@@ -314,6 +314,19 @@ ul, ol { margin: 0; padding: 0; }
   background-color: var(--bt-color-surface);
   border-bottom: var(--bt-border-width-default) solid var(--bt-color-border);
 }
+/* busca na conversa (Ctrl+F) */
+.chat-find {
+  display: flex; align-items: center; gap: var(--bt-space-2);
+  padding: var(--bt-space-2) var(--bt-space-4) var(--bt-space-2) var(--bt-space-5);
+  background-color: #FCFCFB;
+  border-bottom: var(--bt-border-width-default) solid var(--bt-color-border);
+}
+.chat-find__icon { flex: 0 0 auto; color: var(--bt-color-slate-700); }
+.chat-find__input {
+  flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 var(--bt-space-2);
+  border: 0; background: transparent; font: inherit; color: inherit; outline: none;
+}
+.chat-find__count { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .chat-pane__title { flex: 1 1 120px; display: flex; align-items: center; gap: var(--bt-space-3); min-width: 0; }
 .chat-pane__name { display: flex; flex-direction: column; min-width: 0; }
 .chat-pane__name .heading-card { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -965,6 +978,7 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 /* bolha sendo respondida ou editada: liga a barra do campo à mensagem de origem */
 .message-row .bubble { transition: box-shadow var(--bt-duration-fast) ease; }
 .message-row--target .bubble { box-shadow: 0 0 0 2px var(--bt-focus-border); }
+.message-row--hit .bubble { box-shadow: 0 0 0 2px var(--bt-color-action); }
 .message-row--flash .bubble { animation: message-flash 1.4s var(--bt-ease-out); }
 @keyframes message-flash { 0%, 40% { box-shadow: 0 0 0 3px var(--bt-focus-border); } 100% { box-shadow: 0 0 0 3px transparent; } }
 
