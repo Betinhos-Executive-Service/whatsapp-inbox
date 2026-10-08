@@ -348,8 +348,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         const messages = await withTranscripts(jid, store.listMessages(jid, null, which === "deepseek" ? deepseekOptions().contextMessages : jevContext()));
         const { result, usage } =
           which === "jev"
-            ? await (await getJev()).classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid), jevContext())
-            : await deepseek.classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid));
+            ? await (await getJev()).classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid), jevContext(), chat.isGroup)
+            : await deepseek.classify(key, chat.name, messages, store.listLabels(), store.labelExamples(jid), chat.isGroup);
         recordUsage(which, "classificar", jid, usage, result);
         return store.saveClassification(jid, result);
       } catch (error) {

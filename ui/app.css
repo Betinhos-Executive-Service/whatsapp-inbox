@@ -287,7 +287,32 @@ ul, ol { margin: 0; padding: 0; }
 /* Rascunho não enviado: estado neutro (§3.2), rótulo + ícone para não depender de cor. */
 .chat-item__draft { display: inline-flex; align-items: center; gap: var(--bt-space-1); vertical-align: -1px; font-weight: var(--bt-font-weight-extrabold); color: var(--bt-color-text-primary); }
 .chat-item__draft svg { flex: 0 0 auto; }
-.chat-item__tags { display: flex; flex-wrap: wrap; gap: var(--bt-space-1); margin-top: 2px; }
+.chat-row { position: relative; }
+/* Prioridade só por cor, na faixa de severidade à esquerda; a seleção (azul) tem precedência. */
+.chat-item--alta:not([aria-current='true']) { border-left-color: var(--bt-color-danger); }
+.chat-item--media:not([aria-current='true']) { border-left-color: var(--bt-color-warning); }
+/* Linha discreta: etiquetas em texto e ícones; reserva à direita para os botões de status. */
+.chat-item__meta { display: flex; align-items: center; gap: var(--bt-space-1-5); min-height: 24px; padding-right: 84px; min-width: 0; font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); }
+.chat-item__labels { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.chat-item__meta-icon { flex: 0 0 auto; color: var(--bt-color-text-secondary); }
+.chat-item__meta-icon--due { color: var(--bt-color-warning); }
+/* Botões de status no próprio item: sutis em repouso, nítidos ao passar o mouse ou focar. */
+.chat-status { position: absolute; right: var(--bt-space-4); bottom: var(--bt-space-2-5); display: flex; gap: 2px; }
+.chat-status__item {
+  display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: var(--bt-radius-sm); background: transparent; cursor: pointer;
+  color: var(--bt-color-text-secondary); opacity: .45;
+  transition: opacity var(--bt-duration-fast) ease, background-color var(--bt-duration-fast) ease, color var(--bt-duration-fast) ease;
+}
+.chat-status__item[aria-checked='true'] { opacity: 1; }
+.chat-status__item--action[aria-checked='true'] { color: var(--bt-color-action); }
+.chat-status__item--warning[aria-checked='true'] { color: var(--bt-color-warning); }
+.chat-status__item--success[aria-checked='true'] { color: var(--bt-color-success); }
+.chat-row:hover .chat-status__item, .chat-status:focus-within .chat-status__item { opacity: 1; }
+.chat-status__item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--bt-focus-border); }
+@media (hover: hover) and (pointer: fine) {
+  .chat-status__item:hover { background-color: var(--bt-color-border); color: var(--bt-color-text-primary); }
+}
 
 /* Prévia ao parar o mouse num item: não captura o ponteiro, some ao sair. */
 .chat-peek {

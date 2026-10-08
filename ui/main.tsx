@@ -48,7 +48,7 @@ import {
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
-import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
+import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status, type Priority } from "./api.ts";
 import { ChatItemMenu, drafts, isMuted, useDraft, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
@@ -122,6 +122,12 @@ const STATUS_META: Record<Status, { label: string; icon: ReactNode }> = {
   aberta: { label: "Aberta", icon: <CircleDot size={16} aria-hidden /> },
   aguardando: { label: "Aguardando", icon: <Clock size={16} aria-hidden /> },
   resolvida: { label: "Resolvida", icon: <CheckCircle2 size={16} aria-hidden /> },
+};
+/** Ícones menores para os botões de status no item da lista. */
+const STATUS_ICON_SM: Record<Status, ReactNode> = {
+  aberta: <CircleDot size={14} aria-hidden />,
+  aguardando: <Clock size={14} aria-hidden />,
+  resolvida: <CheckCircle2 size={14} aria-hidden />,
 };
 const PAGE = 200;
 
@@ -219,21 +225,29 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
   );
 }
 
+/** Prioridade exibida: a da IA manda; sem ela, urgência e a nota local. Resolvida não tem cor. */
+function displayPriority(chat: Chat): Priority | null {
+  if (chat.status === "resolvida") return null;
+  if (chat.ai?.priority) return chat.ai.priority;
+  if ((chat.ai?.urgent ?? 0) >= 0.5) return "alta";
+  return priorityLevel(priorityScore(chat));
+}
+
+const STATUS_TONE: Record<Status, string> = { aberta: "action", aguardando: "warning", resolvida: "success" };
+
 /** Memo: chegada de mensagem numa conversa não redesenha as outras 200 da lista. */
-const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek }: { chat: Chat; selected: boolean; onOpen: (jid: string) => void; onMenu: (jid: string, x: number, y: number) => void; onPeek: (jid: string | null, el?: HTMLElement) => void }) {
-  const urgent = (chat.ai?.urgent ?? 0) >= 0.5;
+const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek, onPatch }: { chat: Chat; selected: boolean; onOpen: (jid: string) => void; onMenu: (jid: string, x: number, y: number) => void; onPeek: (jid: string | null, el?: HTMLElement) => void; onPatch: (jid: string, patch: ChatPatch) => void }) {
   const reminderDue = chat.reminderAt !== null && chat.reminderAt <= Date.now();
-  const level = priorityLevel(priorityScore(chat));
-  // Prioridade dita pela IA aparece sempre; "baixa" só quando não há nada mais relevante.
-  const aiPriority = chat.ai?.priority ?? null;
-  const showPriority = !!aiPriority && chat.status !== "resolvida" && (aiPriority !== "baixa" || (!level && !urgent && chat.reminderAt === null));
+  // Prioridade só por cor: faixa à esquerda (vermelha = alta, âmbar = média, nenhuma = baixa).
+  const priority = displayPriority(chat);
+  const labels = [chat.label, ...chat.extraLabels].filter((l): l is string => !!l);
   // Rascunho não enviado toma o lugar da prévia, como no WhatsApp; na conversa aberta ele já está no campo.
   const draft = useDraft(chat.jid).trim();
   const showDraft = !!draft && !selected;
   return (
-    <li>
+    <li className="chat-row">
       <button
-        className="chat-item"
+        className={`chat-item${priority && priority !== "baixa" ? ` chat-item--${priority}` : ""}`}
         aria-current={selected ? "true" : undefined}
         onClick={() => {
           onPeek(null);
@@ -254,6 +268,7 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
         <span className="chat-item__body">
           <span className="chat-item__row">
             <span className="chat-item__name">{chat.name}</span>
+            {priority && <span className="sr-only">Prioridade {PRIORITY_TEXT[priority]}.</span>}
             {isMuted(chat) && <BellOff className="chat-item__flag" size={14} aria-label="Silenciada" />}
             {chat.pinnedAt && <Pin className="chat-item__flag" size={14} aria-label="Fixada" />}
             <span className={`chat-item__time${chat.unread || chat.markedUnread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>
@@ -281,44 +296,37 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
               chat.markedUnread && <span className="count count--dot" role="img" aria-label="Marcada como não lida" />
             )}
           </span>
-          {(chat.label || chat.extraLabels.length > 0 || urgent || chat.reminderAt !== null || level || showPriority || isSnoozed(chat) || chat.pendingDraft) && (
-            <span className="chat-item__tags">
-              {chat.pendingDraft && (
-                <span className="badge badge--info">
-                  <Sparkles size={12} aria-hidden /> Rascunho
-                </span>
-              )}
-              {showPriority && aiPriority && <span className={`badge ${PRIORITY_META[aiPriority].cls}`}>{PRIORITY_META[aiPriority].text}</span>}
-              {level && !urgent && !showPriority && (
-                <span className={`badge ${level === "alta" ? "badge--danger" : "badge--warning"}`}>
-                  {level === "alta" ? "Responder já" : "Responder hoje"}
-                </span>
-              )}
-              {chat.label && <span className="badge badge--info">{chat.label}</span>}
-              {chat.extraLabels.map((l) => (
-                <span key={l} className="badge badge--neutral">
-                  {l}
-                </span>
-              ))}
-              {isSnoozed(chat) && (
-                <span className="badge badge--neutral">
-                  <Clock size={12} aria-hidden /> Adiada até {untilLabel(chat.snoozedUntil!)}
-                </span>
-              )}
-              {urgent && (
-                <span className="badge badge--danger">
-                  <TriangleAlert size={12} aria-hidden /> Urgente
-                </span>
-              )}
-              {chat.reminderAt !== null && (
-                <span className={`badge ${reminderDue ? "badge--warning" : "badge--neutral"}`}>
-                  <AlarmClock size={12} aria-hidden /> {reminderDue ? "Lembrete agora" : reminderLabel(chat.reminderAt)}
-                </span>
-              )}
-            </span>
-          )}
+          {/* Linha discreta: etiquetas em texto e ícones; o espaço à direita é dos botões de status. */}
+          <span className="chat-item__meta">
+            {chat.pendingDraft && <Sparkles size={12} className="chat-item__meta-icon" aria-label="Resposta sugerida pela IA" />}
+            {chat.reminderAt !== null && (
+              <AlarmClock
+                size={12}
+                className={`chat-item__meta-icon${reminderDue ? " chat-item__meta-icon--due" : ""}`}
+                aria-label={reminderDue ? "Lembrete agora" : `Lembrete ${reminderLabel(chat.reminderAt)}`}
+              />
+            )}
+            {isSnoozed(chat) && <Clock size={12} className="chat-item__meta-icon" aria-label={`Adiada até ${untilLabel(chat.snoozedUntil!)}`} />}
+            {labels.length > 0 && <span className="chat-item__labels">{labels.join(" · ")}</span>}
+          </span>
         </span>
       </button>
+      <span className="chat-status" role="radiogroup" aria-label={`Status de ${chat.name}`}>
+        {(Object.keys(STATUS_META) as Status[]).map((s) => (
+          <button
+            key={s}
+            type="button"
+            role="radio"
+            aria-checked={chat.status === s}
+            aria-label={STATUS_META[s].label}
+            title={STATUS_META[s].label}
+            className={`chat-status__item chat-status__item--${STATUS_TONE[s]}`}
+            onClick={() => chat.status !== s && onPatch(chat.jid, { status: s })}
+          >
+            {STATUS_ICON_SM[s]}
+          </button>
+        ))}
+      </span>
     </li>
   );
 });
@@ -591,7 +599,7 @@ function ChatList(props: {
         ) : (
           <ul className="chat-list">
             {filtered.slice(0, limit).map((c) => (
-              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} onMenu={openMenu} onPeek={onPeek} />
+              <ChatItem key={c.jid} chat={c} selected={c.jid === props.selected} onOpen={props.onOpen} onMenu={openMenu} onPeek={onPeek} onPatch={props.onPatch} />
             ))}
           </ul>
         )}
@@ -608,11 +616,7 @@ function ChatList(props: {
   );
 }
 
-const PRIORITY_META = {
-  alta: { text: "Prioridade alta", cls: "badge--danger" },
-  media: { text: "Prioridade média", cls: "badge--warning" },
-  baixa: { text: "Prioridade baixa", cls: "badge--neutral" },
-} as const;
+const PRIORITY_TEXT: Record<Priority, string> = { alta: "alta", media: "média", baixa: "baixa" };
 
 function ClassificationBar({ chat, labels, onChange, onClassify, classifying, jevReady, classifierName }: {
   chat: Chat;
@@ -659,7 +663,7 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
         const detail = ai
           ? [
               `IA: ${ai.label} (${percent(ai.confidence)})`,
-              ai.priority && PRIORITY_META[ai.priority].text.toLowerCase(),
+              ai.priority && `prioridade ${PRIORITY_TEXT[ai.priority]}`,
               ai.needsReply >= 0.5 && "espera resposta",
               ai.urgent >= 0.5 && "urgente",
               chat.labelSource === "manual" && chat.label !== ai.label && "etiqueta escolhida por você",

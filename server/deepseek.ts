@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Label, LabelExample, Message } from "./db.ts";
 import type { TokenUsage } from "./pricing.ts";
 import { audioSummaryPrompt, parseAudioSummary, parsePersona, personaPrompt, type AudioSummary, type Persona, draftPrompt, guardDraft, polishPrompt, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
-import { buildState, PRIORITIES, PRIORITY_CRITERIA, type Classification } from "./jev.ts";
+import { buildState, PRIORITIES, PRIORITY_CRITERIA, PRIORITY_RULES, reconcile, type Classification } from "./jev.ts";
 
 /** Modelos da DeepSeek que o app oferece. Os dois têm contexto de 1M tokens. */
 export const DEEPSEEK_MODELS = {
@@ -160,18 +160,18 @@ export class DeepSeekAI {
 
   /** Mesmas respostas do Jev (etiqueta, espera resposta, urgência, prioridade) mais o motivo em uma frase. */
   async classify(
-    apiKey: string, contactName: string, messages: Message[], labels: Label[], examples: LabelExample[] = [],
+    apiKey: string, contactName: string, messages: Message[], labels: Label[], examples: LabelExample[] = [], isGroup = false,
   ): Promise<{ result: Classification; usage: TokenUsage }> {
     if (labels.length < 2) throw new Error("Cadastre pelo menos duas etiquetas para classificar.");
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto para classificar.");
-    const { text, usage } = await this.complete(apiKey, classifyPrompt(contactName, messages, labels, examples, this.window), "classify", true);
+    const { text, usage } = await this.complete(apiKey, classifyPrompt(contactName, messages, labels, examples, this.window, isGroup), "classify", true);
     return { result: parseClassification(text, labels), usage };
   }
 }
 
 export function classifyPrompt(
   contactName: string, messages: Message[], labels: Label[], examples: LabelExample[] = [],
-  window = { messages: DEFAULT_DEEPSEEK_OPTIONS.contextMessages, chars: DEFAULT_DEEPSEEK_OPTIONS.messageChars },
+  window = { messages: DEFAULT_DEEPSEEK_OPTIONS.contextMessages, chars: DEFAULT_DEEPSEEK_OPTIONS.messageChars }, isGroup = false,
 ): Prompt {
   const etiquetas = labels.map((l) => `- ${l.name}: ${l.description || l.name}`).join("\n");
   const prioridades = PRIORITIES.map((p) => `- ${p}: ${PRIORITY_CRITERIA[p]}`).join("\n");
@@ -184,9 +184,11 @@ ${etiquetas}
 Prioridades possíveis:
 ${prioridades}
 
+${PRIORITY_RULES}
+
 Formato da resposta:
 {"etiqueta": "<nome exato>", "confianca": <0 a 1>, "responder": <0 a 1: probabilidade de a última mensagem do contato esperar uma resposta minha ainda não dada>, "urgente": <0 a 1: probabilidade de urgência concreta e atual>, "prioridade": "alta" | "media" | "baixa", "motivo": "<uma frase curta, em português, dizendo por que esta prioridade>"}`,
-    user: buildState(contactName, messages, new Date(), examples, window),
+    user: buildState(contactName, messages, new Date(), examples, window, isGroup),
   };
 }
 
@@ -216,5 +218,5 @@ export function parseClassification(raw: string, labels: Label[]): Classificatio
   const fold = (t: string) => t.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
   const label = labels.find((l) => l.name === etiqueta) ?? labels.find((l) => fold(l.name) === fold(etiqueta));
   if (!label) throw new Error(`Etiqueta desconhecida na resposta: ${etiqueta}`);
-  return { label: label.name, confidence: confianca, needsReply: responder, urgent: urgente, priority: prioridade, reason: motivo || null };
+  return reconcile({ label: label.name, confidence: confianca, needsReply: responder, urgent: urgente, priority: prioridade, reason: motivo || null });
 }
