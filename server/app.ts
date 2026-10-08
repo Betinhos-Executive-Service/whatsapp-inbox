@@ -10,7 +10,7 @@ import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
 import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPTIONS, findClaudeBin, isClaudeModel, parseClaudeOptions, runClaude, type ClaudeModel } from "./claude.ts";
 import { PhotoCache } from "./photos.ts";
 import { cachedAudioSummary, cachedTranscript, saveAudioSummary, saveTranscript, transcribeAudio } from "./groq.ts";
-import type { AudioSummary } from "./ai.ts";
+import { PERSONA_WINDOW, type AudioSummary, type PersonaRecord } from "./ai.ts";
 import { DeepSeekAI, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL, DEFAULT_DEEPSEEK_OPTIONS, isDeepSeekModel, parseDeepSeekOptions, type DeepSeekModel } from "./deepseek.ts";
 import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import { DEFAULT_USD_BRL, estimateCostUsd, type Provider as UsageProvider, type TokenUsage, type UsageKind } from "./pricing.ts";
@@ -622,6 +622,26 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
           target.model,
         );
         return summary;
+      },
+      persona: async (jid, force) => {
+        const dir = join(options.dataDir, "personas");
+        const cached = await cachedAudioSummary<PersonaRecord>(dir, jid, "persona");
+        if (!force) return cached;
+        const chat = store.getChat(jid);
+        if (!chat) throw new Error("Conversa não encontrada.");
+        const messages = (await withTranscripts(jid, store.listMessages(jid, null, PERSONA_WINDOW.messages))).filter((m) => m.text.trim());
+        if (messages.filter((m) => !m.fromMe).length < 3) throw new Error("Ainda há poucas mensagens desta pessoa para montar um perfil.");
+        const target = summaryTarget();
+        const { persona } = await tracked(
+          target.provider,
+          "resumo",
+          jid,
+          () => (target.provider === "claude" ? summaryClaude.persona(chat.name, messages) : summaryDeepseek.persona(requireDeepseekKey(), chat.name, messages)),
+          target.model,
+        );
+        const record: PersonaRecord = { ...persona, at: Date.now(), messages: messages.length };
+        await saveAudioSummary(dir, jid, "persona", record);
+        return record;
       },
       usage: (days) => store.aiUsageSummary(days === null ? null : Date.now() - days * 86_400_000, usdBrl()),
       setUsdBrl: (rate) => store.setSetting("usd_brl", rate === null ? null : String(rate)),

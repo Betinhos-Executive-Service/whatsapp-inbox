@@ -224,7 +224,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       cachedTranscript: async () => ({ text: null, summary: null }),
       summarizeAudio: async () => ({}),
       transcribeRecording: async () => "texto",
-      ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setSummaryModel: () => undefined, setDeepseekOptions: () => undefined, setClaudeOptions: () => undefined, setJevContext: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
+      ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), persona: async () => null, setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setSummaryModel: () => undefined, setDeepseekOptions: () => undefined, setClaudeOptions: () => undefined, setJevContext: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
       subscribe: (res) => res.end(),
       onChatChanged: () => undefined,
     }),

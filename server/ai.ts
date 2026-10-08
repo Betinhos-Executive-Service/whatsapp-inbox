@@ -129,6 +129,56 @@ export function parseSummary(raw: string): Summary {
   return { resumo: resumo || raw.trim().slice(0, 400), pedido, proximoPasso };
 }
 
+/** Perfil de uma pessoa a partir do histórico: o que notar antes de falar com ela. */
+export type Persona = {
+  resumo: string;
+  trabalho: string[];
+  comportamento: string[];
+  personalidade: string[];
+  pagamento: string[];
+  atencao: string[];
+};
+export type PersonaRecord = Persona & { at: number; messages: number };
+
+/** Janela maior que a do rascunho: o perfil olha o histórico, não só o assunto atual. */
+export const PERSONA_WINDOW: Window = { messages: 400, chars: 300 };
+
+export function personaPrompt(contactName: string, messages: Message[], window: Window = PERSONA_WINDOW): Prompt {
+  return {
+    system:
+      "Você analisa o histórico de WhatsApp da Betinhos Executive Service (transporte executivo terrestre) com um contato e monta um perfil prático para quem vai atendê-lo. Escreva em português do Brasil, frases curtas e objetivas. Baseie-se só no que está nas mensagens: não invente fatos, valores, datas, cargos ou empresas. Se não houver indício sobre um tema, deixe a lista vazia. Não faça julgamentos sobre saúde, religião, política ou vida íntima.",
+    user: `Histórico de WhatsApp com ${contactName} (mais antigas primeiro; "Eu" sou a Betinhos):
+${transcript(contactName, messages, true, window)}
+
+Responda só com JSON neste formato:
+{"resumo": "<quem é ${contactName} para a Betinhos, em até 2 frases>", "trabalho": ["<empresa, cargo, tipo de serviço que usa, rotas, frequência, quem decide>"], "comportamento": ["<como se comunica: horários, rapidez, canal preferido, antecedência dos pedidos, mudanças de última hora>"], "personalidade": ["<tom, exigências, preferências, o que agrada ou incomoda>"], "pagamento": ["<forma, prazo, pontualidade, faturamento, negociação de preço, pendências citadas>"], "atencao": ["<cuidados para o próximo atendimento: riscos, reclamações, combinados em aberto>"]}
+Use de 0 a 5 itens por lista, cada um com até 20 palavras.`,
+  };
+}
+
+export function parsePersona(raw: string): Persona {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw) as Record<string, unknown>;
+  } catch {
+    throw new Error("A IA não devolveu um perfil legível. Tente de novo.");
+  }
+  const text = (v: unknown) => (typeof v === "string" ? v.trim().replace(/\s+/g, " ") : "");
+  const list = (v: unknown) => (Array.isArray(v) ? v.map(text).filter(Boolean).slice(0, 5) : []);
+  const persona = {
+    resumo: text(data.resumo),
+    trabalho: list(data.trabalho),
+    comportamento: list(data.comportamento),
+    personalidade: list(data.personalidade),
+    pagamento: list(data.pagamento),
+    atencao: list(data.atencao),
+  };
+  if (!persona.resumo && !Object.values(persona).some((v) => Array.isArray(v) && v.length)) throw new Error("A IA não devolveu um perfil legível. Tente de novo.");
+  return persona;
+}
+
 /** Resumo de uma mensagem de voz: bater o olho e saber do que se trata e o que fazer. */
 export type AudioSummary = { assunto: string; pontos: string[]; tratativa: string; prioridade: Priority; motivo: string };
 

@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { Message } from "./db.ts";
 import type { TokenUsage } from "./pricing.ts";
-import { audioSummaryPrompt, parseAudioSummary, type AudioSummary, draftPrompt, guardDraft, polishPrompt, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
+import { audioSummaryPrompt, parseAudioSummary, parsePersona, personaPrompt, type AudioSummary, type Persona, draftPrompt, guardDraft, polishPrompt, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
 import { z } from "zod";
 import { DEEPSEEK_CONTEXT_MESSAGES, DEEPSEEK_MESSAGE_CHARS } from "./deepseek.ts";
 
@@ -166,5 +166,10 @@ export class ClaudePlanAI {
   async summarizeAudio(contactName: string, transcript: string): Promise<{ summary: AudioSummary; usage: TokenUsage }> {
     const { text, usage } = await this.complete(audioSummaryPrompt(contactName, transcript));
     return { summary: parseAudioSummary(text), usage };
+  }
+
+  async persona(contactName: string, messages: Message[]): Promise<{ persona: Persona; usage: TokenUsage }> {
+    const { text, usage } = await this.complete(personaPrompt(contactName, messages));
+    return { persona: parsePersona(text), usage };
   }
 }
