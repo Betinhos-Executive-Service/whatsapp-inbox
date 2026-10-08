@@ -447,12 +447,20 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     send: (jid, text, opts) =>
       connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll }),
     sendMedia,
+    sendContacts: (jid, list) => connected().sendContacts(jid, list),
+    openChat: (phone) => {
+      const jid = `${phone}@s.whatsapp.net`;
+      store.ensureChat(jid, { status: "resolvida" });
+      return store.getChat(jid)!;
+    },
     react: (jid, id, emoji) => connected().react(jid, id, emoji),
     editMessage: (jid, id, text) => connected().editSent(jid, id, text),
     forward: async (from, id, to) => {
       const m = store.getMessage(from, id);
       if (!m || m.deleted) throw new Error("Esta mensagem não pode ser encaminhada.");
       const text = store.messageText(from, id) ?? "";
+      const cards = m.contacts?.flatMap((c) => (c.phones[0] ? [{ name: c.name, phone: c.phones[0].wa ?? c.phones[0].number }] : []));
+      if (cards?.length) return connected().sendContacts(to, cards);
       if (!m.media) return connected().send(to, text);
       // Mídia: baixa (ou lê do cache) e envia de novo, com a mesma legenda.
       const file = await readMedia(from, id);
@@ -530,13 +538,13 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     ai: {
       status: aiState,
-      draft: async (jid) => {
+      draft: async (jid, own = "") => {
         const { chat, messages } = await chatOrThrow(jid);
         const p = provider();
         const { text } = await tracked(p, "rascunho", jid, () =>
           p === "claude"
-            ? claude.draft(chat.name, messages, aiInstructions())
-            : deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions()),
+            ? claude.draft(chat.name, messages, aiInstructions(), own)
+            : deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions(), own),
         );
         return text;
       },

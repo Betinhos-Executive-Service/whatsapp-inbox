@@ -17,6 +17,7 @@ import {
   LoaderCircle,
   Mic,
   Paperclip,
+  Contact,
   MessageSquareText,
   Search,
   SendHorizontal,
@@ -73,7 +74,11 @@ import { ForwardDialog } from "./forward.tsx";
 import { MessageMenu, type MenuAt } from "./message-menu.tsx";
 import { AckIcon, canEdit, CopyButton, EditBar, ReactButton, ReactionList } from "./message-extras.tsx";
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
-import { toggleWa } from "./wa-text.ts";
+import { firstLink, toggleWa } from "./wa-text.ts";
+import { LinkCard } from "./link-preview.tsx";
+import { ContactCards, ContactPicker } from "./contacts.tsx";
+import { SelectionBar } from "./selection.tsx";
+import { selectionText } from "./selection-text.ts";
 import { desktop, useAccount } from "./desktop.ts";
 import { BADGE_FONT, badgeImage } from "./badge.ts";
 import "./ds/styles.css";
@@ -661,7 +666,7 @@ function captionOf(m: Message, body: string): string {
   return caption;
 }
 
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText }: {
   messages: Message[];
   isGroup: boolean;
   hasMore: boolean;
@@ -686,6 +691,12 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   onDiscard: (m: Message) => void;
   /** Botão direito ou "Mais opções": abre o menu da mensagem nesse ponto. */
   onMenu: (m: Message, x: number, y: number) => void;
+  /** Modo de seleção (várias mensagens): ids marcados; null = desligado. */
+  selected: Set<string> | null;
+  onToggleSelect: (m: Message) => void;
+  /** "Conversar" no cartão de contato. */
+  onOpenContact: (digits: string) => void;
+  onCopyText: (text: string) => void;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
   return (
@@ -703,12 +714,23 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         const continues = !newDay && prev.fromMe === m.fromMe && parts[i - 1].author === author && m.at - prev.at < 5 * 60_000;
         const caption = captionOf(m, body);
         const sender = m.sender;
+        const link = !m.deleted && !m.media && !m.contacts ? firstLink(caption) : null;
+        const selectable = !!selected && !m.pending && !m.deleted;
+        const isSelected = selectable && selected.has(m.id);
         return (
-          <div key={m.id} data-message-id={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}${m.id === hitId ? " message-row--hit" : ""}`}>
+          <div key={m.id} data-message-id={m.id} className={`message-row${selected ? " message-row--selecting" : ""}${isSelected ? " message-row--selected" : ""}${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}${m.id === hitId ? " message-row--hit" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
             <div
               className="message-line"
+              onClickCapture={(e) => {
+                // Selecionando: clicar em qualquer ponto da mensagem marca/desmarca (links e mídia não abrem).
+                if (!selected) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (selectable) onToggleSelect(m);
+              }}
               onContextMenu={(e) => {
+                if (selected) return e.preventDefault();
                 // Texto selecionado: deixa o menu do sistema (copiar a seleção). Bolha ainda
                 // não confirmada pelo servidor não tem ações (só tentar de novo ou descartar).
                 if (m.pending || window.getSelection()?.toString().trim()) return;
@@ -719,6 +741,16 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                 onMenu(m, keyboard ? box.left + 8 : e.clientX, keyboard ? box.bottom : e.clientY);
               }}
             >
+              {selected && (
+                <input
+                  type="checkbox"
+                  className="message-check"
+                  aria-label={isSelected ? "Desmarcar mensagem" : "Selecionar mensagem"}
+                  checked={isSelected}
+                  disabled={!selectable}
+                  onChange={() => {}}
+                />
+              )}
               {isGroup && !m.fromMe &&
                 (sender && !continues ? (
                   <button type="button" className="author-button" aria-label={`Ver perfil de ${author ?? "participante"}`} onClick={() => onAuthor(sender, author ?? "Participante")}>
@@ -752,7 +784,12 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                 ) : (
                   <>
                     {m.media && <MediaView m={m} caption={caption} />}
-                    {(!m.media || caption) && <p className="bubble__text"><WaText text={caption} /></p>}
+                    {link && <LinkCard url={link} />}
+                    {m.contacts?.length ? (
+                      <ContactCards contacts={m.contacts} onOpen={onOpenContact} onCopy={onCopyText} />
+                    ) : (
+                      (!m.media || caption) && <p className="bubble__text"><WaText text={caption} /></p>
+                    )}
                   </>
                 )}
                 {m.pending === "failed" ? (
@@ -774,7 +811,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
               </div>
               {!m.pending && <ReactionList m={m} onReact={onReact} />}
               </div>
-              {!m.pending && <div className="message-actions" role="group" aria-label="Ações da mensagem">
+              {!m.pending && !selected && <div className="message-actions" role="group" aria-label="Ações da mensagem">
                 {!m.deleted && (
                   <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Responder" title="Responder" disabled={!canAct} onClick={() => onReply(m)}>
                     <Reply size={16} aria-hidden />
@@ -817,8 +854,10 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   );
 });
 
-function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, quickReplies, onSetupAi, sendTyping, focus }: {
+function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, onOpen, quickReplies, onSetupAi, sendTyping, focus }: {
   chat: Chat;
+  /** Abre outra conversa (ex.: "Conversar" de um cartão de contato). */
+  onOpen: (chat: Chat) => void;
   /** Mensagem para abrir em destaque (vinda da busca); `seq` força reabrir a mesma. */
   focus: { id: string; seq: number } | null;
   /** Avisar ao contato que você está digitando (preferência). */
@@ -849,7 +888,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, []);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
-  const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [forwarding, setForwarding] = useState<Message[] | null>(null);
+  const [selected, setSelected] = useState<Set<string> | null>(null);
+  const [pickingContact, setPickingContact] = useState(false);
   const [presence, setPresence] = useState<"composing" | "recording" | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
   // Menções: participantes carregados no primeiro "@"; escolhas valem até enviar.
@@ -907,14 +948,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const usdBrl = useUsdBrl();
   const [drafting, setDrafting] = useState(false);
   const suggest = async () => {
-    if (draft.trim() && !window.confirm("Trocar o texto que você já escreveu pela sugestão da IA?")) return;
+    // Com texto no campo, a IA revisa o que foi escrito em vez de sugerir outra resposta.
+    const own = draft.trim();
     setDrafting(true);
     try {
-      const { text } = await api.draft(chat.jid);
+      const { text } = await api.draft(chat.jid, own || undefined);
       setDraft(text);
       requestAnimationFrame(() => composer.current?.focus());
     } catch (e) {
-      notify("error", `A ${aiName(ai)} não sugeriu resposta. ${(e as Error).message}`);
+      notify("error", `A ${aiName(ai)} não ${own ? "revisou o texto" : "sugeriu resposta"}. ${(e as Error).message}`);
     } finally {
       setDrafting(false);
     }
@@ -1103,7 +1145,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       outbox.current.set(localId, { text: withMentions.text, quotedId, mentions: withMentions.mentions, mentionAll: mentionAll || undefined });
       setMessages((list) => [
         ...(list ?? []),
-        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], pending: "sending" },
+        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, contacts: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], pending: "sending" },
       ]);
       setDraft("");
       setReplyTo(null);
@@ -1293,7 +1335,49 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     },
     [chat.jid, notify, flashRow],
   );
-  const forward = useCallback((m: Message) => setForwarding(m), []);
+  const forward = useCallback((m: Message) => setForwarding([m]), []);
+  const copyText = useCallback(
+    (text: string) => void navigator.clipboard.writeText(text).then(() => notify("success", "Número copiado."), () => notify("error", "Não foi possível copiar.")),
+    [notify],
+  );
+  const openContact = useCallback(
+    (digits: string) => void api.openChat(digits).then(onOpen, (e: Error) => notify("error", `Não foi possível abrir a conversa. ${e.message}`)),
+    [onOpen, notify],
+  );
+  const startSelect = useCallback((m: Message) => setSelected(new Set(m.pending || m.deleted ? [] : [m.id])), []);
+  const toggleSelect = useCallback(
+    (m: Message) =>
+      setSelected((cur) => {
+        if (!cur) return cur;
+        const next = new Set(cur);
+        if (!next.delete(m.id)) next.add(m.id);
+        return next;
+      }),
+    [],
+  );
+  // Na ordem da conversa, como o WhatsApp copia e encaminha.
+  const selectedMessages = useMemo(() => (selected && messages ? messages.filter((m) => selected.has(m.id)) : []), [selected, messages]);
+  const copySelected = useCallback(() => {
+    const text = selectionText(selectedMessages, (m) => {
+      const { author, body } = splitAuthor(m, chat.isGroup);
+      return { author: m.fromMe ? "Você" : (chat.isGroup ? author : chat.name) ?? "Participante", text: m.media ? body : captionOf(m, body) };
+    });
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        notify("success", selectedMessages.length === 1 ? "Mensagem copiada." : `${selectedMessages.length} mensagens copiadas.`);
+        setSelected(null);
+      },
+      () => notify("error", "Não foi possível copiar."),
+    );
+  }, [selectedMessages, chat.isGroup, chat.name, notify]);
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !forwarding) setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, forwarding]);
   const [menuAt, setMenuAt] = useState<MenuAt | null>(null);
   const openMenu = useCallback((message: Message, x: number, y: number) => setMenuAt({ message, x, y }), []);
   const closeMenu = useCallback(() => setMenuAt(null), []);
@@ -1616,6 +1700,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onRetry={retry}
             onDiscard={discard}
             onMenu={openMenu}
+            selected={selected}
+            onToggleSelect={toggleSelect}
+            onOpenContact={openContact}
+            onCopyText={copyText}
           />
         )}
       </div>
@@ -1632,23 +1720,46 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
               ? { jid: menuAt.message.sender, name: splitAuthor(menuAt.message, true).author ?? "participante" }
               : null
           }
-          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor }}
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onSelect: startSelect }}
           onClose={closeMenu}
         />
       )}
       {forwarding && (
         <ForwardDialog
-          message={forwarding}
+          messages={forwarding}
           onClose={() => setForwarding(null)}
           onDone={(to) => {
+            const n = forwarding.length;
             setForwarding(null);
-            notify("success", `Mensagem encaminhada para ${to.name}.`);
+            setSelected(null);
+            const names = to.map((c) => c.name).join(", ");
+            notify("success", n === 1 ? `Mensagem encaminhada para ${names}.` : `${n} mensagens encaminhadas para ${names}.`);
+          }}
+        />
+      )}
+      {pickingContact && (
+        <ContactPicker
+          to={chat}
+          onClose={() => setPickingContact(false)}
+          onDone={(n) => {
+            setPickingContact(false);
+            notify("success", n === 1 ? "Contato enviado." : `${n} contatos enviados.`);
           }}
         />
       )}
       {deleting && <DeleteDialog message={deleting} busy={false} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
+      {selected && (
+        <SelectionBar
+          count={selectedMessages.length}
+          canForward={connected}
+          onCopy={copySelected}
+          onForward={() => setForwarding(selectedMessages)}
+          onCancel={() => setSelected(null)}
+        />
+      )}
       <form
         className="composer"
+        style={selected ? { display: "none" } : undefined}
         onSubmit={(e) => {
           e.preventDefault();
           void send();
@@ -1696,6 +1807,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         <EmojiButton disabled={!connected} onPick={insertEmoji} onClose={() => composer.current?.focus()} />
         <Button
           variant="ghost"
+          aria-label="Enviar contato"
+          title="Enviar contato"
+          disabled={!connected || sending}
+          onClick={() => setPickingContact(true)}
+          icon={<Contact size={18} aria-hidden />}
+        />
+        <Button
+          variant="ghost"
           aria-label="Respostas rápidas"
           title={quickReplies.length ? "Respostas rápidas (ou digite / no começo)" : "Cadastre respostas rápidas em Configurações"}
           disabled={!connected || !quickReplies.length}
@@ -1705,8 +1824,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         />
         <Button
           variant="ghost"
-          aria-label={aiReady ? `Sugerir resposta com a ${aiName(ai)}` : "Ativar a IA"}
-          title={aiReady ? `Sugerir resposta (${aiName(ai)}, revise antes de enviar)` : "Ativar a IA para sugerir respostas"}
+          aria-label={aiReady ? `${draft.trim() ? "Revisar texto" : "Sugerir resposta"} com a ${aiName(ai)}` : "Ativar a IA"}
+          title={aiReady ? `${draft.trim() ? "Corrigir e formalizar o texto" : "Sugerir resposta"} (${aiName(ai)}, revise antes de enviar)` : "Ativar a IA para sugerir respostas"}
           disabled={drafting || !connected}
           aria-busy={drafting || undefined}
           onClick={() => (aiReady ? void suggest() : onSetupAi())}
@@ -2152,6 +2271,10 @@ function App() {
               onBack={() => openChat(null)}
               notify={push}
               onChat={upsert}
+              onOpen={(c) => {
+                upsert(c);
+                openChat(c.jid);
+              }}
               quickReplies={quickReplies}
               sendTyping={!!state?.prefs.sendTyping}
               onSetupAi={() => {

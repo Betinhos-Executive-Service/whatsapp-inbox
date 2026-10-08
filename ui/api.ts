@@ -104,6 +104,8 @@ export type Message = {
   media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
   /** Mensagem respondida (citação). */
   quoted: { id: string; text: string; fromMe: boolean; author: string | null } | null;
+  /** Cartões de contato (mensagem de contato). */
+  contacts: ContactCard[] | null;
   /** Apagada para todos. */
   deleted: boolean;
   /** Autor em grupo (JID do participante), para abrir o perfil. */
@@ -115,6 +117,10 @@ export type Message = {
   /** Só no cliente: envio otimista ainda sem confirmação do servidor. */
   pending?: "sending" | "failed";
 };
+
+export type ContactCard = { name: string; phones: { number: string; wa: string | null }[] };
+
+export type LinkPreview = { url: string; title: string; description: string | null; image: string | null; site: string };
 
 /** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
 export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number; quotedId?: string };
@@ -194,6 +200,9 @@ export const api = {
   typing: (jid: string, state: "composing" | "paused") => request<{ ok: true }>("POST", `${chatPath(jid)}/typing`, { state }),
   sendMedia: (jid: string, file: OutgoingMedia) => request<Chat>("POST", `${chatPath(jid)}/send-media`, file),
   update: (jid: string, patch: ChatPatch & { note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
+  sendContacts: (jid: string, contacts: { name: string; phone: string }[]) => request<Chat>("POST", `${chatPath(jid)}/send-contacts`, { contacts }),
+  openChat: (phone: string) => request<Chat>("POST", "/api/open-chat", { phone }),
+  linkPreview: (url: string) => request<LinkPreview | null>("GET", `/api/link-preview?url=${encodeURIComponent(url)}`),
   search: (q: string) => request<SearchHit[]>("GET", `/api/search?q=${encodeURIComponent(q)}`),
   /** Da mensagem achada até a mais nova, para abrir a conversa nela. */
   messagesAround: (jid: string, id: string) => request<Message[]>("GET", `${chatPath(jid)}/messages?around=${encodeURIComponent(id)}`),
@@ -214,7 +223,7 @@ export const api = {
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
   aiUsage: (days: number | null) => request<AiUsageSummary>("GET", `/api/ai/usage?days=${days ?? "all"}`),
   setAiUsageRate: (rate: number) => request<{ ok: true }>("PUT", "/api/ai/usage/rate", { rate }),
-  draft: (jid: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, {}),
+  draft: (jid: string, text?: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, text ? { text } : {}),
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
   quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),

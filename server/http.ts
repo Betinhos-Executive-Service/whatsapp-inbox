@@ -5,6 +5,7 @@ import { z } from "zod";
 import { claudeOptionsSchema, type ClaudeOptions } from "./claude.ts";
 import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
 import { STATUSES, type Store } from "./db.ts";
+import { linkPreview } from "./link-preview.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
 
 /** Documento sem tipo (octet-stream): deduz pela extensão os formatos que a visualização abre. */
@@ -18,6 +19,28 @@ const TYPE_BY_EXT: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8",
   ".csv": "text/csv; charset=utf-8",
 };
+/** Extensão pelo tipo, para foto, áudio e vídeo (o WhatsApp não manda nome de arquivo para eles). */
+const EXT_BY_TYPE: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "video/mp4": ".mp4",
+  "video/3gpp": ".3gp",
+  "audio/ogg": ".ogg",
+  "audio/mpeg": ".mp3",
+  "audio/mp4": ".m4a",
+  "audio/aac": ".aac",
+  "application/pdf": ".pdf",
+};
+
+/** Nome do arquivo baixado: o original, ou "arquivo" + extensão do tipo; sem extensão o Windows não sabe abrir. */
+export function downloadName(mimetype: string, fileName: string | null): string {
+  const base = fileName?.trim() || "arquivo";
+  if (extname(base)) return base;
+  return base + (EXT_BY_TYPE[mimetype.split(";")[0].trim().toLowerCase()] ?? "");
+}
+
 export function servedType(mimetype: string, fileName: string | null): string {
   if (mimetype && mimetype !== "application/octet-stream") return mimetype;
   return TYPE_BY_EXT[extname(fileName ?? "").toLowerCase()] ?? (mimetype || "application/octet-stream");
@@ -40,6 +63,9 @@ export type Api = {
   react: (jid: string, id: string, emoji: string) => Promise<void>;
   editMessage: (jid: string, id: string, text: string) => Promise<void>;
   forward: (from: string, id: string, to: string) => Promise<void>;
+  sendContacts: (jid: string, list: { name: string; phone: string }[]) => Promise<void>;
+  /** Abre (ou cria vazia) a conversa com o número, para o "Conversar" do cartão de contato. */
+  openChat: (phone: string) => unknown;
   /** Conversa aberta na tela: assina o "digitando" do contato. */
   watch: (jid: string) => Promise<void>;
   typing: (jid: string, state: "composing" | "paused") => Promise<void>;
@@ -59,7 +85,7 @@ export type Api = {
   summarizeAudio: (jid: string, id: string, force?: boolean) => Promise<unknown>;
   ai: {
     status: () => unknown;
-    draft: (jid: string) => Promise<string>;
+    draft: (jid: string, text?: string) => Promise<string>;
     summarize: (jid: string) => Promise<unknown>;
     setInstructions: (text: string | null) => void;
     setProvider: (provider: "deepseek" | "claude") => void;
@@ -115,6 +141,8 @@ const chatPatchSchema = z.object({
   snoozedUntil: z.number().int().positive().nullable().optional(),
   autoTranscribe: z.enum(["on", "off"]).nullable().optional(),
 });
+
+const draftSchema = z.object({ text: z.string().max(10000).optional() });
 
 const reminderSchema = z.object({
   dueAt: z.number().int().positive(),
@@ -234,6 +262,15 @@ export function createHandler(api: Api) {
     if (path === "/api/events" && method === "GET") return api.subscribe(res);
     if (path === "/api/state" && method === "GET") return json(res, 200, api.state());
     if (path === "/api/chats" && method === "GET") return json(res, 200, store.listChats());
+    if (path === "/api/link-preview" && method === "GET") {
+      const target = url.searchParams.get("url") ?? "";
+      if (!/^https?:\/\//i.test(target) || target.length > 2048) throw new HttpError(400, "Link inválido.");
+      return json(res, 200, await linkPreview(target));
+    }
+    if (path === "/api/open-chat" && method === "POST") {
+      const { phone } = parse(z.object({ phone: z.string().regex(/^\d{8,15}$/, "Número inválido.") }), await readJson(req));
+      return json(res, 200, api.openChat(phone));
+    }
     if (path === "/api/search" && method === "GET") {
       const q = (url.searchParams.get("q") ?? "").slice(0, 200);
       return json(res, 200, store.search(q));
@@ -273,6 +310,14 @@ export function createHandler(api: Api) {
         if (!body.length) throw new HttpError(400, "Arquivo vazio.");
         if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
         await api.sendMedia(jid, { ...file, body }, quotedId);
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/send-contacts" && method === "POST") {
+        const { contacts } = parse(
+          z.object({ contacts: z.array(z.object({ name: z.string().trim().min(1).max(200), phone: z.string().regex(/^\d{8,15}$/, "Número inválido.") })).min(1).max(20) }),
+          await readJson(req),
+        );
+        await api.sendContacts(jid, contacts);
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/send" && method === "POST") {
@@ -322,8 +367,8 @@ export function createHandler(api: Api) {
         return json(res, 201, reminder);
       }
       if (action === "/draft" && method === "POST") {
-        await readJson(req);
-        return json(res, 200, { text: await api.ai.draft(jid) });
+        const body = parse(draftSchema, await readJson(req));
+        return json(res, 200, { text: await api.ai.draft(jid, body.text) });
       }
       if (action === "/summary" && method === "POST") {
         await readJson(req);
@@ -446,7 +491,7 @@ export function createHandler(api: Api) {
       // nosniff: o arquivo abre na visualização só pelo tipo declarado (um "PDF" com HTML dentro não vira página).
       const headers: Record<string, string> = { "content-type": servedType(file.mimetype, file.fileName), "cache-control": "private, max-age=31536000, immutable", "accept-ranges": "bytes", "x-content-type-options": "nosniff" };
       if (url.searchParams.has("download")) {
-        headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName ?? "arquivo")}`;
+        headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName(file.mimetype, file.fileName))}`;
       }
       const size = file.body.length;
       const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");

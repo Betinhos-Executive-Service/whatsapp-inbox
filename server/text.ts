@@ -155,7 +155,7 @@ export function extractText(content: Content): Extracted | null {
     case "contactMessage":
       return { text: withCaption("[Contato]", m.displayName), kind: "contact" };
     case "contactsArrayMessage":
-      return { text: "[Contatos]", kind: "contact" };
+      return { text: withCaption("[Contatos]", m.displayName), kind: "contact" };
     case "pollCreationMessage":
     case "pollCreationMessageV2":
     case "pollCreationMessageV3":
