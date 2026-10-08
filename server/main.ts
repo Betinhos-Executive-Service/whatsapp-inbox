@@ -2,21 +2,31 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { startApp } from "./app.ts";
+import { removeMcpFile, writeMcpFile } from "./mcp-file.ts";
 
 const root = resolve(import.meta.dirname, "..");
 if (existsSync(join(root, ".env.local"))) process.loadEnvFile(join(root, ".env.local"));
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { config: { port: number } };
 const port = Number(process.env.PORT) || pkg.config.port;
 
+const dataDir = resolve(root, process.env.DATA_DIR ?? "data");
+const mcpFile = join(dataDir, "mcp.json");
+
 try {
   const app = await startApp({
     port,
-    dataDir: resolve(root, process.env.DATA_DIR ?? "data"),
+    dataDir,
     distDir: join(root, "dist"),
     waDisabled: process.env.WA_DISABLED === "1",
+    // Em desenvolvimento o Claude Code roda o servidor MCP direto do código-fonte.
+    mcpEntry: { command: process.execPath, args: [join(root, "server", "mcp-main.ts")], env: { INBOX_MCP_FILE: mcpFile } },
+    mcpFile,
   });
-  process.stdout.write(`WhatsApp Inbox em http://127.0.0.1:${app.port}\n`);
+  // Porta e token desta execução, para o servidor MCP (`node server/mcp-main.ts`) achar o app.
+  writeMcpFile(mcpFile, { port: app.port, token: app.token, account: "dev", pid: process.pid });
+  process.stdout.write(`WhatsApp Inbox em http://127.0.0.1:${app.port}\nArquivo do MCP: ${mcpFile}\n`);
   const shutdown = async () => {
+    removeMcpFile(mcpFile);
     await app.close();
     process.exit(0);
   };

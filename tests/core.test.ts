@@ -6,6 +6,7 @@ import { Store, type IncomingMessage } from "../server/db.ts";
 import { createHandler } from "../server/http.ts";
 import { buildQuestions, buildState, parseResponse } from "../server/jev.ts";
 import { extractText } from "../server/text.ts";
+import { FAKE_TOKEN, fakeApi } from "./fake-api.ts";
 
 const PN = "5511999990000@s.whatsapp.net";
 const LID = "123456789@lid";
@@ -175,66 +176,20 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
   store.addMessage(msg(), true);
   let port = 0;
   const sentMedia: { body: Buffer; mimetype: string; fileName: string; ptt?: boolean }[] = [];
-  const server = createServer(
-    createHandler({
-      store,
-      distDir: "dist",
-      get port() {
-        return port;
-      },
-      state: () => ({}),
-      send: async () => undefined,
-      react: async () => undefined,
-      editMessage: async () => undefined,
-      forward: async () => undefined,
-      watch: async () => undefined,
-      typing: async () => undefined,
-      sendMedia: async (_jid, file) => void sentMedia.push(file),
-      sendPoll: async () => undefined,
-      businessQuickReplies: async () => [],
-      vote: async () => null,
-      sendLocation: async () => undefined,
-      sendContacts: async () => undefined,
-      sendSticker: async () => undefined,
-      stickers: () => [],
-      star: async () => ({ synced: true }),
-      pin: async () => undefined,
-      openChat: async () => null,
-      setBlocked: async () => undefined,
-      setEphemeral: async () => undefined,
-      syncUnread: () => undefined,
-      createGroup: async () => null,
-      updateParticipants: async () => [],
-      updateGroupInfo: async () => undefined,
-      acceptInvite: async () => null,
-      deleteMessage: async () => ({ synced: true }),
-      participants: async () => [],
-      profile: async () => ({}),
-      photo: async () => null,
-      markRead: async () => undefined,
-      syncArchive: () => undefined,
-      syncMute: () => undefined,
-      syncPin: () => undefined,
-      classify: async () => null,
-      saveSettings: () => undefined,
-      logout: async () => undefined,
-      reset: async () => undefined,
-      backup: async () => "",
-      media: async () => ({ body: Buffer.from("0123456789"), mimetype: "audio/ogg", fileName: null }),
-      transcribe: async () => "oi",
-      cachedTranscript: async () => ({ text: null, summary: null }),
-      summarizeAudio: async () => ({}),
-      transcribeRecording: async () => "texto",
-      ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), persona: async () => null, setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setSummaryModel: () => undefined, setDeepseekOptions: () => undefined, setClaudeOptions: () => undefined, setJevContext: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
-      subscribe: (res) => res.end(),
-      onChatChanged: () => undefined,
-    }),
-  );
+  const api = fakeApi(store, { sendMedia: async (_jid, file) => void sentMedia.push(file) });
+  const server = createServer(createHandler(api));
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   port = (server.address() as AddressInfo).port;
+  api.port = port;
   const base = `http://127.0.0.1:${port}`;
   try {
     assert.equal((await fetch(`${base}/api/chats`)).status, 200);
+    // Token local (servidor MCP): substitui o Origin; errado é recusado até em GET.
+    assert.equal((await fetch(`${base}/api/chats`, { headers: { "x-inbox-token": FAKE_TOKEN } })).status, 200);
+    assert.equal((await fetch(`${base}/api/chats`, { headers: { "x-inbox-token": "errado" } })).status, 403);
+    assert.equal((await fetch(`${base}/api/logout`, { method: "POST", body: "{}", headers: { "content-type": "application/json", origin: "http://evil.example", "x-inbox-token": FAKE_TOKEN } })).status, 200);
+    assert.equal((await fetch(`${base}/api/logout`, { method: "POST", body: "{}", headers: { "content-type": "application/json", "x-inbox-token": "x".repeat(64) } })).status, 403);
+    assert.equal((await fetch(`${base}/api/logout`, { method: "POST", body: "{}", headers: { "content-type": "text/plain", "x-inbox-token": FAKE_TOKEN } })).status, 415);
     const part = await fetch(`${base}/api/media/${encodeURIComponent(PN)}/X1`, { headers: { range: "bytes=2-5" } });
     assert.equal(part.status, 206);
     assert.equal(part.headers.get("content-range"), "bytes 2-5/10");
@@ -242,7 +197,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
     assert.equal((await fetch(`${base}/api/media/${encodeURIComponent(PN)}/X1`, { headers: { range: "bytes=50-" } })).status, 416);
     // fetch descarta o cabeçalho Host; node:http envia o que pedimos (simula DNS rebinding).
     const evilStatus = await new Promise<number>((resolve, reject) => {
-      const req = request({ host: "127.0.0.1", port, path: "/api/chats", headers: { host: "evil.example" } }, (res) => {
+      const req = request({ host: "127.0.0.1", port, path: "/api/chats", headers: { host: "evil.example", "x-inbox-token": FAKE_TOKEN } }, (res) => {
         res.resume();
         resolve(res.statusCode ?? 0);
       });

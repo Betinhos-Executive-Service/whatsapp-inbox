@@ -53,9 +53,24 @@ export type Chat = {
   ephemeral: number | null;
   /** Mensagens fixadas na conversa que ainda valem, a mais recente primeiro. */
   pins: PinnedRef[];
+  /** Resposta proposta por uma IA (ex.: Claude Code via MCP) à espera de você enviar, editar ou descartar. */
+  pendingDraft: PendingDraftSummary | null;
 };
 
 export type PinnedRef = { id: string; until: number; text: string | null; fromMe: boolean };
+
+/** Resumo do rascunho pendente, sem o corpo da mídia (vai em todas as listagens). */
+export type PendingDraftSummary = { text: string; hasMedia: boolean; source: string; createdAt: number };
+
+export type PendingDraftMedia = { body: Buffer; mimetype: string; fileName: string };
+
+export type PendingDraft = {
+  text: string;
+  quotedId: string | null;
+  media: PendingDraftMedia | null;
+  source: string;
+  createdAt: number;
+};
 
 export type AutoTranscribe = "on" | "off";
 
@@ -239,6 +254,16 @@ create table if not exists reminders (
 );
 create index if not exists reminders_pending on reminders(due_at) where done_at is null;
 create index if not exists reminders_chat on reminders(chat_jid, due_at) where done_at is null;
+create table if not exists drafts (
+  chat_jid text primary key references chats(jid) on delete cascade on update cascade,
+  text text not null default '',
+  quoted_id text,
+  media_body blob,
+  media_mime text,
+  media_name text,
+  source text not null default 'claude',
+  created_at integer not null
+);
 create table if not exists label_examples (
   id integer primary key,
   chat_jid text not null,
@@ -343,7 +368,9 @@ const CHAT_SELECT = `select c.*,
   (select count(*) from ai_usage u where u.chat_jid = c.jid) as ai_calls,
   (select coalesce(sum(input_tokens + output_tokens), 0) from ai_usage u where u.chat_jid = c.jid) as ai_tokens,
   (select coalesce(sum(cost_usd), 0) from ai_usage u where u.chat_jid = c.jid) as ai_cost,
-  (select group_concat(label, char(31)) from chat_labels l where l.chat_jid = c.jid) as extra_labels
+  (select group_concat(label, char(31)) from chat_labels l where l.chat_jid = c.jid) as extra_labels,
+  (select json_object('text', d.text, 'hasMedia', d.media_body is not null, 'source', d.source, 'createdAt', d.created_at)
+     from drafts d where d.chat_jid = c.jid) as pending_draft
   from chats c`;
 
 type Row = Record<string, unknown>;
@@ -393,7 +420,18 @@ function toChat(r: Row): Chat {
     markedUnread: r.marked_unread === 1,
     ephemeral: r.ephemeral == null || Number(r.ephemeral) <= 0 ? null : Number(r.ephemeral),
     pins: parsePins(r.pins),
+    pendingDraft: parsePendingDraft(r.pending_draft),
   };
+}
+
+function parsePendingDraft(raw: unknown): PendingDraftSummary | null {
+  if (typeof raw !== "string") return null;
+  try {
+    const d = JSON.parse(raw) as Record<string, unknown>;
+    return { text: String(d.text ?? ""), hasMedia: !!d.hasMedia, source: String(d.source ?? "claude"), createdAt: Number(d.createdAt) };
+  } catch {
+    return null;
+  }
 }
 
 function parsePins(raw: unknown): PinnedRef[] {
@@ -1229,6 +1267,36 @@ export class Store {
   setNote(jid: string, note: string | null): Chat | null {
     this.q("update chats set note = ? where jid = ?").run(note?.trim() ? note : null, jid);
     return this.getChat(jid);
+  }
+
+  // ---- rascunho pendente (um por conversa; o mais novo substitui)
+  // Se a conversa LID for fundida ao número (mapLid), o chat LID some e o rascunho cai pela cascata.
+
+  setPendingDraft(jid: string, draft: { text: string; quotedId?: string | null; media?: PendingDraftMedia | null; source: string }): Chat | null {
+    if (!this.hasChat(jid)) return null;
+    this.q(
+      `insert into drafts (chat_jid, text, quoted_id, media_body, media_mime, media_name, source, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)
+       on conflict(chat_jid) do update set text = excluded.text, quoted_id = excluded.quoted_id, media_body = excluded.media_body,
+         media_mime = excluded.media_mime, media_name = excluded.media_name, source = excluded.source, created_at = excluded.created_at`,
+    ).run(jid, draft.text, draft.quotedId ?? null, draft.media?.body ?? null, draft.media?.mimetype ?? null, draft.media?.fileName ?? null, draft.source, Date.now());
+    return this.getChat(jid);
+  }
+
+  getPendingDraft(jid: string): PendingDraft | null {
+    const r = this.q("select * from drafts where chat_jid = ?").get(jid) as Row | undefined;
+    if (!r) return null;
+    const body = r.media_body instanceof Uint8Array ? Buffer.from(r.media_body.buffer, r.media_body.byteOffset, r.media_body.byteLength) : null;
+    return {
+      text: String(r.text ?? ""),
+      quotedId: (r.quoted_id as string) ?? null,
+      media: body ? { body, mimetype: String(r.media_mime ?? "application/octet-stream"), fileName: String(r.media_name ?? "arquivo") } : null,
+      source: String(r.source),
+      createdAt: Number(r.created_at),
+    };
+  }
+
+  clearPendingDraft(jid: string): boolean {
+    return Number(this.q("delete from drafts where chat_jid = ?").run(jid).changes) > 0;
   }
 
   listReminders(jid: string): Reminder[] {

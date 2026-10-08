@@ -16,18 +16,8 @@ export function safeFileName(name: string): string {
   return clean;
 }
 
-/** Nome vindo do content-disposition do servidor local (filename*=UTF-8''...). */
-export function fileNameFromDisposition(header: string | null): string | null {
-  const star = /filename\*=UTF-8''([^;]+)/i.exec(header ?? "");
-  if (star) {
-    try {
-      return decodeURIComponent(star[1]);
-    } catch {
-      return null;
-    }
-  }
-  return /filename="([^"]+)"/i.exec(header ?? "")?.[1] ?? null;
-}
+import { fileNameFromDisposition } from "../server/mime.ts";
+export { fileNameFromDisposition };
 
 /**
  * Baixa a mídia do servidor local para uma pasta temporária e devolve o caminho.

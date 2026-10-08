@@ -33,6 +33,12 @@ Cada classificação devolve etiqueta, se a conversa espera resposta, urgência 
 
 Com a classificação automática ligada, cada conversa que recebe mensagem é classificada 15 s depois da última mensagem da rajada. A IA recebe o nome do contato e o texto das últimas 30 mensagens, sem identificadores do WhatsApp. Etiqueta escolhida à mão nunca é sobrescrita.
 
+## Claude Code (servidor MCP)
+
+Em **Configurações › IA › Claude Code**, clique em **Conectar**: o app registra um servidor MCP (`whatsapp-inbox`, escopo do usuário) no Claude Code deste PC. Nas sessões do Claude você passa a ter `listar_conversas`, `ler_mensagens`, `buscar_mensagens`, `ler_midia` (áudio vira transcrição, imagem vem como imagem), `perfil_contato`, `marcar_lida`, `atualizar_conversa`, `abrir_conversa`, `propor_resposta` e `propor_midia`.
+
+O Claude nunca envia: `propor_*` cria um **rascunho pendente** na conversa, que aparece no composer com **Enviar**, **Editar** e **Descartar**. O processo MCP fala com o app pela API local (`x-inbox-token`); o app grava porta e token da execução em `mcp.json` (pasta de dados; em dev `data/mcp.json`), então o Inbox precisa estar aberto. Reinicie as sessões do Claude Code depois de conectar. Em desenvolvimento, o comando registrado é `node server/mcp-main.ts`; no app instalado é o próprio executável em modo Node com `dist-electron/mcp.mjs`.
+
 ## Dados
 
 No app instalado, tudo fica em `%APPDATA%\WhatsApp Inbox\data` (no modo de desenvolvimento, em `data/` do projeto):

@@ -1,6 +1,6 @@
-import { Bell, Briefcase, ChartColumn, Download, Monitor, Moon, Sun, Zap, KeyRound, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
+import { Bell, Briefcase, ChartColumn, Copy, Download, Monitor, Moon, Sun, Zap, KeyRound, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { api, type AiStatus, type AppState, type Classifier, type Label, type Prefs, type QuickReply, type Theme } from "./api.ts";
+import { api, type AiStatus, type AppState, type Classifier, type Label, type McpStatus, type Prefs, type QuickReply, type Theme } from "./api.ts";
 import { desktop, useAccount, type ReleaseInfo, type UpdateState } from "./desktop.ts";
 import { publishAi, useAiStatus } from "./ai-state.ts";
 import { ClaudeOptionsPanel, DeepSeekOptionsPanel, JevContextField } from "./ai-options.tsx";
@@ -107,6 +107,73 @@ function SummaryModelPanel() {
           ? "O Claude pelo plano leva cerca de 1 minuto por resumo: o resumo automático de áudio fica lento."
           : "Recomendado: DeepSeek Flash, mais barato e rápido. Vale para o resumo da conversa e o dos áudios; salvo na hora."}
       </p>
+    </div>
+  );
+}
+
+/** Servidor MCP do Inbox no Claude Code deste PC: o Claude lê as conversas e propõe respostas; nada sai sem Enviar. */
+function McpPanel({ notify }: { notify: (kind: "error" | "success", text: string) => void }) {
+  const [status, setStatus] = useState<McpStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.mcpStatus().then((s) => alive && setStatus(s), (e: Error) => alive && setFailed(e.message));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const run = async (action: () => Promise<McpStatus>, done: string) => {
+    setBusy(true);
+    try {
+      setStatus(await action());
+      notify("success", done);
+    } catch (e) {
+      notify("error", (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copy = async () => {
+    if (!status?.command) return;
+    try {
+      await navigator.clipboard.writeText(status.command);
+      notify("success", "Comando copiado.");
+    } catch {
+      notify("error", "Não foi possível copiar. Selecione o comando e copie à mão.");
+    }
+  };
+  if (failed) return <p className="hint hint--warning">Não foi possível consultar o Claude Code. {failed}</p>;
+  if (!status) return <p className="hint">Consultando o Claude Code…</p>;
+  return (
+    <div className="stack">
+      <p className="hint">
+        Conecta este Inbox ao Claude Code do seu computador: nas sessões do Claude você lista conversas, lê mensagens e mídias e pede respostas. O Claude só propõe: a resposta aparece aqui como rascunho e nada é enviado sem você clicar em Enviar.
+      </p>
+      {!status.claudeFound ? (
+        <p className="hint hint--warning">Claude Code não encontrado neste PC. Instale e faça login rodando claude no terminal.</p>
+      ) : (
+        <div className="cluster">
+          <span className={`badge ${status.registered ? "badge--info" : "badge--neutral"}`}>{status.registered ? "Conectado ao Claude Code" : "Não conectado"}</span>
+          {status.registered ? (
+            <Button variant="secondary" size="compact" loading={busy} onClick={() => void run(api.mcpUnregister, "Desconectado do Claude Code.")}>
+              Desconectar
+            </Button>
+          ) : (
+            <Button variant="action" size="compact" loading={busy} disabled={!status.command} onClick={() => void run(api.mcpRegister, "Conectado. Reinicie as sessões do Claude Code para ele ver o Inbox.")}>
+              Conectar
+            </Button>
+          )}
+        </div>
+      )}
+      {status.command && (
+        <Field label="Comando equivalente" hint="Para registrar à mão num terminal. Depois de conectar, reinicie as sessões do Claude Code já abertas.">
+          <div className="cluster">
+            <code className="mcp-command">{status.command}</code>
+            <Button variant="ghost" size="compact" icon={<Copy size={16} aria-hidden />} aria-label="Copiar comando" title="Copiar comando" onClick={() => void copy()} />
+          </div>
+        </Field>
+      )}
     </div>
   );
 }
@@ -740,6 +807,12 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 removeDsKey={removeDsKey}
                 setRemoveDsKey={setRemoveDsKey}
               />
+            </section>
+          )}
+          {tab === "ia" && (
+            <section className="surface stack">
+              <h3 className="eyebrow">Claude Code</h3>
+              <McpPanel notify={notify} />
             </section>
           )}
           {tab === "ia" && (

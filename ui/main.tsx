@@ -65,6 +65,7 @@ import {
   mentionLabel,
   mentionQuery,
   messageBody,
+  PendingDraftBar,
   quoteAuthor,
   ReplyBar,
   type MentionPick,
@@ -279,8 +280,13 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
               chat.markedUnread && <span className="count count--dot" role="img" aria-label="Marcada como não lida" />
             )}
           </span>
-          {(chat.label || chat.extraLabels.length > 0 || urgent || chat.reminderAt !== null || level || showPriority || isSnoozed(chat)) && (
+          {(chat.label || chat.extraLabels.length > 0 || urgent || chat.reminderAt !== null || level || showPriority || isSnoozed(chat) || chat.pendingDraft) && (
             <span className="chat-item__tags">
+              {chat.pendingDraft && (
+                <span className="badge badge--info">
+                  <Sparkles size={12} aria-hidden /> Rascunho
+                </span>
+              )}
               {showPriority && aiPriority && <span className={`badge ${PRIORITY_META[aiPriority].cls}`}>{PRIORITY_META[aiPriority].text}</span>}
               {level && !urgent && !showPriority && (
                 <span className={`badge ${level === "alta" ? "badge--danger" : "badge--warning"}`}>
@@ -1397,6 +1403,51 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
   };
 
+  // Rascunho proposto pela IA (MCP): enviar vai pelo servidor; editar traz texto, citação e anexo para o campo.
+  const [pendingBusy, setPendingBusy] = useState(false);
+  const sendPending = async () => {
+    setPendingBusy(true);
+    stickToBottom.current = true;
+    try {
+      onChat(await api.sendPendingDraft(chat.jid));
+    } catch (e) {
+      notify("error", `Rascunho não enviado. ${(e as Error).message}`);
+    } finally {
+      setPendingBusy(false);
+    }
+  };
+  const editPending = async () => {
+    setPendingBusy(true);
+    try {
+      const d = await api.pendingDraft(chat.jid);
+      setDraft(d.text);
+      if (d.quoted) {
+        setReplyTo(d.quoted);
+        setReplyFrom(null);
+      }
+      if (d.media) {
+        const blob = await (await fetch(api.pendingDraftMediaUrl(chat.jid))).blob();
+        addFiles([new File([blob], d.media.fileName, { type: d.media.mimetype })]);
+      }
+      onChat(await api.clearPendingDraft(chat.jid));
+      requestAnimationFrame(() => composer.current?.focus());
+    } catch (e) {
+      notify("error", `Não foi possível abrir o rascunho. ${(e as Error).message}`);
+    } finally {
+      setPendingBusy(false);
+    }
+  };
+  const discardPending = async () => {
+    setPendingBusy(true);
+    try {
+      onChat(await api.clearPendingDraft(chat.jid));
+    } catch (e) {
+      notify("error", (e as Error).message);
+    } finally {
+      setPendingBusy(false);
+    }
+  };
+
   const sendVoice = async () => {
     setSending(true);
     stickToBottom.current = true;
@@ -2109,6 +2160,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         {showMention && <MentionMenu items={mentionItems} active={mentionActive} onPick={pickMention} onHover={setMentionActive} />}
         {showEmoji && <EmojiShortcutMenu items={emojiItems} active={emojiActive} onPick={pickEmoji} onHover={setEmojiActive} />}
         {editing && <EditBar key={editing.id} message={editing} onCancel={cancelEdit} />}
+        {chat.pendingDraft && !editing && (
+          <PendingDraftBar key={chat.pendingDraft.createdAt} draft={chat.pendingDraft} busy={pendingBusy} onSend={() => void sendPending()} onEdit={() => void editPending()} onDiscard={() => void discardPending()} />
+        )}
         {replyTo && (
           <ReplyBar
             key={replyTo.id}

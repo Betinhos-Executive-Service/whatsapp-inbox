@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { readFile, rm, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
@@ -6,33 +7,8 @@ import { claudeOptionsSchema, type ClaudeOptions } from "./claude.ts";
 import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
 import { STATUSES, type Store } from "./db.ts";
 import { linkPreview } from "./link-preview.ts";
+import { EXT_BY_TYPE, TYPE_BY_EXT } from "./mime.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
-
-/** Documento sem tipo (octet-stream): deduz pela extensão os formatos que a visualização abre. */
-const TYPE_BY_EXT: Record<string, string> = {
-  ".pdf": "application/pdf",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".txt": "text/plain; charset=utf-8",
-  ".csv": "text/csv; charset=utf-8",
-};
-/** Extensão pelo tipo, para foto, áudio e vídeo (o WhatsApp não manda nome de arquivo para eles). */
-const EXT_BY_TYPE: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/gif": ".gif",
-  "image/webp": ".webp",
-  "video/mp4": ".mp4",
-  "video/3gpp": ".3gp",
-  "audio/ogg": ".ogg",
-  "audio/mpeg": ".mp3",
-  "audio/mp4": ".m4a",
-  "audio/aac": ".aac",
-  "application/pdf": ".pdf",
-};
 
 /** Nome do arquivo baixado: o original, ou "arquivo" + extensão do tipo; sem extensão o Windows não sabe abrir. */
 export function downloadName(mimetype: string, fileName: string | null): string {
@@ -46,10 +22,23 @@ export function servedType(mimetype: string, fileName: string | null): string {
   return TYPE_BY_EXT[extname(fileName ?? "").toLowerCase()] ?? (mimetype || "application/octet-stream");
 }
 
+export type McpStatus = {
+  /** Claude Code instalado neste PC. */
+  claudeFound: boolean;
+  /** Registrado no Claude Code (escopo do usuário). */
+  registered: boolean;
+  /** Comando copiável para registrar à mão; null quando este modo não tem entrada MCP. */
+  command: string | null;
+  /** Arquivo de descoberta (porta + token) desta execução. */
+  file: string;
+};
+
 export type Api = {
   store: Store;
   distDir: string;
   port: number;
+  /** Segredo desta execução: outro processo local (MCP) o envia em `x-inbox-token`. */
+  token: string;
   state: () => unknown;
   /** `quotedChat`: a mensagem citada é de outra conversa (responder em particular a alguém do grupo). */
   send: (jid: string, text: string, opts: { quotedId?: string; quotedChat?: string; mentions?: string[]; mentionAll?: boolean }) => Promise<void>;
@@ -106,6 +95,12 @@ export type Api = {
   /** Só o cache: não chama a Groq. */
   cachedTranscript: (jid: string, id: string) => Promise<{ text: string | null; summary: unknown }>;
   summarizeAudio: (jid: string, id: string, force?: boolean) => Promise<unknown>;
+  /** Registro do servidor MCP deste app no Claude Code do PC. */
+  mcp: {
+    status: () => Promise<McpStatus>;
+    register: () => Promise<void>;
+    unregister: () => Promise<void>;
+  };
   ai: {
     status: () => unknown;
     draft: (jid: string, text?: string) => Promise<string>;
@@ -262,6 +257,14 @@ const sendMediaSchema = z.object({
   quotedId: z.string().min(1).max(200).optional(),
 });
 
+/** Resposta proposta por uma IA (MCP); mesmos limites do envio de texto e de anexo. */
+const pendingDraftSchema = z.object({
+  text: z.string().max(4096).default(""),
+  quotedId: z.string().min(1).max(200).optional(),
+  source: z.string().trim().min(1).max(40).default("claude"),
+  media: z.object({ fileName: z.string().trim().min(1).max(255), mimetype: z.string().trim().min(1).max(128), data: z.string().min(1) }).optional(),
+});
+
 const sendSchema = z.object({
   text: z.string().trim().min(1).max(4096),
   quotedId: z.string().min(1).max(200).optional(),
@@ -298,16 +301,27 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 /**
  * O app só escuta em 127.0.0.1, mas um site aberto no navegador ainda pode tentar falar
  * com ele (CSRF / DNS rebinding). Exige Host local e, em escrita, Origin local + JSON.
+ * Outro processo local (o servidor MCP do Claude Code) se identifica pelo header `x-inbox-token`
+ * em vez do Origin; token presente e errado é recusado até em GET, para não dar pista por sondagem.
  */
-function guard(req: IncomingMessage, port: number) {
+function guard(req: IncomingMessage, port: number, token: string) {
   const allowed = [`127.0.0.1:${port}`, `localhost:${port}`];
   if (!allowed.includes(req.headers.host ?? "")) throw new HttpError(403, "Host não permitido.");
+  const given = req.headers["x-inbox-token"];
+  const withToken = typeof given === "string";
+  if (withToken && !tokenMatches(given, token)) throw new HttpError(403, "Token inválido.");
   if (req.method === "GET") return;
   const origin = req.headers.origin;
-  if (origin && !allowed.some((h) => origin === `http://${h}`)) throw new HttpError(403, "Origem não permitida.");
+  if (!withToken && origin && !allowed.some((h) => origin === `http://${h}`)) throw new HttpError(403, "Origem não permitida.");
   if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) {
     throw new HttpError(415, "Use application/json.");
   }
+}
+
+function tokenMatches(given: string, token: string): boolean {
+  const a = Buffer.from(given);
+  const b = Buffer.from(token);
+  return a.length === b.length && b.length > 0 && timingSafeEqual(a, b);
 }
 
 /** Arquivo da interface em memória; a chave (tamanho + mtime) detecta rebuild em desenvolvimento. */
@@ -356,8 +370,74 @@ export function createHandler(api: Api) {
       return json(res, 201, await api.createGroup(subject, participants));
     }
 
+    // Rascunho pendente: sub-rotas com dois segmentos (chatMatch só casa um).
+    const draftMatch = path.match(/^\/api\/chats\/([^/]+)\/pending-draft\/(media|send)$/);
+    if (draftMatch) {
+      const draftJid = decodeURIComponent(draftMatch[1]);
+      if (!store.hasChat(draftJid)) throw new HttpError(404, "Conversa não encontrada.");
+      const draft = store.getPendingDraft(draftJid);
+      if (!draft) throw new HttpError(404, "Não há rascunho pendente nesta conversa.");
+      if (draftMatch[2] === "media" && method === "GET") {
+        if (!draft.media) throw new HttpError(404, "O rascunho não tem anexo.");
+        res.writeHead(200, {
+          "content-type": servedType(draft.media.mimetype, draft.media.fileName),
+          "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(downloadName(draft.media.mimetype, draft.media.fileName))}`,
+          "content-length": String(draft.media.body.length),
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+        });
+        return res.end(draft.media.body);
+      }
+      if (draftMatch[2] === "send" && method === "POST") {
+        await readJson(req);
+        const quotedId = draft.quotedId ?? undefined;
+        if (quotedId && !store.messageKey(draftJid, quotedId)) throw new HttpError(404, "A mensagem respondida não está mais salva.");
+        // Só limpa depois do envio dar certo: em falha o rascunho continua para tentar de novo.
+        if (draft.media) await api.sendMedia(draftJid, { ...draft.media, caption: draft.text || undefined }, quotedId);
+        else await api.send(draftJid, draft.text, { quotedId });
+        store.clearPendingDraft(draftJid);
+        api.onChatChanged(draftJid);
+        return json(res, 200, store.getChat(draftJid));
+      }
+    }
+
     if (jid) {
       if (!store.hasChat(jid)) throw new HttpError(404, "Conversa não encontrada.");
+      if (action === "/pending-draft") {
+        if (method === "PUT") {
+          const { text, quotedId, source, media } = parse(pendingDraftSchema, await readJson(req, Math.ceil((MAX_MEDIA * 4) / 3) + 64 * 1024));
+          const trimmed = text.trim();
+          if (!trimmed && !media) throw new HttpError(400, "Escreva um texto ou anexe um arquivo.");
+          if (quotedId && !store.messageKey(jid, quotedId)) throw new HttpError(404, "A mensagem respondida não está mais salva.");
+          let file = null;
+          if (media) {
+            const body = Buffer.from(media.data, "base64");
+            if (!body.length) throw new HttpError(400, "Arquivo vazio.");
+            if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
+            file = { body, mimetype: media.mimetype, fileName: media.fileName };
+          }
+          const chat = store.setPendingDraft(jid, { text: trimmed, quotedId, media: file, source });
+          api.onChatChanged(jid);
+          return json(res, 200, chat);
+        }
+        if (method === "GET") {
+          const draft = store.getPendingDraft(jid);
+          if (!draft) throw new HttpError(404, "Não há rascunho pendente nesta conversa.");
+          return json(res, 200, {
+            text: draft.text,
+            quotedId: draft.quotedId,
+            quoted: draft.quotedId ? store.getMessage(jid, draft.quotedId) : null,
+            media: draft.media ? { mimetype: draft.media.mimetype, fileName: draft.media.fileName } : null,
+            source: draft.source,
+            createdAt: draft.createdAt,
+          });
+        }
+        if (method === "DELETE") {
+          store.clearPendingDraft(jid);
+          api.onChatChanged(jid);
+          return json(res, 200, store.getChat(jid));
+        }
+      }
       if (action === "" && method === "PATCH") {
         const patch = parse(chatPatchSchema, await readJson(req));
         const known = new Set(store.listLabels().map((l) => l.name));
@@ -383,7 +463,8 @@ export function createHandler(api: Api) {
           return json(res, 200, list);
         }
         const before = Number(url.searchParams.get("before")) || null;
-        return json(res, 200, store.listMessages(jid, before));
+        const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 80));
+        return json(res, 200, store.listMessages(jid, before, limit));
       }
       if (action === "/read" && method === "POST") {
         await api.markRead(jid);
@@ -550,6 +631,14 @@ export function createHandler(api: Api) {
       }
       res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "private, max-age=3600", "content-length": body.length });
       return res.end(body);
+    }
+    if (path === "/api/mcp/status" && method === "GET") return json(res, 200, await api.mcp.status());
+    if ((path === "/api/mcp/register" || path === "/api/mcp/unregister") && method === "POST") {
+      await readJson(req);
+      await (path === "/api/mcp/register" ? api.mcp.register() : api.mcp.unregister()).catch((error: Error) => {
+        throw new HttpError(502, error.message);
+      });
+      return json(res, 200, await api.mcp.status());
     }
     if (path === "/api/ai" && method === "GET") return json(res, 200, api.ai.status());
     if (path === "/api/ai/usage" && method === "GET") {
@@ -748,7 +837,7 @@ export function createHandler(api: Api) {
 
   return async (req: IncomingMessage, res: ServerResponse) => {
     try {
-      guard(req, api.port);
+      guard(req, api.port, api.token);
       await route(req, res);
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500;
