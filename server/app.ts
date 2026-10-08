@@ -506,17 +506,12 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       const m = store.getMessage(from, id);
       if (!m || m.deleted) throw new Error("Esta mensagem não pode ser encaminhada.");
       const text = store.messageText(from, id) ?? "";
-      // Enquete, localização e contato vão no próprio formato, não como texto "[Enquete] …".
+      // Enquete e localização vão no próprio formato, não como texto "[Enquete] …".
       const extra = store.messageExtra(from, id);
       if (extra?.type === "poll") return connected().sendPoll(to, extra.question, extra.options, extra.selectable !== 1);
       if (extra?.type === "location") return connected().sendLocation(to, { lat: extra.lat, lng: extra.lng, name: extra.name ?? undefined, address: extra.address ?? undefined });
-      if (extra?.type === "contact") {
-        const contacts = extra.contacts.flatMap((c) => {
-          const phone = c.phones[0] ? (c.phones[0].waid ?? c.phones[0].number.replace(/\D/g, "")) : "";
-          return phone ? [{ name: c.name, phone }] : [];
-        });
-        if (contacts.length) return connected().sendContacts(to, contacts);
-      }
+      const cards = m.contacts?.flatMap((c) => (c.phones[0] ? [{ name: c.name, phone: c.phones[0].wa ?? c.phones[0].number }] : []));
+      if (cards?.length) return connected().sendContacts(to, cards);
       if (m.kind === "call" || m.kind === "system") throw new Error("Avisos e ligações não podem ser encaminhados.");
       if (m.media?.type === "sticker") {
         const file = await readMedia(from, id);
@@ -599,13 +594,13 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     ai: {
       status: aiState,
-      draft: async (jid) => {
+      draft: async (jid, own = "") => {
         const { chat, messages } = await chatOrThrow(jid);
         const p = provider();
         const { text } = await tracked(p, "rascunho", jid, () =>
           p === "claude"
-            ? claude.draft(chat.name, messages, aiInstructions())
-            : deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions()),
+            ? claude.draft(chat.name, messages, aiInstructions(), own)
+            : deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions(), own),
         );
         return text;
       },

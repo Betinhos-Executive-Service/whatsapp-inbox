@@ -1,29 +1,20 @@
-import { CalendarDays, Check, ChevronDown, ExternalLink, ListChecks, LoaderCircle, MapPin, MessageCircle, Phone, PhoneIncoming, PhoneMissed, PhoneOff, Pin, Users, Video, X } from "lucide-react";
+import { CalendarDays, Check, ChevronDown, ExternalLink, ListChecks, LoaderCircle, MapPin, Phone, PhoneIncoming, PhoneMissed, PhoneOff, Pin, Users, Video, X } from "lucide-react";
 import { useState } from "react";
-import type { Chat, ContactCard, Extra, Message } from "./api.ts";
+import type { Chat, Extra, Message } from "./api.ts";
 import { Button, Dialog } from "./ds/index.ts";
-import { initials } from "./format.ts";
 import { WaInline } from "./wa-format.tsx";
 
 /** Ações que os conteúdos ricos pedem à conversa. */
 export type RichActions = {
   onVote: (m: Message, options: string[]) => void;
-  /** Abrir (ou começar) a conversa com um número. */
-  onOpenPhone: (phone: string) => void;
   onAcceptInvite: (m: Message) => void;
 };
 
 /** Tipos que a bolha mostra com um cartão próprio no lugar do texto "[Enquete] …". */
-export const isRich = (m: Message) => !m.deleted && !!m.extra && m.extra.type !== "link";
+export const isRich = (m: Message) => !m.deleted && !!m.extra;
 
 const dateTime = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "short", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 const timeOnly = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
-
-const formatPhone = (raw: string) => {
-  const digits = raw.replace(/\D/g, "");
-  const m = digits.match(/^55(\d{2})(\d{4,5})(\d{4})$/);
-  return m ? `+55 ${m[1]} ${m[2]}-${m[3]}` : raw.startsWith("+") ? raw : `+${digits}`;
-};
 
 export function RichContent({ m, canAct, actions }: { m: Message; canAct: boolean; actions: RichActions }) {
   const extra = m.extra;
@@ -33,8 +24,6 @@ export function RichContent({ m, canAct, actions }: { m: Message; canAct: boolea
       return <PollView m={m} poll={extra} canAct={canAct} onVote={actions.onVote} />;
     case "location":
       return <LocationView place={extra} />;
-    case "contact":
-      return <ContactsView contacts={extra.contacts} canAct={canAct} onOpenPhone={actions.onOpenPhone} />;
     case "event":
       return <EventView event={extra} />;
     case "invite":
@@ -137,33 +126,6 @@ function LocationView({ place }: { place: Extract<Extra, { type: "location" }> }
   );
 }
 
-function ContactsView({ contacts, canAct, onOpenPhone }: { contacts: ContactCard[]; canAct: boolean; onOpenPhone: (phone: string) => void }) {
-  return (
-    <ul className="rich rich--contacts" aria-label={contacts.length > 1 ? `${contacts.length} contatos` : "Contato"}>
-      {contacts.map((c, i) => {
-        const phone = c.phones[0];
-        const digits = phone ? (phone.waid ?? phone.number.replace(/\D/g, "")) : null;
-        return (
-          <li key={`${c.name}-${i}`} className="contact-card">
-            <span className="avatar avatar--sm" aria-hidden>
-              {initials(c.name)}
-            </span>
-            <span className="contact-card__info">
-              <span className="contact-card__name">{c.name}</span>
-              {c.phones.length ? c.phones.map((p) => <span key={p.number} className="rich__hint">{formatPhone(p.number)}</span>) : <span className="rich__hint">Sem telefone</span>}
-            </span>
-            {digits && (
-              <Button variant="secondary" size="compact" icon={<MessageCircle size={14} aria-hidden />} disabled={!canAct} onClick={() => onOpenPhone(digits)}>
-                Conversar
-              </Button>
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
 function EventView({ event }: { event: Extract<Extra, { type: "event" }> }) {
   const when = event.start
     ? `${dateTime.format(event.start)}${event.end ? ` até ${new Date(event.end).toDateString() === new Date(event.start).toDateString() ? timeOnly.format(event.end) : dateTime.format(event.end)}` : ""}`
@@ -248,26 +210,6 @@ function CallView({ call, text }: { call: Extract<Extra, { type: "call" }>; text
       </span>
       <span>{text}</span>
     </p>
-  );
-}
-
-/** Prévia de link (título, descrição e miniatura) acima do texto. */
-export function LinkCard({ link }: { link: Extract<Extra, { type: "link" }> }) {
-  let host = link.url;
-  try {
-    host = new URL(link.url).hostname.replace(/^www\./, "");
-  } catch {
-    // URL estranha: mostra como veio
-  }
-  return (
-    <a className="link-card" href={link.url} target="_blank" rel="noreferrer">
-      {link.thumb && <img className="link-card__thumb" src={`data:image/jpeg;base64,${link.thumb}`} alt="" />}
-      <span className="link-card__body">
-        {link.title && <span className="link-card__title">{link.title}</span>}
-        {link.description && <span className="link-card__text">{link.description}</span>}
-        <span className="link-card__host">{host}</span>
-      </span>
-    </a>
   );
 }
 

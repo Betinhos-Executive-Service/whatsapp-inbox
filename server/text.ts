@@ -154,7 +154,7 @@ export function extractText(content: Content): Extracted | null {
     case "contactMessage":
       return { text: withCaption("[Contato]", m.displayName), kind: "contact" };
     case "contactsArrayMessage":
-      return { text: "[Contatos]", kind: "contact" };
+      return { text: withCaption("[Contatos]", m.displayName), kind: "contact" };
     case "pollCreationMessage":
     case "pollCreationMessageV2":
     case "pollCreationMessageV3":
@@ -221,16 +221,13 @@ export function revokedId(content: Content): string | null {
 
 export type CallOutcome = "ringing" | "missed" | "rejected" | "connected" | "elsewhere" | "failed";
 export type CallInfo = { video: boolean; outcome: CallOutcome; seconds: number | null; group: boolean; outgoing: boolean };
-export type ContactCard = { name: string; phones: { number: string; waid: string | null }[] };
 
 export type Extra =
   | { type: "poll"; question: string; options: string[]; selectable: number; secret: string | null }
   | { type: "location"; lat: number; lng: number; name: string | null; address: string | null; url: string | null; live: boolean }
-  | { type: "contact"; contacts: ContactCard[] }
   | { type: "event"; name: string; description: string | null; start: number | null; end: number | null; place: string | null; link: string | null; canceled: boolean }
   | { type: "invite"; groupJid: string; groupName: string | null; code: string; expiration: number | null; caption: string | null }
-  | ({ type: "call" } & CallInfo)
-  | { type: "link"; url: string; title: string | null; description: string | null; thumb: string | null };
+  | ({ type: "call" } & CallInfo);
 
 const num = (v: unknown): number | null => {
   if (v == null) return null;
@@ -239,34 +236,6 @@ const num = (v: unknown): number | null => {
 };
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 const b64 = (v: unknown): string | null => (v instanceof Uint8Array && v.length ? Buffer.from(v).toString("base64") : typeof v === "string" && v ? v : null);
-
-/** Miniatura da prévia de link: só pequenas, para não inchar o banco. */
-const MAX_THUMB = 48 * 1024;
-
-/** Lê o contato de um vCard (nome e telefones; waid = número no WhatsApp). */
-export function parseVcard(vcard: string, fallbackName?: string | null): ContactCard {
-  const lines = vcard.replace(/\r?\n[ \t]/g, "").split(/\r?\n/);
-  let name = str(fallbackName) ?? "";
-  const phones: ContactCard["phones"] = [];
-  for (const line of lines) {
-    const [rawKey, ...rest] = line.split(":");
-    const key = rawKey.replace(/^item\d+\./i, "").toUpperCase();
-    const value = rest.join(":").trim();
-    if (key === "FN" && value && !name) name = value;
-    if (key.startsWith("TEL")) {
-      const waid = /waid=(\d+)/i.exec(rawKey)?.[1] ?? null;
-      const number = value.replace(/[^\d+]/g, "");
-      if (number || waid) phones.push({ number: number || `+${waid}`, waid });
-    }
-  }
-  return { name: name || "Contato", phones };
-}
-
-/** vCard simples para enviar um contato. */
-export function buildVcard(name: string, phone: string): string {
-  const digits = phone.replace(/\D/g, "");
-  return ["BEGIN:VCARD", "VERSION:3.0", `FN:${name.replace(/[\r\n]/g, " ")}`, `TEL;type=CELL;type=VOICE;waid=${digits}:+${digits}`, "END:VCARD"].join("\n");
-}
 
 /** proto.Message.CallLogMessage.CallOutcome; "silenciada" conta como perdida. */
 const CALL_OUTCOMES: Record<number, CallOutcome> = { 0: "connected", 1: "missed", 2: "failed", 3: "rejected", 4: "elsewhere", 5: "ringing", 6: "missed", 7: "missed" };
@@ -329,14 +298,6 @@ export function extractExtra(content: Content, secret?: unknown): Extra | null {
       if (lat === null || lng === null) return null;
       return { type: "location", lat, lng, name: str(m.name), address: str(m.address), url: str(m.url), live: type === "liveLocationMessage" };
     }
-    case "contactMessage":
-      return typeof m.vcard === "string" ? { type: "contact", contacts: [parseVcard(m.vcard, m.displayName)] } : null;
-    case "contactsArrayMessage": {
-      const contacts = (Array.isArray(m.contacts) ? m.contacts : [])
-        .filter((c: { vcard?: unknown }) => typeof c?.vcard === "string")
-        .map((c: { vcard: string; displayName?: string }) => parseVcard(c.vcard, c.displayName));
-      return contacts.length ? { type: "contact", contacts } : null;
-    }
     case "eventMessage": {
       const start = num(m.startTime);
       const end = num(m.endTime);
@@ -358,12 +319,6 @@ export function extractExtra(content: Content, secret?: unknown): Extra | null {
     }
     case "callLogMesssage":
       return { type: "call", ...callFromLog(m) };
-    case "extendedTextMessage": {
-      const url = str(m.matchedText) ?? str(m.canonicalUrl);
-      if (!url || (!str(m.title) && !str(m.description))) return null;
-      const thumb = m.jpegThumbnail instanceof Uint8Array && m.jpegThumbnail.length <= MAX_THUMB ? b64(m.jpegThumbnail) : null;
-      return { type: "link", url: /^https?:\/\//i.test(url) ? url : `https://${url}`, title: str(m.title), description: str(m.description), thumb };
-    }
     default:
       return null;
   }

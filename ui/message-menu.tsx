@@ -1,4 +1,4 @@
-import { ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, MessageCircleReply, Pencil, Pin, PinOff, Reply, Star, StarOff, Trash2, UserRound } from "lucide-react";
+import { CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, MessageCircleReply, Pencil, Pin, PinOff, Reply, Star, StarOff, Trash2, UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { mediaUrl, type Message } from "./api.ts";
 import { canEdit, REACTIONS } from "./message-extras.tsx";
@@ -24,6 +24,8 @@ export type MessageMenuActions = {
   onPin: (m: Message, seconds: number | null) => void;
   /** Responder em particular a quem escreveu no grupo. */
   onPrivateReply: (m: Message) => void;
+  /** Entra no modo de seleção com esta mensagem marcada. */
+  onSelect: (m: Message) => void;
 };
 
 /** Prazos que o WhatsApp oferece para fixar. */
@@ -84,6 +86,7 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
             : [{ id: "pin", label: "Fixar", icon: <Pin size={16} aria-hidden />, disabled: !canAct, keep: true, sub: true, run: () => setView("pin") }]),
         ...(m.media ? [{ id: "download", label: "Baixar arquivo", icon: <Download size={16} aria-hidden />, href: mediaUrl(m, true) }] : []),
         ...(canEdit(m) ? [{ id: "edit", label: "Editar", icon: <Pencil size={16} aria-hidden />, disabled: !canAct, run: () => actions.onEdit(m) }] : []),
+        { id: "select", label: "Selecionar mensagens", icon: <CheckSquare size={16} aria-hidden />, run: () => actions.onSelect(m) },
         ...(author ? [{ id: "author", label: `Ver perfil de ${author.name}`, icon: <UserRound size={16} aria-hidden />, run: () => actions.onAuthor(author.jid, author.name) }] : []),
         { id: "delete", label: "Apagar", icon: <Trash2 size={16} aria-hidden />, danger: true, run: () => actions.onDelete(m) },
       ];
@@ -169,7 +172,7 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
       )}
       {items.map((item) =>
         item.href ? (
-          <a key={item.id} role="menuitem" className="bt-menu__item" href={item.href} download onClick={() => onClose()}>
+          <a key={item.id} role="menuitem" className="bt-menu__item" href={item.href} download onClick={() => setTimeout(onClose)}>
             <span className="bt-menu__icon">{item.icon}</span>
             <span>{item.label}</span>
           </a>

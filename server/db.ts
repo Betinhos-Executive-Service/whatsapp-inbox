@@ -1,3 +1,4 @@
+import type { ContactCard } from "./contacts.ts";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import type { Provider, TokenUsage, UsageKind } from "./pricing.ts";
 import type { Extra } from "./text.ts";
@@ -120,6 +121,8 @@ export type Message = {
   at: number;
   text: string;
   kind: string;
+  /** Cartões de contato recebidos ou enviados. */
+  contacts: ContactCard[] | null;
   /** Mídia baixável (sem as chaves, que ficam só no banco). */
   media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
   /** Mensagem respondida (citação). */
@@ -152,7 +155,7 @@ export type LabelExample = { label: string; snippet: string };
 
 export type Label = { name: string; description: string };
 
-export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "sender" | "ack" | "editedAt" | "reactions" | "extra" | "poll" | "starred"> & {
+export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "sender" | "ack" | "editedAt" | "reactions" | "contacts" | "extra" | "poll" | "starred"> & {
   rawJid: string;
   participant?: string | null;
   media?: string | null;
@@ -161,6 +164,8 @@ export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "se
   /** Extra em JSON (a enquete guarda o segredo dos votos aqui). */
   extra?: string | null;
   ack?: number | null;
+  /** ContactCard[] em JSON (mensagem de contato). */
+  contacts?: string | null;
   /** Mensagem enviada já serializada (proto), para reenviar quando o WhatsApp pedir retry. */
   raw?: Uint8Array | null;
   /** Aviso (entrou no grupo, temporárias…): aparece, mas não conta como não lida nem reabre a conversa. */
@@ -318,6 +323,7 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
   ["messages", "edited_at", "integer"],
   ["messages", "raw", "blob"],
   ["messages", "unread", "integer not null default 0"],
+  ["messages", "contacts", "text"],
   ["chats", "pinned_at", "integer"],
   ["chats", "archived", "integer not null default 0"],
   ["chats", "muted_until", "integer"],
@@ -442,6 +448,14 @@ function toMessage(r: Row, reactions: Message["reactions"] = [], poll: PollResul
       quoted = null;
     }
   }
+  let contacts: ContactCard[] | null = null;
+  if (typeof r.contacts === "string") {
+    try {
+      contacts = JSON.parse(r.contacts);
+    } catch {
+      contacts = null;
+    }
+  }
   const deleted = r.deleted_at != null;
   return {
     chatJid: String(r.chat_jid),
@@ -457,6 +471,7 @@ function toMessage(r: Row, reactions: Message["reactions"] = [], poll: PollResul
     ack: r.ack == null ? null : Number(r.ack),
     editedAt: r.edited_at == null ? null : Number(r.edited_at),
     reactions: deleted ? [] : reactions,
+    contacts: deleted ? null : contacts,
     extra: deleted ? null : parseExtra(r.extra),
     poll: deleted ? null : poll,
     starred: r.starred === 1,
@@ -466,7 +481,7 @@ function toMessage(r: Row, reactions: Message["reactions"] = [], poll: PollResul
 export const DELETED_TEXT = "Mensagem apagada";
 
 /** Colunas da mensagem para a tela (sem `raw`, que só serve ao retry). */
-const MESSAGE_COLUMNS = "chat_jid, id, participant, from_me, at, text, kind, media, quoted, deleted_at, ack, edited_at, extra, starred";
+const MESSAGE_COLUMNS = "chat_jid, id, participant, from_me, at, text, kind, media, quoted, deleted_at, ack, edited_at, contacts, extra, starred";
 
 export class Store {
   readonly db: DatabaseSync;
@@ -688,12 +703,12 @@ export class Store {
       this.ensureChat(m.chatJid, { status: live ? "aberta" : "resolvida" });
       const inserted = this
         .q(
-          `insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media, quoted, ack, raw, unread, extra)
-           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media, quoted, ack, raw, unread, contacts, extra)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           m.chatJid, m.id, m.rawJid, m.participant ?? null, m.fromMe ? 1 : 0, m.at, m.text, m.kind, m.media ?? null, m.quoted ?? null,
-          m.fromMe ? (m.ack ?? null) : null, m.raw ?? null, live && !m.fromMe && !m.silent ? 1 : 0, m.extra ?? null,
+          m.fromMe ? (m.ack ?? null) : null, m.raw ?? null, live && !m.fromMe && !m.silent ? 1 : 0, m.contacts ?? null, m.extra ?? null,
         );
       if (inserted.changes === 0) return false;
       this

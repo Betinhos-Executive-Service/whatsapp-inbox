@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-inbox",
-  "version": "0.0.57",
+  "version": "0.0.61",
   "private": true,
   "type": "module",
   "description": "Inbox local e leve para gerir e classificar conversas do WhatsApp, com classificação Jev.",
@@ -41,6 +41,7 @@
     "@types/react-dom": "19.3.0",
     "electron": "44.4.5",
     "electron-builder": "26.15.3",
+    "emojibase-data": "17.0.0",
     "esbuild": "0.28.2",
     "lucide-react": "1.52.0",
     "react": "19.3.0",

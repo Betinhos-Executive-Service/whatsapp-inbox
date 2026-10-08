@@ -24,6 +24,13 @@ export function parseWa(text: string): WaNode[] {
   while (i < text.length) {
     const prev = text[i - 1];
     const openOk = prev === undefined || !WORD.test(prev);
+    // Link fica intacto: "_" ou "*" dentro dele não viram formatação.
+    const url = openOk ? matchUrl(text, i) : null;
+    if (url) {
+      push(out, url);
+      i += url.length;
+      continue;
+    }
     if (openOk && text.startsWith("```", i)) {
       const end = text.indexOf("```", i + 4);
       if (end > i + 3 && !WORD.test(text[end + 3] ?? "")) {
@@ -56,6 +63,46 @@ function findClose(text: string, from: number, c: string): number {
     if (ch === c && !SPACE.test(text[j - 1]) && !WORD.test(text[j + 1] ?? "")) return j;
   }
   return -1;
+}
+
+const URL_AT = /^(?:https?:\/\/|www\.)[^\s<>"]+/i;
+const TRAIL = /[.,;:!?'"…]+$/;
+
+/** Link que começa em `at` (http, https ou www.), sem a pontuação final da frase. */
+function matchUrl(text: string, at: number): string | null {
+  const c = text[at];
+  if (c !== "h" && c !== "H" && c !== "w" && c !== "W") return null;
+  let url = URL_AT.exec(text.slice(at, at + 2048))?.[0];
+  if (!url) return null;
+  url = url.replace(TRAIL, "");
+  // ")" no fim só fica se abriu dentro do link, como em links da Wikipédia.
+  while (url.endsWith(")") && (url.match(/\(/g)?.length ?? 0) < (url.match(/\)/g)?.length ?? 0)) url = url.slice(0, -1).replace(TRAIL, "");
+  return /[a-z0-9]\.[a-z]{2,}/i.test(url) ? url : null;
+}
+
+export type LinkPart = string | { url: string; href: string };
+
+/** Separa os links do texto. href sempre com protocolo. */
+export function splitLinks(text: string): LinkPart[] {
+  const out: LinkPart[] = [];
+  let plain = "";
+  for (let i = 0; i < text.length; ) {
+    const url = (i === 0 || !WORD.test(text[i - 1])) ? matchUrl(text, i) : null;
+    if (url) {
+      if (plain) out.push(plain);
+      plain = "";
+      out.push({ url, href: /^https?:/i.test(url) ? url : `https://${url}` });
+      i += url.length;
+    } else plain += text[i++];
+  }
+  if (plain) out.push(plain);
+  return out;
+}
+
+/** Primeiro link do texto (para a prévia), ou null. */
+export function firstLink(text: string): string | null {
+  for (const part of splitLinks(text)) if (typeof part !== "string") return part.href;
+  return null;
 }
 
 /** Texto sem os marcadores — para prévias de uma linha. */

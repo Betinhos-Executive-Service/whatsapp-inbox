@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { test } from "node:test";
 import { Store, type IncomingMessage } from "../server/db.ts";
-import { firstUrl, isPrivateIp, parseMeta } from "../server/link-preview.ts";
+import { firstUrl } from "../server/link-preview.ts";
 import { decryptVote, encryptVote, optionsFromHashes } from "../server/poll.ts";
-import { callText, ephemeralChange, ephemeralLabel, extractExtra, extractPin, extractText, parseVcard } from "../server/text.ts";
+import { callText, ephemeralChange, ephemeralLabel, extractExtra, extractPin, extractText } from "../server/text.ts";
 import { parseLocation, phoneDigits } from "../ui/location.ts";
 
 const PN = "5511999990000@s.whatsapp.net";
@@ -19,7 +19,7 @@ const msg = (over: Partial<IncomingMessage> = {}): IncomingMessage => ({
   ...over,
 });
 
-test("enquete, localização, contato, evento, convite e prévia de link viram dados ricos", () => {
+test("enquete, localização, evento e convite viram dados ricos; contato e link ficam com os módulos próprios", () => {
   const secret = new Uint8Array([1, 2, 3]);
   const poll = extractExtra({ pollCreationMessageV3: { name: "Horário?", options: [{ optionName: "7h" }, { optionName: "8h" }], selectableOptionsCount: 1 }, messageContextInfo: { messageSecret: secret } });
   assert.deepEqual(poll, { type: "poll", question: "Horário?", options: ["7h", "8h"], selectable: 1, secret: Buffer.from(secret).toString("base64") });
@@ -29,9 +29,7 @@ test("enquete, localização, contato, evento, convite e prévia de link viram d
   });
   assert.equal(extractExtra({ locationMessage: { name: "sem coordenadas" } }), null);
 
-  const contact = extractExtra({ contactMessage: { displayName: "Ana", vcard: "BEGIN:VCARD\nFN:Ana Souza\nitem1.TEL;waid=5511988887777:+55 11 98888-7777\nEND:VCARD" } });
-  assert.deepEqual(contact, { type: "contact", contacts: [{ name: "Ana", phones: [{ number: "+5511988887777", waid: "5511988887777" }] }] });
-  assert.equal(parseVcard("BEGIN:VCARD\nFN:Bia\nEND:VCARD").phones.length, 0);
+  assert.equal(extractExtra({ contactMessage: { displayName: "Ana", vcard: "BEGIN:VCARD\nFN:Ana\nEND:VCARD" } }), null);
 
   const event = extractExtra({ eventMessage: { name: "Reunião", startTime: 1_800_000_000, location: { name: "Sede" }, isCanceled: false } });
   assert.equal(event?.type === "event" && event.start, 1_800_000_000_000);
@@ -39,9 +37,7 @@ test("enquete, localização, contato, evento, convite e prévia de link viram d
   const invite = extractExtra({ groupInviteMessage: { groupJid: "123@g.us", inviteCode: "abc", groupName: "Equipe", inviteExpiration: 1_900_000_000 } });
   assert.equal(invite?.type === "invite" && invite.code, "abc");
 
-  const link = extractExtra({ extendedTextMessage: { text: "veja https://x.com", matchedText: "https://x.com", title: "X", description: "Site" } });
-  assert.deepEqual(link, { type: "link", url: "https://x.com", title: "X", description: "Site", thumb: null });
-  assert.equal(extractExtra({ extendedTextMessage: { text: "sem prévia" } }), null);
+  assert.equal(extractExtra({ extendedTextMessage: { text: "veja https://x.com", matchedText: "https://x.com", title: "X" } }), null);
 });
 
 test("ligação: registro do celular vira texto; pin e temporárias são ações, não mensagem", () => {
@@ -146,14 +142,10 @@ test("conversa nova entra na lista; figurinhas repetidas aparecem uma vez", () =
   assert.equal(s.listStickers().length, 2);
 });
 
-test("prévia de link: primeiro link, endereço interno bloqueado e metadados da página", () => {
+test("prévia ao enviar: primeiro link do texto, sem a pontuação final", () => {
   assert.deepEqual(firstUrl("veja www.betinhos.com.br."), { matched: "www.betinhos.com.br", url: "https://www.betinhos.com.br" });
+  assert.deepEqual(firstUrl("link: https://a.com/x?y=1)"), { matched: "https://a.com/x?y=1", url: "https://a.com/x?y=1" });
   assert.equal(firstUrl("sem link"), null);
-  assert.ok(isPrivateIp("127.0.0.1") && isPrivateIp("192.168.0.10") && isPrivateIp("10.1.2.3") && isPrivateIp("::1") && isPrivateIp("::ffff:172.16.0.1"));
-  assert.ok(!isPrivateIp("8.8.8.8") && !isPrivateIp("2804:14c::1"));
-  const meta = parseMeta(`<html><head><title>Antigo</title><meta content="Betinhos &amp; Cia" property="og:title"><meta name="description" content='Transporte executivo'><meta property="og:image" content="/logo.jpg"></head></html>`);
-  assert.deepEqual(meta, { title: "Betinhos & Cia", description: "Transporte executivo", image: "/logo.jpg", url: null });
-  assert.equal(parseMeta("<title> Só título </title>").title, "Só título");
 });
 
 test("localização colada e número digitado", () => {

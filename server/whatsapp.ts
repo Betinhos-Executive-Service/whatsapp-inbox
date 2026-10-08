@@ -19,10 +19,10 @@ import makeWASocket, {
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
-import { linkPreview } from "./link-preview.ts";
+import { buildVcard, extractContacts } from "./contacts.ts";
+import { sendPreview } from "./link-preview.ts";
 import { decryptVote, encryptVote, optionsFromHashes } from "./poll.ts";
 import {
-  buildVcard,
   callText,
   ephemeralChange,
   ephemeralLabel,
@@ -245,6 +245,10 @@ export class WhatsApp extends EventEmitter<{
       text: author ? `${author}: ${body}` : body,
       kind: extracted.kind,
       media: media ? JSON.stringify(media) : null,
+      contacts: viewOnce ? null : (() => {
+        const list = extractContacts(content);
+        return list ? JSON.stringify(list) : null;
+      })(),
       quoted: ctx.quoted ? JSON.stringify(this.quoteRef(chatJid, ctx.quoted, group)) : null,
       extra: extra ? JSON.stringify(extra) : null,
       ack: m.key.fromMe ? (m.status ?? null) : null,
@@ -761,7 +765,7 @@ export class WhatsApp extends EventEmitter<{
     const list = [...new Set([...(opts.mentions ?? []), ...everyone])];
     const mentions = list.length || all ? { ...(list.length ? { mentions: list } : {}), ...(all ? { mentionAll: true } : {}) } : {};
     // Prévia do primeiro link (título, descrição e miniatura), como o WhatsApp faz ao digitar.
-    const preview = await linkPreview(text).catch(() => null);
+    const preview = await sendPreview(text).catch(() => null);
     const sent = await sock.sendMessage(jid, { text, ...mentions, ...(preview ? { linkPreview: preview } : {}) }, this.sendOptions(jid, opts.quoted));
     if (sent) this.ingest(sent, true);
   }

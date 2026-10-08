@@ -32,6 +32,20 @@ const DRAFT_RULES = `Escreva em português do Brasil. Responda só com o texto d
 Use apenas informações que estão na conversa. Se pedirem preço, valor, horário, placa ou motorista e isso não estiver na conversa, diga que vai confirmar e retornar. Não escreva números que não estejam na conversa.
 Acompanhe o tom da conversa: com amigos e família, informal e curto; com clientes, cordial e profissional.`;
 
+/** Revisão do texto que eu já escrevi: corrige e deixa minimamente formal, sem mudar o sentido. */
+export function polishPrompt(contactName: string, messages: Message[], own: string, window: Window = DEFAULT_WINDOW): Prompt {
+  return {
+    system: `Você revisa mensagens de WhatsApp da Betinhos Executive Service, transporte executivo terrestre. Escreva em português do Brasil. Responda só com o texto revisado, sem aspas, sem explicações e sem assinatura.
+Corrija ortografia, acentuação, pontuação e concordância. Deixe o tom minimamente formal e corporativo: cordial, claro e direto, sem gírias nem exagero.
+Preserve o sentido, os fatos, os números, os nomes e a formatação do WhatsApp (*negrito*, _itálico_, quebras de linha). Não acrescente informações nem responda à conversa.`,
+    user: `Conversa de WhatsApp com ${contactName} (só como contexto):
+${transcript(contactName, messages, false, window)}
+
+Texto que vou enviar, para revisar:
+${own}`,
+  };
+}
+
 /** Pedido de rascunho. withTime: data/hora em cada mensagem (o modelo da nuvem usa bem; o local se confunde). */
 export function draftPrompt(contactName: string, messages: Message[], instructions: string, withTime = false, window: Window = DEFAULT_WINDOW): Prompt {
   return {

@@ -337,51 +337,6 @@ export function LocationDialog({ onSend, onClose }: { onSend: (place: { lat: num
   );
 }
 
-export function ContactDialog({ onSend, onClose }: { onSend: (contacts: { name: string; phone: string }[]) => Promise<void>; onClose: () => void }) {
-  const [picked, setPicked] = useState<Chat[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const toggle = (c: Chat) => setPicked((list) => (list.some((x) => x.jid === c.jid) ? list.filter((x) => x.jid !== c.jid) : [...list, c].slice(0, 20)));
-  const submit = async () => {
-    if (!picked.length || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onSend(picked.map((c) => ({ name: c.name, phone: c.phone! })));
-      onClose();
-    } catch (e) {
-      setError(`Contato não enviado. ${(e as Error).message}`);
-      setBusy(false);
-    }
-  };
-  return (
-    <FormModal
-      title="Enviar contato"
-      icon={<UserRoundPlus size={18} aria-hidden />}
-      dirty={picked.length > 0}
-      busy={busy}
-      onClose={onClose}
-      footer={
-        <>
-          <Button variant="secondary" disabled={busy} onClick={onClose}>
-            Cancelar
-          </Button>
-          <Button variant="primary" loading={busy} disabled={!picked.length} onClick={() => void submit()}>
-            {picked.length > 1 ? `Enviar ${picked.length} contatos` : "Enviar contato"}
-          </Button>
-        </>
-      }
-    >
-      <ContactPicker label="Contatos" selected={picked.map((c) => c.jid)} onToggle={toggle} />
-      {error && (
-        <Alert tone="danger" role="alert">
-          {error}
-        </Alert>
-      )}
-    </FormModal>
-  );
-}
-
 export function StickerDialog({ onSend, onClose }: { onSend: (from: { chatJid: string; id: string }) => Promise<void>; onClose: () => void }) {
   const [list, setList] = useState<{ chatJid: string; id: string }[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);

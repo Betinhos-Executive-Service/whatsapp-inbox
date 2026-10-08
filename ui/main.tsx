@@ -17,6 +17,7 @@ import {
   LoaderCircle,
   Mic,
   Paperclip,
+  Contact,
   MessageSquareText,
   Search,
   SendHorizontal,
@@ -50,8 +51,8 @@ import { ChatItemMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHit
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
-import { ContactDialog, LocationDialog, NewChatDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
-import { isRich, LinkCard, PinnedBar, RichContent, type RichActions } from "./rich.tsx";
+import { LocationDialog, NewChatDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
+import { isRich, PinnedBar, RichContent, type RichActions } from "./rich.tsx";
 import {
   applyMentions,
   canRevoke,
@@ -73,6 +74,8 @@ import { ResizeHandle } from "./resize.tsx";
 import { AttachmentTray, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
+import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
+import type { Emoji } from "./emoji-data.ts";
 import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
 // Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
@@ -81,7 +84,11 @@ import { ForwardDialog } from "./forward.tsx";
 import { MessageMenu, type MenuAt } from "./message-menu.tsx";
 import { AckIcon, canEdit, CopyButton, EditBar, ReactButton, ReactionList } from "./message-extras.tsx";
 import { WaInline, WaLive, WaText } from "./wa-format.tsx";
-import { toggleWa } from "./wa-text.ts";
+import { firstLink, toggleWa } from "./wa-text.ts";
+import { LinkCard } from "./link-preview.tsx";
+import { ContactCards, ContactPicker } from "./contacts.tsx";
+import { SelectionBar } from "./selection.tsx";
+import { selectionText } from "./selection-text.ts";
 import { desktop, useAccount } from "./desktop.ts";
 import { BADGE_FONT, badgeImage } from "./badge.ts";
 import "./ds/styles.css";
@@ -681,8 +688,8 @@ function captionOf(m: Message, body: string): string {
   return caption;
 }
 
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, rich }: {
-  /** Enquete, contato e convite: votar, conversar e entrar no grupo. */
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText, rich }: {
+  /** Enquete, evento e convite: votar e entrar no grupo. */
   rich: RichActions;
   messages: Message[];
   isGroup: boolean;
@@ -708,6 +715,12 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   onDiscard: (m: Message) => void;
   /** Botão direito ou "Mais opções": abre o menu da mensagem nesse ponto. */
   onMenu: (m: Message, x: number, y: number) => void;
+  /** Modo de seleção (várias mensagens): ids marcados; null = desligado. */
+  selected: Set<string> | null;
+  onToggleSelect: (m: Message) => void;
+  /** "Conversar" no cartão de contato. */
+  onOpenContact: (digits: string) => void;
+  onCopyText: (text: string) => void;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
   return (
@@ -737,13 +750,23 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
           );
         }
         const richView = isRich(m);
-        const link = !m.deleted && m.extra?.type === "link" ? m.extra : null;
+        const link = !m.deleted && !m.media && !m.contacts && !richView ? firstLink(caption) : null;
+        const selectable = !!selected && !m.pending && !m.deleted;
+        const isSelected = selectable && selected.has(m.id);
         return (
-          <div key={m.id} data-message-id={m.id} className={`message-row${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}${m.id === hitId ? " message-row--hit" : ""}`}>
+          <div key={m.id} data-message-id={m.id} className={`message-row${selected ? " message-row--selecting" : ""}${isSelected ? " message-row--selected" : ""}${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}${m.id === hitId ? " message-row--hit" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
             <div
               className="message-line"
+              onClickCapture={(e) => {
+                // Selecionando: clicar em qualquer ponto da mensagem marca/desmarca (links e mídia não abrem).
+                if (!selected) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (selectable) onToggleSelect(m);
+              }}
               onContextMenu={(e) => {
+                if (selected) return e.preventDefault();
                 // Texto selecionado: deixa o menu do sistema (copiar a seleção). Bolha ainda
                 // não confirmada pelo servidor não tem ações (só tentar de novo ou descartar).
                 if (m.pending || window.getSelection()?.toString().trim()) return;
@@ -754,6 +777,16 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                 onMenu(m, keyboard ? box.left + 8 : e.clientX, keyboard ? box.bottom : e.clientY);
               }}
             >
+              {selected && (
+                <input
+                  type="checkbox"
+                  className="message-check"
+                  aria-label={isSelected ? "Desmarcar mensagem" : "Selecionar mensagem"}
+                  checked={isSelected}
+                  disabled={!selectable}
+                  onChange={() => {}}
+                />
+              )}
               {isGroup && !m.fromMe &&
                 (sender && !continues ? (
                   <button type="button" className="author-button" aria-label={`Ver perfil de ${author ?? "participante"}`} onClick={() => onAuthor(sender, author ?? "Participante")}>
@@ -789,8 +822,12 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                 ) : (
                   <>
                     {m.media && <MediaView m={m} caption={caption} />}
-                    {link && <LinkCard link={link} />}
-                    {(!m.media || caption) && <p className="bubble__text"><WaText text={caption} /></p>}
+                    {link && <LinkCard url={link} />}
+                    {m.contacts?.length ? (
+                      <ContactCards contacts={m.contacts} onOpen={onOpenContact} onCopy={onCopyText} />
+                    ) : (
+                      (!m.media || caption) && <p className="bubble__text"><WaText text={caption} /></p>
+                    )}
                   </>
                 )}
                 {m.pending === "failed" ? (
@@ -813,7 +850,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
               </div>
               {!m.pending && <ReactionList m={m} onReact={onReact} />}
               </div>
-              {!m.pending && <div className="message-actions" role="group" aria-label="Ações da mensagem">
+              {!m.pending && !selected && <div className="message-actions" role="group" aria-label="Ações da mensagem">
                 {!m.deleted && m.kind !== "call" && (
                   <button type="button" className="icon-button icon-button--plain icon-button--small" aria-label="Responder" title="Responder" disabled={!canAct} onClick={() => onReply(m)}>
                     <Reply size={16} aria-hidden />
@@ -856,14 +893,14 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   );
 });
 
-function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, quickReplies, onSetupAi, sendTyping, focus, privateReply, onPrivateReply, onOpenChat }: {
-  chat: Chat;
+function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, onOpen, quickReplies, onSetupAi, sendTyping, focus, privateReply, onPrivateReply }: {
   /** Resposta em particular vinda de um grupo: abre a conversa já citando a mensagem do grupo. */
   privateReply: PrivateReply | null;
   /** "Responder em particular" numa mensagem de grupo. */
   onPrivateReply: (m: Message) => void;
-  /** Abre outra conversa (contato recebido, grupo em que entrou). */
-  onOpenChat: (target: { phone: string } | Chat) => void;
+  chat: Chat;
+  /** Abre outra conversa (ex.: "Conversar" de um cartão de contato). */
+  onOpen: (chat: Chat) => void;
   /** Mensagem para abrir em destaque (vinda da busca); `seq` força reabrir a mesma. */
   focus: { id: string; seq: number } | null;
   /** Avisar ao contato que você está digitando (preferência). */
@@ -895,9 +932,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   // Citação de outra conversa (responder em particular a alguém do grupo).
   const [replyFrom, setReplyFrom] = useState<{ jid: string; name: string; isGroup: boolean } | null>(null);
-  const [composeDialog, setComposeDialog] = useState<"poll" | "location" | "contact" | "sticker" | null>(null);
+  const [composeDialog, setComposeDialog] = useState<"poll" | "location" | "sticker" | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
-  const [forwarding, setForwarding] = useState<Message | null>(null);
+  const [forwarding, setForwarding] = useState<Message[] | null>(null);
+  const [selected, setSelected] = useState<Set<string> | null>(null);
+  const [pickingContact, setPickingContact] = useState(false);
   const [presence, setPresence] = useState<"composing" | "recording" | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
   // Menções: participantes carregados no primeiro "@"; escolhas valem até enviar.
@@ -908,6 +947,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const picks = useRef<MentionPick[]>([]);
   const [quickActive, setQuickActive] = useState(0);
   const [quickOpen, setQuickOpen] = useState(false);
+  const [emojiActive, setEmojiActive] = useState(0);
+  const [emojiClosed, setEmojiClosed] = useState(false);
+  // Última troca de emoticon (":-)" → 🙂): Backspace logo em seguida desfaz.
+  const emoticonSwap = useRef<EmoticonSwap | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -960,14 +1003,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const usdBrl = useUsdBrl();
   const [drafting, setDrafting] = useState(false);
   const suggest = async () => {
-    if (draft.trim() && !window.confirm("Trocar o texto que você já escreveu pela sugestão da IA?")) return;
+    // Com texto no campo, a IA revisa o que foi escrito em vez de sugerir outra resposta.
+    const own = draft.trim();
     setDrafting(true);
     try {
-      const { text } = await api.draft(chat.jid);
+      const { text } = await api.draft(chat.jid, own || undefined);
       setDraft(text);
       requestAnimationFrame(() => composer.current?.focus());
     } catch (e) {
-      notify("error", `A ${aiName(ai)} não sugeriu resposta. ${(e as Error).message}`);
+      notify("error", `A ${aiName(ai)} não ${own ? "revisou o texto" : "sugeriu resposta"}. ${(e as Error).message}`);
     } finally {
       setDrafting(false);
     }
@@ -1160,7 +1204,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       outbox.current.set(localId, { text: withMentions.text, quotedId, quotedChat, mentions: withMentions.mentions, mentionAll: mentionAll || undefined });
       setMessages((list) => [
         ...(list ?? []),
-        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false, pending: "sending" },
+        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, contacts: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false, pending: "sending" },
       ]);
       setDraft("");
       setReplyTo(null);
@@ -1266,6 +1310,35 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     });
   };
 
+  // ":" + 2 letras abre as sugestões de emoji (":joinha" → 👍), como no WhatsApp.
+  const emojiQ = showQuick || showMention ? null : emojiQuery(draft, caret);
+  const emojiData = useEmojiData(emojiQ !== null);
+  const emojiItems = emojiQ !== null && emojiData && !emojiClosed ? searchEmoji(emojiQ, emojiData.EMOJIS, 8) : [];
+  const showEmoji = emojiItems.length > 0;
+  useEffect(() => {
+    setEmojiActive(0);
+    setEmojiClosed(false);
+  }, [emojiQ]);
+  const pickEmoji = (e: Emoji) => {
+    const next = insertEmojiShortcut(draft, caret, e.char);
+    rememberEmoji(e.char);
+    setDraft(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => {
+      composer.current?.focus();
+      composer.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+  // Botão de emoji: entra no lugar da seleção do campo; o painel continua aberto para mais de um.
+  const insertEmoji = (emoji: string) => {
+    const el = composer.current;
+    const start = el?.selectionStart ?? draft.length;
+    const next = insertAt(draft, start, el?.selectionEnd ?? start, emoji);
+    setDraft(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => composer.current?.setSelectionRange(next.caret, next.caret));
+  };
+
   // ---- ações da mensagem (callbacks estáveis para o memo de <Messages>)
 
   /** Reinicia uma animação de uma vez na linha da mensagem (pular para a citada, reagir). */
@@ -1325,7 +1398,49 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     },
     [chat.jid, notify, flashRow],
   );
-  const forward = useCallback((m: Message) => setForwarding(m), []);
+  const forward = useCallback((m: Message) => setForwarding([m]), []);
+  const copyText = useCallback(
+    (text: string) => void navigator.clipboard.writeText(text).then(() => notify("success", "Número copiado."), () => notify("error", "Não foi possível copiar.")),
+    [notify],
+  );
+  const openContact = useCallback(
+    (digits: string) => void api.openChat({ phone: digits }).then(onOpen, (e: Error) => notify("error", `Não foi possível abrir a conversa. ${e.message}`)),
+    [onOpen, notify],
+  );
+  const startSelect = useCallback((m: Message) => setSelected(new Set(m.pending || m.deleted ? [] : [m.id])), []);
+  const toggleSelect = useCallback(
+    (m: Message) =>
+      setSelected((cur) => {
+        if (!cur) return cur;
+        const next = new Set(cur);
+        if (!next.delete(m.id)) next.add(m.id);
+        return next;
+      }),
+    [],
+  );
+  // Na ordem da conversa, como o WhatsApp copia e encaminha.
+  const selectedMessages = useMemo(() => (selected && messages ? messages.filter((m) => selected.has(m.id)) : []), [selected, messages]);
+  const copySelected = useCallback(() => {
+    const text = selectionText(selectedMessages, (m) => {
+      const { author, body } = splitAuthor(m, chat.isGroup);
+      return { author: m.fromMe ? "Você" : (chat.isGroup ? author : chat.name) ?? "Participante", text: m.media ? body : captionOf(m, body) };
+    });
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        notify("success", selectedMessages.length === 1 ? "Mensagem copiada." : `${selectedMessages.length} mensagens copiadas.`);
+        setSelected(null);
+      },
+      () => notify("error", "Não foi possível copiar."),
+    );
+  }, [selectedMessages, chat.isGroup, chat.name, notify]);
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !forwarding) setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, forwarding]);
   const star = useCallback(
     async (m: Message) => {
       const starred = !m.starred;
@@ -1382,18 +1497,17 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             notify("error", `Voto não enviado. ${e.message}`);
           });
       },
-      onOpenPhone: (phone) => onOpenChat({ phone }),
       onAcceptInvite: (m) => {
         api
           .acceptInvite(chat.jid, m.id)
           .then((group) => {
             notify("success", `Você entrou no grupo ${group.name}.`);
-            onOpenChat(group);
+            onOpen(group);
           })
           .catch((e: Error) => notify("error", `Não foi possível entrar no grupo. ${e.message}`));
       },
     }),
-    [chat.jid, notify, onOpenChat],
+    [chat.jid, notify, onOpen],
   );
   const [menuAt, setMenuAt] = useState<MenuAt | null>(null);
   const openMenu = useCallback((message: Message, x: number, y: number) => setMenuAt({ message, x, y }), []);
@@ -1724,6 +1838,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onDiscard={discard}
             onMenu={openMenu}
             rich={rich}
+            selected={selected}
+            onToggleSelect={toggleSelect}
+            onOpenContact={openContact}
+            onCopyText={copyText}
           />
         )}
       </div>
@@ -1742,27 +1860,49 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }
           pinned={chat.pins.some((p) => p.id === menuAt.message.id && p.until > Date.now())}
           canPrivateReply={chat.isGroup && !menuAt.message.fromMe && !!menuAt.message.sender}
-          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply }}
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect }}
           onClose={closeMenu}
         />
       )}
       {forwarding && (
         <ForwardDialog
-          message={forwarding}
+          messages={forwarding}
           onClose={() => setForwarding(null)}
           onDone={(to) => {
+            const n = forwarding.length;
             setForwarding(null);
-            notify("success", `Mensagem encaminhada para ${to.name}.`);
+            setSelected(null);
+            const names = to.map((c) => c.name).join(", ");
+            notify("success", n === 1 ? `Mensagem encaminhada para ${names}.` : `${n} mensagens encaminhadas para ${names}.`);
+          }}
+        />
+      )}
+      {pickingContact && (
+        <ContactPicker
+          to={chat}
+          onClose={() => setPickingContact(false)}
+          onDone={(n) => {
+            setPickingContact(false);
+            notify("success", n === 1 ? "Contato enviado." : `${n} contatos enviados.`);
           }}
         />
       )}
       {composeDialog === "poll" && <PollDialog onClose={() => setComposeDialog(null)} onSend={async (poll) => onChat(await api.sendPoll(chat.jid, poll))} />}
       {composeDialog === "location" && <LocationDialog onClose={() => setComposeDialog(null)} onSend={async (place) => onChat(await api.sendLocation(chat.jid, place))} />}
-      {composeDialog === "contact" && <ContactDialog onClose={() => setComposeDialog(null)} onSend={async (contacts) => onChat(await api.sendContacts(chat.jid, contacts))} />}
       {composeDialog === "sticker" && <StickerDialog onClose={() => setComposeDialog(null)} onSend={async (from) => onChat(await api.sendSticker(chat.jid, from))} />}
       {deleting && <DeleteDialog message={deleting} busy={false} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
+      {selected && (
+        <SelectionBar
+          count={selectedMessages.length}
+          canForward={connected}
+          onCopy={copySelected}
+          onForward={() => setForwarding(selectedMessages)}
+          onCancel={() => setSelected(null)}
+        />
+      )}
       <form
         className="composer"
+        style={selected ? { display: "none" } : undefined}
         onSubmit={(e) => {
           e.preventDefault();
           void send();
@@ -1773,6 +1913,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         </label>
         {showQuick && <QuickReplyMenu items={quickItems} active={quickActive} onPick={pickQuick} onHover={setQuickActive} />}
         {showMention && <MentionMenu items={mentionItems} active={mentionActive} onPick={pickMention} onHover={setMentionActive} />}
+        {showEmoji && <EmojiShortcutMenu items={emojiItems} active={emojiActive} onPick={pickEmoji} onHover={setEmojiActive} />}
         {editing && <EditBar key={editing.id} message={editing} onCancel={cancelEdit} />}
         {replyTo && (
           <ReplyBar
@@ -1818,15 +1959,23 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           onClick={() => fileInput.current?.click()}
           icon={<Paperclip size={18} aria-hidden />}
         />
+        <EmojiButton disabled={!connected} onPick={insertEmoji} onClose={() => composer.current?.focus()} />
+        <Button
+          variant="ghost"
+          aria-label="Enviar contato"
+          title="Enviar contato"
+          disabled={!connected || sending}
+          onClick={() => setPickingContact(true)}
+          icon={<Contact size={18} aria-hidden />}
+        />
         <Menu
           align="start"
           trigger={(t) => (
-            <Button {...t} variant="ghost" aria-label="Enviar enquete, localização, contato ou figurinha" title="Enquete, localização, contato ou figurinha" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
+            <Button {...t} variant="ghost" aria-label="Enviar enquete, localização ou figurinha" title="Enquete, localização ou figurinha" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
           )}
           actions={[
             { id: "poll", label: "Enquete", icon: <ListChecks size={16} aria-hidden />, onSelect: () => setComposeDialog("poll") },
             { id: "location", label: "Localização", icon: <MapPin size={16} aria-hidden />, onSelect: () => setComposeDialog("location") },
-            { id: "contact", label: "Contato", icon: <UserRoundPlus size={16} aria-hidden />, onSelect: () => setComposeDialog("contact") },
             { id: "sticker", label: "Figurinha", icon: <Sticker size={16} aria-hidden />, onSelect: () => setComposeDialog("sticker") },
           ]}
         />
@@ -1841,8 +1990,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         />
         <Button
           variant="ghost"
-          aria-label={aiReady ? `Sugerir resposta com a ${aiName(ai)}` : "Ativar a IA"}
-          title={aiReady ? `Sugerir resposta (${aiName(ai)}, revise antes de enviar)` : "Ativar a IA para sugerir respostas"}
+          aria-label={aiReady ? `${draft.trim() ? "Revisar texto" : "Sugerir resposta"} com a ${aiName(ai)}` : "Ativar a IA"}
+          title={aiReady ? `${draft.trim() ? "Corrigir e formalizar o texto" : "Sugerir resposta"} (${aiName(ai)}, revise antes de enviar)` : "Ativar a IA para sugerir respostas"}
           disabled={drafting || !connected}
           aria-busy={drafting || undefined}
           onClick={() => (aiReady ? void suggest() : onSetupAi())}
@@ -1857,9 +2006,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           id="composer-text"
           rows={1}
           role="combobox"
-          aria-expanded={showQuick || showMention}
-          aria-controls={showQuick ? "quick-menu" : showMention ? "mention-menu" : undefined}
-          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : showMention ? `mention-${mentionActive}` : undefined}
+          aria-expanded={showQuick || showMention || showEmoji}
+          aria-controls={showQuick ? "quick-menu" : showMention ? "mention-menu" : showEmoji ? "emoji-menu" : undefined}
+          aria-activedescendant={showQuick ? `quick-${quickItems[quickActive]?.shortcut}` : showMention ? `mention-${mentionActive}` : showEmoji ? `emoji-${emojiActive}` : undefined}
           aria-autocomplete="list"
           value={draft}
           disabled={!connected}
@@ -1873,8 +2022,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
                   : "Escreva uma mensagem. Enter envia, Shift+Enter quebra linha."
           }
           onChange={(e) => {
-            setDraft(e.target.value);
-            setCaret(e.target.selectionStart ?? e.target.value.length);
+            const el = e.target;
+            const at = el.selectionStart ?? el.value.length;
+            // Emoticon digitado (":-)", "<3", "(y)") vira emoji na hora, como no WhatsApp Web.
+            const swap = (e.nativeEvent as InputEvent).inputType === "insertText" ? convertEmoticon(el.value, at) : null;
+            emoticonSwap.current = swap?.swap ?? null;
+            setDraft(swap?.text ?? el.value);
+            setCaret(swap?.swap.caret ?? at);
+            if (swap) requestAnimationFrame(() => el.setSelectionRange(swap.swap.caret, swap.swap.caret));
             noteTyping();
           }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
@@ -1888,6 +2043,19 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             addFiles(files);
           }}
           onKeyDown={(e) => {
+            const swap = emoticonSwap.current;
+            if (swap && e.key === "Backspace" && e.currentTarget.selectionStart === swap.caret && e.currentTarget.selectionEnd === swap.caret) {
+              const undo = undoEmoticon(draft, swap);
+              emoticonSwap.current = null;
+              if (undo) {
+                e.preventDefault();
+                const el = e.currentTarget;
+                setDraft(undo.text);
+                setCaret(undo.caret);
+                requestAnimationFrame(() => el.setSelectionRange(undo.caret, undo.caret));
+                return;
+              }
+            }
             const marker = formatShortcut(e);
             if (marker) {
               e.preventDefault();
@@ -1912,6 +2080,24 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
               if (e.key === "Escape") {
                 e.preventDefault();
                 setMentionClosed(true);
+                return;
+              }
+            }
+            if (showEmoji) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                setEmojiActive((i) => (i + step + emojiItems.length) % emojiItems.length);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                pickEmoji(emojiItems[emojiActive] ?? emojiItems[0]);
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setEmojiClosed(true);
                 return;
               }
             }
@@ -2295,11 +2481,14 @@ function App() {
               onBack={() => openChat(null)}
               notify={push}
               onChat={upsert}
+              onOpen={(c) => {
+                upsert(c);
+                openChat(c.jid);
+              }}
               quickReplies={quickReplies}
               sendTyping={!!state?.prefs.sendTyping}
               privateReply={privateReply}
               onPrivateReply={startPrivateReply}
-              onOpenChat={openTarget}
               onSetupAi={() => {
                 setSettingsTab("ia");
                 setSettingsOpen(true);
