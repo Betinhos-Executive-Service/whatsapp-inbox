@@ -1085,6 +1085,17 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
   .pending-bar__actions { flex-basis: 100%; margin-left: 0; justify-content: flex-end; }
 }
 
+/* ---- botão Claude: resumo do agendamento acima do campo (mesma superfície do rascunho proposto) */
+.agent-bar { align-items: flex-start; }
+.agent-bar__icon { flex: 0 0 auto; display: inline-flex; padding-top: var(--bt-space-0-5); color: var(--bt-color-action); }
+.agent-bar--success .agent-bar__icon { color: var(--bt-color-success); }
+.agent-bar--warning .agent-bar__icon { color: var(--bt-color-warning); }
+.agent-bar--danger .agent-bar__icon, .agent-bar--danger .quote__author { color: var(--bt-color-danger); }
+.agent-bar__body { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: var(--bt-space-1); }
+.agent-bar__body .quote__author { white-space: normal; }
+.agent-bar__text { font-size: var(--bt-font-size-13); overflow-wrap: anywhere; }
+.agent-bar__preview { max-height: 168px; overflow: auto; font-size: var(--bt-font-size-13); white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* ---- mensagem apagada */
 .bubble__text--deleted { display: inline-flex; align-items: center; gap: var(--bt-space-1-5); font-style: italic; color: var(--bt-color-text-secondary); }
 .bubble--deleted { background-color: var(--bt-color-surface-neutral); }

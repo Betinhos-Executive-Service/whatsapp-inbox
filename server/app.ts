@@ -10,6 +10,8 @@ import { cacheMedia, loadMedia } from "./media.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
 import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPTIONS, findClaudeBin, isClaudeModel, parseClaudeOptions, runClaude, type ClaudeModel } from "./claude.ts";
 import { addArgs, displayCommand, getArgs, isRegistered, removeArgs, type McpEntry } from "./mcp-register.ts";
+import { renderVoucherPdf } from "./voucher.ts";
+import { AGENT_TOOLS, AGENT_WINDOW, analysisSchema, analyzePrompt, parseOutcome, scheduleSchema, schedulePrompt, type AgentStep, type Analysis, type Scheduled } from "./agent.ts";
 import { PhotoCache } from "./photos.ts";
 import { cachedAudioSummary, cachedTranscript, saveAudioSummary, saveTranscript, transcribeAudio } from "./groq.ts";
 import { PERSONA_WINDOW, type AudioSummary, type PersonaRecord } from "./ai.ts";
@@ -248,6 +250,68 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     if (!messages.some((m) => m.kind === "text")) throw new Error("A conversa não tem texto suficiente.");
     return { chat, messages };
   };
+
+  // ---- servidor MCP no Claude Code deste PC
+
+  /** `claude mcp get` sai com erro quando o servidor não existe: runClaude rejeita → não registrado. */
+  const mcpRegistered = (bin: string) => runClaude(bin, getArgs(), "", options.dataDir, 30_000).then((out) => isRegistered(out, true), () => false);
+  async function registerMcp() {
+    const bin = findClaudeBin();
+    if (!bin) throw new Error("Claude Code não encontrado neste PC. Instale e faça login com `claude` no terminal.");
+    if (!options.mcpEntry) throw new Error("Registro indisponível neste modo de execução.");
+    // Registrar de novo por cima dá erro no Claude Code: remove antes (ignora se não existia).
+    await runClaude(bin, removeArgs(), "", options.dataDir, 30_000).catch(() => undefined);
+    await runClaude(bin, addArgs(options.mcpEntry), "", options.dataDir, 30_000).catch(rethrowPlain);
+  }
+
+  // ---- agente do botão Claude: analisa a conversa (só leitura) e, com o OK da pessoa, agenda
+
+  type AgentJob = {
+    jid: string;
+    step: AgentStep;
+    status: "rodando" | "pronto" | "erro";
+    startedAt: number;
+    finishedAt: number | null;
+    analysis: Analysis | null;
+    scheduled: Scheduled | null;
+    error: string | null;
+  };
+  const agentJobs = new Map<string, AgentJob>();
+  const setAgentJob = (job: AgentJob) => {
+    agentJobs.set(job.jid, job);
+    broadcast("agent", { jid: job.jid, job });
+  };
+
+  function startAgent(jid: string, step: AgentStep): AgentJob {
+    const chat = store.getChat(jid);
+    if (!chat) throw new Error("Conversa não encontrada.");
+    const current = agentJobs.get(jid);
+    if (current?.status === "rodando") throw new Error("O Claude já está trabalhando nesta conversa.");
+    // Agendar só com a análise que a pessoa acabou de conferir na tela.
+    const analysis = step === "agendar" && current?.step === "analisar" && current.status === "pronto" ? current.analysis : null;
+    if (step === "agendar" && (analysis?.resultado !== "pronto" && analysis?.resultado !== "ja_existia")) throw new Error("Peça ao Claude para analisar a conversa antes de agendar.");
+    const job: AgentJob = { jid, step, status: "rodando", startedAt: Date.now(), finishedAt: null, analysis, scheduled: null, error: null };
+    setAgentJob(job);
+    void (async () => {
+      try {
+        const bin = findClaudeBin();
+        if (!bin) throw new Error("Claude Code não encontrado neste PC. Instale e faça login com `claude` no terminal.");
+        // O agente lê e propõe pela conversa com o MCP deste app: registra se ainda não estiver.
+        if (!(await mcpRegistered(bin))) await registerMcp();
+        if (step === "analisar") {
+          const messages = await withTranscripts(jid, store.listMessages(jid, null, AGENT_WINDOW.messages));
+          const { text } = await claude.agent(analyzePrompt(chat, messages), AGENT_TOOLS.analisar);
+          setAgentJob({ ...job, status: "pronto", finishedAt: Date.now(), analysis: parseOutcome(analysisSchema, text) });
+        } else {
+          const { text } = await claude.agent(schedulePrompt(chat, analysis!), AGENT_TOOLS.agendar);
+          setAgentJob({ ...job, status: "pronto", finishedAt: Date.now(), scheduled: parseOutcome(scheduleSchema, text) });
+        }
+      } catch (error) {
+        setAgentJob({ ...job, status: "erro", finishedAt: Date.now(), error: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+    return job;
+  }
 
   // ---- Jev
 
@@ -623,22 +687,24 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         let registered = false;
         if (bin) {
           // `claude mcp get` sai com erro quando o servidor não existe: runClaude rejeita → não registrado.
-          registered = await runClaude(bin, getArgs(), "", options.dataDir, 30_000).then((out) => isRegistered(out, true), () => false);
+          registered = await mcpRegistered(bin);
         }
         return { claudeFound: !!bin, registered, command: entry ? displayCommand(entry, bin ?? "claude") : null, file: options.mcpFile ?? join(options.dataDir, "mcp.json") };
       },
-      register: async () => {
-        const bin = findClaudeBin();
-        if (!bin) throw new Error("Claude Code não encontrado neste PC. Instale e faça login com `claude` no terminal.");
-        if (!options.mcpEntry) throw new Error("Registro indisponível neste modo de execução.");
-        // Registrar de novo por cima dá erro no Claude Code: remove antes (ignora se não existia).
-        await runClaude(bin, removeArgs(), "", options.dataDir, 30_000).catch(() => undefined);
-        await runClaude(bin, addArgs(options.mcpEntry), "", options.dataDir, 30_000).catch(rethrowPlain);
-      },
+      register: registerMcp,
       unregister: async () => {
         const bin = findClaudeBin();
         if (!bin) throw new Error("Claude Code não encontrado neste PC.");
         await runClaude(bin, removeArgs(), "", options.dataDir, 30_000).catch(rethrowPlain);
+      },
+    },
+    agent: {
+      list: () => [...agentJobs.values()],
+      start: startAgent,
+      dismiss: (jid) => {
+        if (agentJobs.get(jid)?.status === "rodando") throw new Error("Espere o Claude terminar.");
+        agentJobs.delete(jid);
+        broadcast("agent", { jid, job: null });
       },
     },
     ai: {
@@ -734,6 +800,13 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       return { text, summary };
     },
     summarizeAudio,
+    proposeVoucher: async (jid, caption, voucher) => {
+      // Template copiado pelo build para dist/voucher (pasta voucher/ do projeto).
+      const { body, fileName } = await renderVoucherPdf(join(options.distDir, "voucher"), voucher);
+      const chat = store.setPendingDraft(jid, { text: caption, media: { body, mimetype: "application/pdf", fileName }, source: "claude" });
+      broadcast("chat", chat);
+      return chat;
+    },
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
       store.db.prepare("vacuum into ?").run(file);
