@@ -886,7 +886,7 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 .chat-pane__who:focus-visible { box-shadow: 0 0 0 2px var(--bt-focus-border); }
 .chat-pane__who[aria-pressed='true'] { background-color: var(--bt-color-action-soft); }
 .chat-pane__tools { flex: 0 1 auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--bt-space-2); min-width: 0; }
-.chat-pane__tools .chat-pane__notes-toggle { align-self: auto; }
+.chat-pane__actions { flex: 0 0 auto; order: 2; display: flex; align-items: center; gap: var(--bt-space-1-5); padding-left: var(--bt-space-3); border-left: var(--bt-border-width-default) solid var(--bt-color-border); }.chat-pane__tools .chat-pane__notes-toggle { align-self: auto; }
 .chat-pane__notes-toggle { position: relative; }
 .chat-pane__notes-toggle.has-content::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: var(--bt-radius-full); background-color: var(--bt-color-action); }
 .chat-pane__divider { width: 1px; height: 20px; flex: 0 0 auto; background-color: var(--bt-color-border); }
@@ -895,6 +895,11 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 .chat-pane__header .field--label { flex: 0 1 160px; min-width: 112px; }
 .chat-pane__header .segmented__item { min-height: 28px; }
 /* Linha única: em larguras menores os rótulos viram só ícone (o nome segue no title/aria). */
+/* Sem espaço para tudo numa linha: a classificação desce inteira e o perfil divide a linha com as ações. */
+@container chat-header (max-width: 1180px) {
+  .chat-pane__tools { order: 3; flex: 1 1 100%; padding-top: var(--bt-space-2); border-top: var(--bt-border-width-default) solid var(--bt-color-border); }
+  .chat-pane__actions { border-left: 0; padding-left: 0; }
+}
 @container chat-header (max-width: 980px) {
   .segmented--status .segmented__item span, .ai-quick__label { display: none; }
   .segmented--status .segmented__item { padding: 0 var(--bt-space-2); }

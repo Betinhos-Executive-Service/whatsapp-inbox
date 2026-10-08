@@ -47,7 +47,7 @@ import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayo
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
-import { ChatItemMenu, drafts, ExtraLabelsPicker, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
+import { ChatItemMenu, drafts, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
@@ -600,17 +600,18 @@ function ClassificationBar({ chat, labels, onChange, onClassify, classifying, je
         ))}
       </div>
       <span className="chat-pane__divider" aria-hidden />
+      {/* Um seletor só: a primeira etiqueta marcada é a principal, as demais são extras. */}
       <Select
-        aria-label="Etiqueta"
+        multiple
+        aria-label="Etiquetas (a primeira é a principal)"
         size="compact"
         className="field--label"
         placeholder="Sem etiqueta"
         searchable={labels.length > 8}
-        value={chat.label ?? null}
-        onChange={(v) => onChange({ label: v || null })}
+        value={[chat.label, ...chat.extraLabels].filter((l): l is string => !!l && labels.includes(l))}
+        onChange={(list) => onChange({ label: list[0] ?? null, extraLabels: list.slice(1) })}
         options={labels.map((l) => ({ value: l, label: l }))}
       />
-      <ExtraLabelsPicker chat={chat} labels={labels} onChange={onChange} />
       {(() => {
         // Classificar e o palpite da IA são um controle só: o botão mostra o resultado e refaz ao clicar.
         const ai = chat.ai;
@@ -1761,7 +1762,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             jevReady={jevReady}
             classifierName={classifierName}
           />
-          <span className="chat-pane__divider" aria-hidden />
+        </div>
+        {/* Ações rápidas ficam sempre na linha do perfil, mesmo quando a classificação desce. */}
+        <div className="chat-pane__actions">
           <Button
             variant="secondary"
             size="compact"
@@ -1769,9 +1772,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             aria-pressed={notesOpen}
             aria-label={chat.note || chat.reminderAt !== null ? "Notas e lembretes (com conteúdo)" : "Notas e lembretes"}
             title="Notas e lembretes"
+            icon={<StickyNote size={16} aria-hidden />}
             onClick={() => setSide((v) => (v === "notes" ? null : "notes"))}
           >
-            <StickyNote size={16} aria-hidden />
             <span className="chat-pane__notes-label">Notas</span>
             {chat.reminderAt !== null && <AlarmClock size={14} aria-hidden className="chat-pane__notes-alarm" />}
           </Button>
