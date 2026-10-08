@@ -268,7 +268,11 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
         <span className="chat-item__body">
           <span className="chat-item__row">
             <span className="chat-item__name">{chat.name}</span>
-            {priority && <span className="sr-only">Prioridade {PRIORITY_TEXT[priority]}.</span>}
+            {priority && priority !== "baixa" ? (
+              <span className={`chat-item__priority chat-item__priority--${priority}`} role="img" aria-label={`Prioridade ${PRIORITY_TEXT[priority]}`} title={`Prioridade ${PRIORITY_TEXT[priority]}`} />
+            ) : (
+              priority && <span className="sr-only">Prioridade {PRIORITY_TEXT[priority]}.</span>
+            )}
             {isMuted(chat) && <BellOff className="chat-item__flag" size={14} aria-label="Silenciada" />}
             {chat.pinnedAt && <Pin className="chat-item__flag" size={14} aria-label="Fixada" />}
             <span className={`chat-item__time${chat.unread || chat.markedUnread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>

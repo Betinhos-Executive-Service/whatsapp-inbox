@@ -291,6 +291,10 @@ ul, ol { margin: 0; padding: 0; }
 /* Prioridade só por cor, na faixa de severidade à esquerda; a seleção (azul) tem precedência. */
 .chat-item--alta:not([aria-current='true']) { border-left-color: var(--bt-color-danger); }
 .chat-item--media:not([aria-current='true']) { border-left-color: var(--bt-color-warning); }
+/* Ponto ao lado do nome: onde o olho já está ao varrer a lista. */
+.chat-item__priority { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; }
+.chat-item__priority--alta { background-color: var(--bt-color-danger); box-shadow: 0 0 0 3px var(--bt-color-danger-soft); }
+.chat-item__priority--media { background-color: var(--bt-color-warning); box-shadow: 0 0 0 3px var(--bt-color-warning-soft); }
 /* Linha discreta: etiquetas em texto e ícones; reserva à direita para os botões de status. */
 .chat-item__meta { display: flex; align-items: center; gap: var(--bt-space-1-5); min-height: 24px; padding-right: 84px; min-width: 0; font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); }
 .chat-item__labels { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
