@@ -337,16 +337,18 @@ export class WhatsApp extends EventEmitter<{
     const pollId = update.pollCreationMessageKey?.id;
     const enc = update.vote;
     if (!pollId || !enc?.encPayload || !enc.encIv) return;
-    const ref = this.store.pollRef(chatJid, pollId);
-    if (!ref?.poll.secret) return;
+    // O voto pode vir endereçado pelo LID e cair fora da conversa do número: acha a enquete pelo id.
+    const pollChat = this.store.pollRef(chatJid, pollId) ? chatJid : this.store.pollChat(pollId);
+    const ref = pollChat ? this.store.pollRef(pollChat, pollId) : null;
+    if (!ref?.poll.secret) return void console.warn(`Voto de enquete ${pollId} sem a enquete salva (conversa ${chatJid}).`);
     const group = isJidGroup(m.key.remoteJid!) === true;
-    const creators = ref.fromMe ? this.meJids() : this.withAlt(ref.participant ?? ref.rawJid);
-    const voters = m.key.fromMe ? this.meJids() : group ? this.withAlt(m.key.participant, m.key.participantAlt) : this.withAlt(m.key.remoteJid, m.key.remoteJidAlt);
+    const creators = ref.fromMe ? this.withAlt(...this.meJids()) : this.withAlt(ref.participant ?? ref.rawJid);
+    const voters = m.key.fromMe ? this.withAlt(...this.meJids()) : group ? this.withAlt(m.key.participant, m.key.participantAlt) : this.withAlt(m.key.remoteJid, m.key.remoteJidAlt, pollChat);
     const hashes = decryptVote({ encPayload: enc.encPayload, encIv: enc.encIv }, { secret: Buffer.from(ref.poll.secret, "base64"), pollId, creators, voters });
     if (!hashes) return void console.warn(`Voto da enquete ${pollId} não decifrou.`);
     const voter = m.key.fromMe ? "me" : this.canonical(group ? m.key.participant! : m.key.remoteJid!, group ? m.key.participantAlt : m.key.remoteJidAlt);
-    const message = this.store.recordVote(chatJid, pollId, voter, optionsFromHashes(ref.poll.options, hashes), timestamp(m));
-    if (message && !quiet) this.emit("update", { message, chat: this.store.getChat(chatJid)! });
+    const message = this.store.recordVote(pollChat!, pollId, voter, optionsFromHashes(ref.poll.options, hashes), timestamp(m));
+    if (message && !quiet) this.emit("update", { message, chat: this.store.getChat(pollChat!)! });
   }
 
   /** Participantes citados num aviso de grupo (JSON com id/LID e número, ou o JID puro). */
