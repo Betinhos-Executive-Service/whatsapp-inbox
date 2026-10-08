@@ -158,6 +158,14 @@ test("Jev: perguntas, estado e resposta validados", () => {
   assert.equal(state.mensagens[0].de, "contato");
   assert.equal(state.mensagens[0].texto.length, 1000);
   assert.ok(!JSON.stringify(state).includes("whatsapp.net"));
+  assert.equal(state.tipo, "conversa individual");
+  assert.equal(state.eu_respondi_por_ultimo, false);
+  assert.match(state.agora, /horário de Brasília/);
+  // Em grupo, quem fala é "participante"; datas vão no horário de Brasília (00:00 UTC = 21:00 do dia anterior).
+  const group = JSON.parse(buildState("Turma", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "oi", kind: "text", media: null, contacts: null, quoted: null, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false }], new Date(0), [], { messages: 30, chars: 1000 }, true));
+  assert.equal(group.tipo, "grupo");
+  assert.equal(group.mensagens[0].de, "participante");
+  assert.match(group.mensagens[0].em, /31\/12\/1969 21:00/);
   const ok = {
     answers: {
       etiqueta: { type: "choice", choice: "Cotação", confidence: 0.82, probabilities: {} },
@@ -168,6 +176,9 @@ test("Jev: perguntas, estado e resposta validados", () => {
   };
   assert.deepEqual(parseResponse(ok, labels), { label: "Cotação", confidence: 0.82, needsReply: 0.9, urgent: 0.1, priority: "media", reason: null });
   assert.throws(() => parseResponse({ ...ok, answers: { ...ok.answers, prioridade: { type: "choice", choice: "urgentíssima" } } }, labels));
+  // Prioridade baixa com "urgente" alto é contradição: a urgência é limitada a 0,3.
+  const low = parseResponse({ ...ok, answers: { ...ok.answers, urgente: { type: "noul", noul: 0.9 }, prioridade: { type: "choice", choice: "baixa", confidence: 0.8, probabilities: {} } } }, labels);
+  assert.equal(low.urgent, 0.3);
   assert.throws(() => parseResponse({ ...ok, answers: { ...ok.answers, etiqueta: { ...ok.answers.etiqueta, choice: "Inventada" } } }, labels));
 });
 
