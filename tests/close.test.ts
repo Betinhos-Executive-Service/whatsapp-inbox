@@ -8,6 +8,7 @@ import { startApp } from "../server/app.ts";
 
 test("encerrar o servidor não trava com a janela conectada ao SSE (instalação de atualização)", async () => {
   const app = await startApp({ port: 0, dataDir: mkdtempSync(join(tmpdir(), "wi-close-")), distDir: "dist", waDisabled: true });
+  assert.match(app.token, /^[0-9a-f]{64}$/);
   await new Promise<void>((resolve, reject) => {
     const req = request({ host: "127.0.0.1", port: app.port, path: "/api/events" }, (res) => {
       res.once("data", () => resolve());

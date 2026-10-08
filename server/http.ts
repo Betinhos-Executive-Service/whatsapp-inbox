@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { readFile, rm, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
@@ -50,6 +51,8 @@ export type Api = {
   store: Store;
   distDir: string;
   port: number;
+  /** Segredo desta execução: outro processo local (MCP) o envia em `x-inbox-token`. */
+  token: string;
   state: () => unknown;
   /** `quotedChat`: a mensagem citada é de outra conversa (responder em particular a alguém do grupo). */
   send: (jid: string, text: string, opts: { quotedId?: string; quotedChat?: string; mentions?: string[]; mentionAll?: boolean }) => Promise<void>;
@@ -274,16 +277,27 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 /**
  * O app só escuta em 127.0.0.1, mas um site aberto no navegador ainda pode tentar falar
  * com ele (CSRF / DNS rebinding). Exige Host local e, em escrita, Origin local + JSON.
+ * Outro processo local (o servidor MCP do Claude Code) se identifica pelo header `x-inbox-token`
+ * em vez do Origin; token presente e errado é recusado até em GET, para não dar pista por sondagem.
  */
-function guard(req: IncomingMessage, port: number) {
+function guard(req: IncomingMessage, port: number, token: string) {
   const allowed = [`127.0.0.1:${port}`, `localhost:${port}`];
   if (!allowed.includes(req.headers.host ?? "")) throw new HttpError(403, "Host não permitido.");
+  const given = req.headers["x-inbox-token"];
+  const withToken = typeof given === "string";
+  if (withToken && !tokenMatches(given, token)) throw new HttpError(403, "Token inválido.");
   if (req.method === "GET") return;
   const origin = req.headers.origin;
-  if (origin && !allowed.some((h) => origin === `http://${h}`)) throw new HttpError(403, "Origem não permitida.");
+  if (!withToken && origin && !allowed.some((h) => origin === `http://${h}`)) throw new HttpError(403, "Origem não permitida.");
   if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) {
     throw new HttpError(415, "Use application/json.");
   }
+}
+
+function tokenMatches(given: string, token: string): boolean {
+  const a = Buffer.from(given);
+  const b = Buffer.from(token);
+  return a.length === b.length && b.length > 0 && timingSafeEqual(a, b);
 }
 
 /** Arquivo da interface em memória; a chave (tamanho + mtime) detecta rebuild em desenvolvimento. */
@@ -708,7 +722,7 @@ export function createHandler(api: Api) {
 
   return async (req: IncomingMessage, res: ServerResponse) => {
     try {
-      guard(req, api.port);
+      guard(req, api.port, api.token);
       await route(req, res);
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500;

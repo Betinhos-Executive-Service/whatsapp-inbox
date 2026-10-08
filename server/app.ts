@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -52,6 +53,8 @@ export type SettingsSnapshot = { settings: [key: string, value: string][]; label
 
 export type RunningApp = {
   port: number;
+  /** Segredo desta execução para processos locais (servidor MCP) chamarem a API. */
+  token: string;
   prefs: () => Prefs;
   send: (jid: string, text: string) => Promise<void>;
   markRead: (jid: string) => Promise<void>;
@@ -457,11 +460,14 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   };
   const avatar = (jid: string) => photos.thumb(jid);
 
+  // Muda a cada abertura do app; o arquivo de descoberta do MCP guarda o valor vigente.
+  const token = randomBytes(32).toString("hex");
   const handler = createHandler({
     store,
     get port() {
       return port;
     },
+    token,
     distDir: options.distDir,
     state: publicState,
     send: (jid, text, opts) =>
@@ -707,6 +713,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
 
   return {
     port,
+    token,
     prefs: () => readPrefs(store),
     send,
     markRead,
