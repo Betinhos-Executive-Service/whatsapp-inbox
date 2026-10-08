@@ -530,13 +530,13 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     },
     ai: {
       status: aiState,
-      draft: async (jid) => {
+      draft: async (jid, own = "") => {
         const { chat, messages } = await chatOrThrow(jid);
         const p = provider();
         const { text } = await tracked(p, "rascunho", jid, () =>
           p === "claude"
-            ? claude.draft(chat.name, messages, aiInstructions())
-            : deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions()),
+            ? claude.draft(chat.name, messages, aiInstructions(), own)
+            : deepseek.draft(requireDeepseekKey(), chat.name, messages, aiInstructions(), own),
         );
         return text;
       },
