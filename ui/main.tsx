@@ -689,7 +689,32 @@ function captionOf(m: Message, body: string): string {
   return caption;
 }
 
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText, rich }: {
+/** Primeira das `count` mensagens recebidas mais recentes (onde entra a faixa de não lidas). Se nem todas
+ * foram carregadas, fica na mais antiga recebida da lista. */
+function firstUnread(list: Message[], count: number): { id: string; count: number } | null {
+  if (count <= 0) return null;
+  let seen = 0;
+  let id: string | null = null;
+  for (let i = list.length - 1; i >= 0 && seen < count; i--) {
+    const m = list[i];
+    if (m.fromMe || m.kind === "system") continue;
+    id = m.id;
+    seen++;
+  }
+  return id ? { id, count } : null;
+}
+
+function UnreadDivider({ count }: { count: number }) {
+  return (
+    <div className="unread-divider" role="separator">
+      <span>{count === 1 ? "1 mensagem não lida" : `${count} mensagens não lidas`}</span>
+    </div>
+  );
+}
+
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText, rich, unreadMark }: {
+  /** Faixa "N mensagens não lidas" antes desta mensagem (fica até sair da conversa). */
+  unreadMark: { id: string; count: number } | null;
   /** Enquete, evento e convite: votar e entrar no grupo. */
   rich: RichActions;
   messages: Message[];
@@ -757,6 +782,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         return (
           <div key={m.id} data-message-id={m.id} className={`message-row${selected ? " message-row--selecting" : ""}${isSelected ? " message-row--selected" : ""}${m.fromMe ? " message-row--me" : ""}${continues ? " message-row--cont" : ""}${isGroup && !m.fromMe ? " message-row--group" : ""}${m.id === targetId ? " message-row--target" : ""}${m.id === hitId ? " message-row--hit" : ""}`}>
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
+            {unreadMark?.id === m.id && <UnreadDivider count={unreadMark.count} />}
             <div
               className="message-line"
               onDoubleClick={(e) => {
@@ -1040,16 +1066,33 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const stickToBottom = useRef(true);
   const keepOffset = useRef<number | null>(null);
   const pendingFocus = useRef<string | null>(null);
+  // Como no WhatsApp: com não lidas, a conversa abre na primeira delas, sob a faixa
+  // "N mensagens não lidas"; sem não lidas, abre no fim. A faixa fica até sair da conversa.
+  const [unreadAtOpen] = useState(() => chat.unread);
+  const [unreadMark, setUnreadMark] = useState<{ id: string; count: number } | null>(null);
+  const pendingUnread = useRef(false);
+  // Aberta pela busca (mensagens ao redor da achada): o fim da conversa pode não estar carregado.
+  const atLatest = useRef(true);
+  // Botão "ir para o fim" e quantas mensagens chegaram abaixo enquanto se lia acima.
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const [newBelow, setNewBelow] = useState(0);
 
   useEffect(() => {
     let alive = true;
     setMessages(null);
     stickToBottom.current = !focus;
+    atLatest.current = !focus;
     (focus ? api.messagesAround(chat.jid, focus.id) : api.messages(chat.jid))
       .then((list) => {
         if (!alive) return;
         // Abre já rolado e destacado na mensagem achada (ver o useLayoutEffect abaixo).
         pendingFocus.current = focus?.id ?? null;
+        if (!focus && unreadAtOpen > 0) {
+          const mark = firstUnread(list, unreadAtOpen);
+          setUnreadMark(mark);
+          pendingUnread.current = !!mark;
+          stickToBottom.current = !mark;
+        }
         setMessages(list);
         setHasMore(focus ? true : list.length >= 80);
       })
@@ -1057,7 +1100,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     return () => {
       alive = false;
     };
-  }, [chat.jid, notify, focus]);
+  }, [chat.jid, notify, focus, unreadAtOpen]);
 
   // Rascunho por conversa: volta ao abrir e é guardado enquanto digita (não durante uma edição).
   useEffect(() => setDraft(drafts.get(chat.jid)), [chat.jid]);
@@ -1072,6 +1115,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       if (m.chatJid !== chat.jid) return;
       const el = scroller.current;
       stickToBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      if (!stickToBottom.current && !m.fromMe) setNewBelow((n) => n + 1);
       setMessages((list) => {
         if (!list || list.some((x) => x.id === m.id)) return list;
         const i = m.fromMe ? list.findIndex((x) => x.pending === "sending" && x.text === m.text) : -1;
@@ -1112,6 +1156,12 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       const id = pendingFocus.current;
       pendingFocus.current = null;
       jump(id);
+    } else if (pendingUnread.current) {
+      // Faixa de não lidas no topo da área visível; se o que vem abaixo dela é curto, o navegador para no fim.
+      pendingUnread.current = false;
+      const divider = el.querySelector<HTMLElement>(".unread-divider");
+      if (divider) el.scrollTop += divider.getBoundingClientRect().top - el.getBoundingClientRect().top - 8;
+      else el.scrollTop = el.scrollHeight;
     } else if (keepOffset.current !== null) {
       el.scrollTop = el.scrollHeight - keepOffset.current;
       keepOffset.current = null;
@@ -1145,7 +1195,26 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
   }, [chat.jid, notify]);
 
-  type Outgoing = { text: string; quotedId?: string; quotedChat?: string; mentions: string[]; mentionAll?: boolean };
+  // Seta "ir para o fim": desce até a última mensagem (recarrega o fim se a conversa veio da busca).
+  const jumpToEnd = async () => {
+    setNewBelow(0);
+    if (!atLatest.current) {
+      try {
+        const list = await api.messages(chat.jid);
+        atLatest.current = true;
+        stickToBottom.current = true;
+        setHasMore(list.length >= 80);
+        setMessages(list);
+      } catch (e) {
+        notify("error", (e as Error).message);
+      }
+      return;
+    }
+    const el = scroller.current;
+    el?.scrollTo({ top: el.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  };
+
+  type Outgoing ={ text: string; quotedId?: string; quotedChat?: string; mentions: string[]; mentionAll?: boolean };
   const pendingSeq = useRef(0);
   // Payload de cada bolha otimista, para "Tentar de novo".
   const outbox = useRef(new Map<string, Outgoing>());
@@ -1850,6 +1919,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         onScroll={(e) => {
           const el = e.currentTarget;
           stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+          setAwayFromBottom(el.scrollHeight - el.scrollTop - el.clientHeight > 300 || !atLatest.current);
+          if (stickToBottom.current && atLatest.current) setNewBelow(0);
         }}
       >
         {messages === null ? (
@@ -1890,7 +1961,22 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onToggleSelect={toggleSelect}
             onOpenContact={openContact}
             onCopyText={copyText}
+            unreadMark={unreadMark}
           />
+        )}
+        {messages && awayFromBottom && (
+          <div className="messages__jump">
+            <button
+              type="button"
+              className="jump-end"
+              aria-label={newBelow ? `Ir para a última mensagem, ${newBelow} ${newBelow === 1 ? "nova" : "novas"}` : "Ir para a última mensagem"}
+              title="Ir para a última mensagem"
+              onClick={() => void jumpToEnd()}
+            >
+              <ChevronDown size={20} aria-hidden />
+              {newBelow > 0 && <span className="count">{newBelow > 99 ? "99+" : newBelow}</span>}
+            </button>
+          </div>
         )}
       </div>
       {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
