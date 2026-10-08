@@ -381,7 +381,7 @@ function notify(inst: Instance, chat: Chat, message: Message) {
     const n = new Notification({
       id: key,
       groupId: key,
-      groupTitle: chat.name,
+      // Sem groupTitle: o Windows repetiria o nome da conversa acima do título.
       title: withAccount(inst, notificationTitle(chat, count)),
       body: notificationBody(message, prefs.notifyPreview),
       silent: !prefs.notifySound,
