@@ -58,10 +58,10 @@ type View = "main" | "mute" | "transcribe" | "snooze";
 
 function MenuItem({ icon, children, onClick, hint, checked }: { icon: ReactNode; children: ReactNode; onClick: () => void; hint?: string; checked?: boolean }) {
   return (
-    <button type="button" role={checked === undefined ? "menuitem" : "menuitemradio"} aria-checked={checked} className="message-menu__item" onClick={onClick}>
-      {icon}
-      <span className="message-menu__text">{children}</span>
-      {hint && <span className="message-menu__hint">{hint}</span>}
+    <button type="button" role={checked === undefined ? "menuitem" : "menuitemradio"} aria-checked={checked} className="bt-menu__item" onClick={onClick}>
+      <span className="bt-menu__icon">{icon}</span>
+      <span className="ctx-menu__text">{children}</span>
+      {hint && <span className="ctx-menu__hint">{hint}</span>}
     </button>
   );
 }
@@ -69,11 +69,11 @@ function MenuItem({ icon, children, onClick, hint, checked }: { icon: ReactNode;
 /** Abre um submenu no lugar do menu principal: rótulo, estado atual à direita e seta. */
 function SubmenuItem({ icon, children, hint, onOpen }: { icon: ReactNode; children: ReactNode; hint?: string; onOpen: () => void }) {
   return (
-    <button type="button" role="menuitem" aria-haspopup="menu" className="message-menu__item" data-sub onClick={onOpen}>
-      {icon}
-      <span className="message-menu__text">{children}</span>
-      {hint && <span className="message-menu__hint">{hint}</span>}
-      <ChevronRight size={14} aria-hidden className="message-menu__chevron" />
+    <button type="button" role="menuitem" aria-haspopup="menu" className="bt-menu__item" data-sub onClick={onOpen}>
+      <span className="bt-menu__icon">{icon}</span>
+      <span className="ctx-menu__text">{children}</span>
+      {hint && <span className="ctx-menu__hint">{hint}</span>}
+      <ChevronRight size={14} aria-hidden className="ctx-menu__chevron" />
     </button>
   );
 }
@@ -149,16 +149,16 @@ export function ChatItemMenu({ chat, x, y, onChange, onClose }: { chat: Chat; x:
   };
 
   const back = (title: string) => (
-    <button type="button" role="menuitem" className="message-menu__item chat-menu__back" onClick={() => setView("main")}>
-      <ChevronLeft size={16} aria-hidden />
-      <span className="message-menu__text">{title}</span>
+    <button type="button" role="menuitem" className="bt-menu__item ctx-menu__back" onClick={() => setView("main")}>
+      <span className="bt-menu__icon"><ChevronLeft size={16} aria-hidden /></span>
+      <span className="ctx-menu__text">{title}</span>
     </button>
   );
 
   return (
     <div
       ref={panel}
-      className="message-menu message-menu--chat chat-menu"
+      className="bt-menu__panel ctx-menu ctx-menu--chat"
       role="menu"
       aria-label={`Organizar ${chat.name}`}
       style={pos}
@@ -167,7 +167,7 @@ export function ChatItemMenu({ chat, x, y, onChange, onClose }: { chat: Chat; x:
     >
       {view === "main" && (
         <>
-          <p className="chat-menu__title" aria-hidden>
+          <p className="ctx-menu__title" aria-hidden>
             {chat.name}
           </p>
           <MenuItem icon={chat.pinnedAt ? <PinOff size={16} aria-hidden /> : <Pin size={16} aria-hidden />} onClick={() => pick({ pinned: !chat.pinnedAt })}>
@@ -176,7 +176,7 @@ export function ChatItemMenu({ chat, x, y, onChange, onClose }: { chat: Chat; x:
           <MenuItem icon={chat.archived ? <ArchiveRestore size={16} aria-hidden /> : <Archive size={16} aria-hidden />} onClick={() => pick({ archived: !chat.archived })}>
             {chat.archived ? "Desarquivar" : "Arquivar"}
           </MenuItem>
-          <span className="chat-menu__sep" role="separator" />
+          <span className="ctx-menu__sep" role="separator" />
           {muted ? (
             <MenuItem icon={<Bell size={16} aria-hidden />} hint={chat.mutedUntil! >= FOREVER ? "sempre" : `até ${untilLabel(chat.mutedUntil!)}`} onClick={() => pick({ mutedUntil: null })}>
               Reativar notificações
@@ -217,7 +217,7 @@ export function ChatItemMenu({ chat, x, y, onChange, onClose }: { chat: Chat; x:
       {view === "snooze" && (
         <>
           {back("Adiar conversa")}
-          <p className="chat-menu__note">Sai das abertas e volta sozinha.</p>
+          <p className="ctx-menu__note">Sai das abertas e volta sozinha.</p>
           {snoozePresets().map((p) => (
             <MenuItem key={p.label} icon={<Clock size={16} aria-hidden />} onClick={() => pick({ snoozedUntil: p.at })}>
               {p.label}
@@ -232,7 +232,7 @@ export function ChatItemMenu({ chat, x, y, onChange, onClose }: { chat: Chat; x:
             <MenuItem
               key={label}
               checked={chat.autoTranscribe === value}
-              icon={chat.autoTranscribe === value ? <Check size={16} aria-hidden /> : <span className="chat-menu__blank" aria-hidden />}
+              icon={chat.autoTranscribe === value ? <Check size={16} aria-hidden /> : <span className="ctx-menu__blank" aria-hidden />}
               onClick={() => pick({ autoTranscribe: value })}
             >
               {label}

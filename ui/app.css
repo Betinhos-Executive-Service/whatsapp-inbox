@@ -1107,36 +1107,6 @@ kbd {
   border-radius: var(--bt-radius-xs); background-color: var(--bt-color-surface-neutral);
   font-family: var(--bt-font-family-sans); font-size: var(--bt-font-size-12); font-weight: var(--bt-font-weight-bold); white-space: nowrap;
 }
-/* ---- menu da mensagem (botão direito ou "Mais opções") */
-.message-menu {
-  position: fixed; z-index: var(--bt-z-index-toast);
-  min-width: 220px; max-width: calc(100vw - 2 * var(--bt-space-2));
-  display: flex; flex-direction: column; padding: var(--bt-space-1);
-  background-color: var(--bt-color-surface); border: var(--bt-border-width-default) solid var(--bt-color-border);
-  border-radius: 9px; box-shadow: var(--bt-shadow-popover);
-  animation: fade var(--bt-duration-instant) var(--bt-ease-out);
-}
-.message-menu--chat { min-width: 260px; max-height: calc(100vh - 2 * var(--bt-space-2)); overflow-y: auto; }
-.message-menu__item[aria-checked='true'], .message-menu__item[aria-checked='true'] > svg { color: var(--bt-color-action); }
-.message-menu__reactions { display: flex; gap: 2px; padding: 2px 2px var(--bt-space-1); margin-bottom: var(--bt-space-1); border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); }
-.message-menu__emoji { flex: 1; min-width: 32px; height: 34px; padding: 0; border: 0; border-radius: var(--bt-radius-sm); background: transparent; font-size: 18px; line-height: 1; cursor: pointer; transition: transform var(--bt-duration-fast) var(--bt-ease-out), background-color var(--bt-duration-fast) ease; }
-.message-menu__emoji[aria-pressed='true'] { background-color: var(--bt-color-action-soft); }
-.message-menu__emoji:disabled { opacity: var(--bt-opacity-disabled); cursor: not-allowed; }
-.message-menu__emoji:active:not(:disabled) { transform: scale(.92); }
-.message-menu__item {
-  display: flex; align-items: center; gap: var(--bt-space-2-5); width: 100%;
-  min-height: 34px; padding: 0 var(--bt-space-2-5);
-  border: 0; border-radius: var(--bt-radius-sm); background: transparent;
-  color: var(--bt-color-text-primary); font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-semibold);
-  text-align: left; text-decoration: none; cursor: pointer;
-}
-.message-menu__item > svg { flex: 0 0 auto; color: var(--bt-color-text-secondary); }
-.message-menu__item--danger, .message-menu__item--danger > svg { color: var(--bt-color-danger); }
-.message-menu__item:disabled { opacity: var(--bt-opacity-disabled); cursor: not-allowed; }
-.message-menu__item:focus-visible, .message-menu__emoji:focus-visible { outline: 0; box-shadow: inset 0 0 0 2px var(--bt-focus-border); }
-@media (hover: hover) and (pointer: fine) {
-  .message-menu__item:not(:disabled):hover, .message-menu__emoji:not(:disabled):hover { background-color: var(--bt-color-surface-soft); }
-}
 /* Envio otimista */
 .bubble--sending { opacity: .72; }
 .bubble--failed { box-shadow: inset 0 0 0 1px var(--bt-color-danger); }
@@ -1145,21 +1115,33 @@ kbd {
 .bubble__retry { padding: 0; border: 0; background: none; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
 .bubble__retry:disabled { opacity: .5; cursor: default; }
 
-/* ---- menu da conversa na lista (botão direito) */
-.chat-menu { width: 260px; }
-.message-menu__text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.message-menu__hint { flex: 0 0 auto; font-size: var(--bt-font-size-12); font-weight: var(--bt-font-weight-medium); color: var(--bt-color-text-secondary); }
-.message-menu__item > .message-menu__chevron { margin-left: calc(-1 * var(--bt-space-1)); }
-.chat-menu__title {
+/* ---- menus de clique direito (mensagem e conversa na lista)
+   Painel e itens vêm do Menu do DS (bt-menu__*); aqui só o que ele não prevê: abrir no ponto do clique,
+   linha de reações, título, separador, submenus com "voltar", dica à direita e item marcado. */
+.ctx-menu { display: flex; flex-direction: column; min-width: 220px; max-width: calc(100vw - 2 * var(--bt-space-2)); }
+.ctx-menu--chat { width: 260px; max-height: calc(100vh - 2 * var(--bt-space-2)); overflow-y: auto; }
+.ctx-menu a.bt-menu__item { text-decoration: none; }
+.ctx-menu .bt-menu__item[aria-checked='true'], .ctx-menu .bt-menu__item[aria-checked='true'] .bt-menu__icon { color: var(--bt-color-action); }
+.ctx-menu__reactions { display: flex; gap: 2px; padding: 2px 2px var(--bt-space-1); margin-bottom: var(--bt-space-1); border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); }
+.ctx-menu__emoji { flex: 1; min-width: 32px; height: 34px; padding: 0; border: 0; border-radius: var(--bt-radius-sm); background: transparent; font-size: 18px; line-height: 1; cursor: pointer; transition: transform var(--bt-duration-fast) var(--bt-ease-out), background-color var(--bt-duration-fast) ease; }
+.ctx-menu__emoji[aria-pressed='true'] { background-color: var(--bt-color-action-soft); }
+.ctx-menu__emoji:disabled { opacity: var(--bt-opacity-disabled); cursor: not-allowed; }
+.ctx-menu__emoji:active:not(:disabled) { transform: scale(.92); }
+.ctx-menu__emoji:focus-visible { outline: 0; background-color: var(--bt-color-surface-soft); }
+@media (hover: hover) and (pointer: fine) { .ctx-menu__emoji:not(:disabled):hover { background-color: var(--bt-color-surface-soft); } }
+.ctx-menu__text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-menu__hint { flex: 0 0 auto; font-size: var(--bt-font-size-12); font-weight: var(--bt-font-weight-medium); color: var(--bt-color-text-secondary); }
+.ctx-menu__chevron { flex: 0 0 auto; margin-left: calc(-1 * var(--bt-space-1)); color: var(--bt-color-text-secondary); }
+.ctx-menu__title {
   margin: 0; padding: var(--bt-space-1-5) var(--bt-space-2-5) var(--bt-space-1);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--bt-font-size-11); font-weight: var(--bt-font-weight-extrabold); letter-spacing: .08em; text-transform: uppercase;
   color: var(--bt-color-text-secondary);
 }
-.chat-menu__sep { display: block; height: 1px; margin: var(--bt-space-1) var(--bt-space-1); background-color: var(--bt-color-border); }
-.chat-menu__back { margin-bottom: var(--bt-space-1); border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); border-radius: var(--bt-radius-sm) var(--bt-radius-sm) 0 0; font-weight: var(--bt-font-weight-extrabold); }
-.chat-menu__note { margin: 0; padding: 0 var(--bt-space-2-5) var(--bt-space-1); font-size: var(--bt-font-size-12); color: var(--bt-color-text-secondary); }
-.chat-menu__blank { display: inline-block; width: 16px; flex: 0 0 auto; }
+.ctx-menu__sep { display: block; height: 1px; margin: var(--bt-space-1); background-color: var(--bt-color-border); }
+.ctx-menu__back { margin-bottom: var(--bt-space-1); border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); border-radius: var(--bt-radius-sm) var(--bt-radius-sm) 0 0; font-weight: var(--bt-font-weight-extrabold); }
+.ctx-menu__note { margin: 0; padding: 0 var(--bt-space-2-5) var(--bt-space-1); font-size: var(--bt-font-size-12); color: var(--bt-color-text-secondary); }
+.ctx-menu__blank { display: inline-block; width: 16px; }
 
 /* O SegmentedControl do DS não prevê ícone no item; com ícone, alinha ao texto e dá respiro. */
 .bt-segmented__item:has(> svg) { display: inline-flex; align-items: center; justify-content: center; gap: var(--bt-space-1-5); }
