@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { Message } from "./db.ts";
 import type { TokenUsage } from "./pricing.ts";
-import { audioSummaryPrompt, parseAudioSummary, type AudioSummary, draftPrompt, guardDraft, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
+import { audioSummaryPrompt, parseAudioSummary, type AudioSummary, draftPrompt, guardDraft, polishPrompt, parseSummary, plainTranscript, summaryPrompt, unquote, type Prompt, type Summary } from "./ai.ts";
 import { z } from "zod";
 import { DEEPSEEK_CONTEXT_MESSAGES, DEEPSEEK_MESSAGE_CHARS } from "./deepseek.ts";
 
@@ -148,8 +148,12 @@ export class ClaudePlanAI {
     return { text, usage: { inputTokens: (u.input_tokens ?? 0) + cached, outputTokens: u.output_tokens ?? 0, cachedTokens: cached } };
   }
 
-  async draft(contactName: string, messages: Message[], instructions: string): Promise<{ text: string; usage: TokenUsage }> {
+  async draft(contactName: string, messages: Message[], instructions: string, own = ""): Promise<{ text: string; usage: TokenUsage }> {
     const window = this.window;
+    if (own.trim()) {
+      const { text, usage } = await this.complete(polishPrompt(contactName, messages, own, window));
+      return { text: unquote(text), usage };
+    }
     const { text, usage } = await this.complete(draftPrompt(contactName, messages, instructions, true, window));
     return { text: guardDraft(unquote(text), plainTranscript(contactName, messages, window)), usage };
   }

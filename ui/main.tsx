@@ -901,14 +901,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const usdBrl = useUsdBrl();
   const [drafting, setDrafting] = useState(false);
   const suggest = async () => {
-    if (draft.trim() && !window.confirm("Trocar o texto que você já escreveu pela sugestão da IA?")) return;
+    // Com texto no campo, a IA revisa o que foi escrito em vez de sugerir outra resposta.
+    const own = draft.trim();
     setDrafting(true);
     try {
-      const { text } = await api.draft(chat.jid);
+      const { text } = await api.draft(chat.jid, own || undefined);
       setDraft(text);
       requestAnimationFrame(() => composer.current?.focus());
     } catch (e) {
-      notify("error", `A ${aiName(ai)} não sugeriu resposta. ${(e as Error).message}`);
+      notify("error", `A ${aiName(ai)} não ${own ? "revisou o texto" : "sugeriu resposta"}. ${(e as Error).message}`);
     } finally {
       setDrafting(false);
     }
@@ -1668,8 +1669,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         />
         <Button
           variant="ghost"
-          aria-label={aiReady ? `Sugerir resposta com a ${aiName(ai)}` : "Ativar a IA"}
-          title={aiReady ? `Sugerir resposta (${aiName(ai)}, revise antes de enviar)` : "Ativar a IA para sugerir respostas"}
+          aria-label={aiReady ? `${draft.trim() ? "Revisar texto" : "Sugerir resposta"} com a ${aiName(ai)}` : "Ativar a IA"}
+          title={aiReady ? `${draft.trim() ? "Corrigir e formalizar o texto" : "Sugerir resposta"} (${aiName(ai)}, revise antes de enviar)` : "Ativar a IA para sugerir respostas"}
           disabled={drafting || !connected}
           aria-busy={drafting || undefined}
           onClick={() => (aiReady ? void suggest() : onSetupAi())}

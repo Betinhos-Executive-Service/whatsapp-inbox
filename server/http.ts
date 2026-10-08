@@ -59,7 +59,7 @@ export type Api = {
   summarizeAudio: (jid: string, id: string, force?: boolean) => Promise<unknown>;
   ai: {
     status: () => unknown;
-    draft: (jid: string) => Promise<string>;
+    draft: (jid: string, text?: string) => Promise<string>;
     summarize: (jid: string) => Promise<unknown>;
     setInstructions: (text: string | null) => void;
     setProvider: (provider: "deepseek" | "claude") => void;
@@ -115,6 +115,8 @@ const chatPatchSchema = z.object({
   snoozedUntil: z.number().int().positive().nullable().optional(),
   autoTranscribe: z.enum(["on", "off"]).nullable().optional(),
 });
+
+const draftSchema = z.object({ text: z.string().max(10000).optional() });
 
 const reminderSchema = z.object({
   dueAt: z.number().int().positive(),
@@ -322,8 +324,8 @@ export function createHandler(api: Api) {
         return json(res, 201, reminder);
       }
       if (action === "/draft" && method === "POST") {
-        await readJson(req);
-        return json(res, 200, { text: await api.ai.draft(jid) });
+        const body = parse(draftSchema, await readJson(req));
+        return json(res, 200, { text: await api.ai.draft(jid, body.text) });
       }
       if (action === "/summary" && method === "POST") {
         await readJson(req);

@@ -214,7 +214,7 @@ export const api = {
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
   aiUsage: (days: number | null) => request<AiUsageSummary>("GET", `/api/ai/usage?days=${days ?? "all"}`),
   setAiUsageRate: (rate: number) => request<{ ok: true }>("PUT", "/api/ai/usage/rate", { rate }),
-  draft: (jid: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, {}),
+  draft: (jid: string, text?: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, text ? { text } : {}),
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
   quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
