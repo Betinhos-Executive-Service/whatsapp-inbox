@@ -1407,17 +1407,56 @@ kbd {
 .link-card__site { font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Seleção de várias mensagens */
-.message-row--selecting .message-line { cursor: pointer; border-radius: var(--bt-radius-sm); }
+.message-row--selecting .message-line {
+  cursor: pointer; border-radius: var(--bt-radius-md);
+  transition: background-color var(--bt-duration-fast) ease;
+}
 .message-row--selecting .bubble { user-select: none; }
 .message-row--selected .message-line { background-color: var(--bt-color-action-soft); }
-.message-check { flex: none; align-self: center; width: 18px; height: 18px; margin: 0 var(--bt-space-1); accent-color: var(--bt-color-action); cursor: pointer; }
+@media (hover: hover) and (pointer: fine) {
+  .message-row--selecting:not(.message-row--selected) .message-line:hover { background-color: var(--bt-color-surface-neutral); }
+}
+/* Checkbox redondo: o input nativo fica por cima (clique, teclado e leitor de tela) e a caixa desenha o estado. */
+.message-check {
+  position: relative; flex: none; align-self: center; display: inline-flex; width: 20px; height: 20px; margin: 0 var(--bt-space-1-5);
+  animation: peek-in var(--bt-duration-normal) var(--bt-ease-out);
+  transition: transform var(--bt-duration-fast) var(--bt-ease-out);
+}
+.message-line:active .message-check { transform: scale(.9); }
 .message-row--me .message-check { margin-right: auto; }
+.message-check__input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.message-check__input:disabled { cursor: not-allowed; }
+.message-check__box {
+  display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%;
+  border: 2px solid var(--bt-color-text-secondary); border-radius: var(--bt-radius-full);
+  color: var(--bt-color-white);
+  transition: background-color var(--bt-duration-fast) ease, border-color var(--bt-duration-fast) ease;
+}
+.message-check__box svg { opacity: 0; transform: scale(.5); transition: opacity var(--bt-duration-fast) var(--bt-ease-out), transform var(--bt-duration-fast) var(--bt-ease-out); }
+.message-check__input:checked + .message-check__box { background-color: var(--bt-color-action); border-color: var(--bt-color-action); }
+.message-check__input:checked + .message-check__box svg { opacity: 1; transform: scale(1); }
+.message-check__input:focus-visible + .message-check__box { box-shadow: var(--bt-focus-ring); border-color: var(--bt-focus-border); }
+.message-check__input:disabled + .message-check__box { opacity: var(--bt-opacity-disabled); }
+:root[data-theme='dark'] .message-check__input:checked + .message-check__box { background-color: #2159d2; border-color: #2159d2; }
 .selection-bar {
   display: flex; align-items: center; gap: var(--bt-space-2);
   padding: var(--bt-space-3) var(--bt-space-5) var(--bt-space-5);
   background-color: var(--bt-color-surface); border-top: var(--bt-border-width-default) solid var(--bt-color-border);
 }
-.selection-bar__count { flex: 1; min-width: 0; font-size: var(--bt-font-size-14); font-weight: var(--bt-font-weight-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selection-bar > * { animation: bar-in var(--bt-duration-normal) var(--bt-ease-out); }
+.selection-bar__count {
+  flex: 1; display: flex; align-items: center; gap: var(--bt-space-2); min-width: 0;
+  font-size: var(--bt-font-size-14); font-weight: var(--bt-font-weight-semibold); overflow: hidden; white-space: nowrap;
+}
+.selection-bar__hint { color: var(--bt-color-text-secondary); font-weight: var(--bt-font-weight-medium, 500); overflow: hidden; text-overflow: ellipsis; }
+.selection-bar__num {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 var(--bt-space-1-5);
+  border-radius: var(--bt-radius-full); background-color: var(--bt-color-action); color: var(--bt-color-white);
+  font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-extrabold); font-variant-numeric: tabular-nums;
+  animation: count-pop var(--bt-duration-fast) var(--bt-ease-out);
+}
+:root[data-theme='dark'] .selection-bar__num { background-color: #2159d2; }
+@keyframes count-pop { from { transform: scale(.95); opacity: .6; } }
 @media (max-width: 480px) { .selection-bar { padding: var(--bt-space-2) var(--bt-space-3) var(--bt-space-3); } }
 
 /* Seleção múltipla no seletor de conversas */

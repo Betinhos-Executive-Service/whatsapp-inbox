@@ -5,6 +5,7 @@ import {
   BellOff,
   Pin,
   Ban,
+  Check,
   CheckCircle2,
   Forward,
   MoreVertical,
@@ -854,14 +855,19 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
               }}
             >
               {selected && (
-                <input
-                  type="checkbox"
-                  className="message-check"
-                  aria-label={isSelected ? "Desmarcar mensagem" : "Selecionar mensagem"}
-                  checked={isSelected}
-                  disabled={!selectable}
-                  onChange={() => {}}
-                />
+                <span className="message-check">
+                  <input
+                    type="checkbox"
+                    className="message-check__input"
+                    aria-label={isSelected ? "Desmarcar mensagem" : "Selecionar mensagem"}
+                    checked={isSelected}
+                    disabled={!selectable}
+                    onChange={() => {}}
+                  />
+                  <span className="message-check__box" aria-hidden>
+                    <Check size={13} strokeWidth={3} />
+                  </span>
+                </span>
               )}
               {isGroup && !m.fromMe &&
                 (sender && !continues ? (
