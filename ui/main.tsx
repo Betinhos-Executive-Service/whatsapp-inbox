@@ -84,11 +84,11 @@ declare const __BUILD_DATE__: string;
 applyTheme(storedTheme());
 
 type Tab = Status | "todas";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "aberta", label: "Abertas" },
-  { id: "aguardando", label: "Aguardando" },
-  { id: "resolvida", label: "Resolvidas" },
-  { id: "todas", label: "Todas" },
+const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
+  { id: "aberta", label: "Abertas", icon: <CircleDot size={16} aria-hidden /> },
+  { id: "aguardando", label: "Aguardando", icon: <Clock size={16} aria-hidden /> },
+  { id: "resolvida", label: "Resolvidas", icon: <CheckCircle2 size={16} aria-hidden /> },
+  { id: "todas", label: "Todas", icon: <Inbox size={16} aria-hidden /> },
 ];
 const STATUS_META: Record<Status, { label: string; icon: ReactNode }> = {
   aberta: { label: "Aberta", icon: <CircleDot size={16} aria-hidden /> },
@@ -428,12 +428,15 @@ function ChatList(props: {
               role="tab"
               aria-selected={!showArchived && tab === t.id}
               className="segmented__item"
+              aria-label={`${t.label} (${counts[t.id]})`}
+              title={t.label}
               onClick={() => {
                 setTab(t.id);
                 setShowArchived(false);
               }}
             >
-              {t.label} <span className="segmented__count">{counts[t.id]}</span>
+              <span className="segmented__icon">{t.icon}</span>
+              <span className="segmented__label">{t.label}</span> <span className="segmented__count">{counts[t.id]}</span>
             </button>
           ))}
         </div>

@@ -250,6 +250,7 @@ ul, ol { margin: 0; padding: 0; }
 }
 .segmented__item:active { transform: scale(.97); }
 .segmented__item[aria-selected='true'], .segmented__item[aria-checked='true'] { background-color: var(--bt-color-brand); color: var(--bt-color-white); }
+.segmented__icon { display: none; }
 .segmented__count { font-variant-numeric: tabular-nums; opacity: .8; }
 .list-pane .segmented__item { flex: 1 1 auto; padding: 0 var(--bt-space-1-5); }
 @media (hover: hover) and (pointer: fine) {
@@ -769,7 +770,8 @@ ul, ol { margin: 0; padding: 0; }
 /* Lista estreita (janela pequena ou painel arrastado): abas em 2×2 em vez de rolar escondidas. */
 .list-pane { container-type: inline-size; container-name: list-pane; }
 @container list-pane (max-width: 500px) {
-  .list-pane__header .segmented { display: grid; grid-template-columns: 1fr 1fr; overflow: visible; }
+  .list-pane__header .segmented__label { display: none; }
+  .list-pane__header .segmented__icon { display: inline-flex; }
 }
 @container list-pane (max-width: 300px) {
   .list-pane__filters { grid-template-columns: minmax(0, 1fr); }
