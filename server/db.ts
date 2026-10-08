@@ -987,6 +987,18 @@ export class Store {
     return this.decorate(jid, rows).reverse();
   }
 
+  /** Mídias da conversa para o perfil: "visual" (fotos e vídeos) ou "docs", mais recentes primeiro. */
+  listMedia(jid: string, group: "visual" | "docs", before: number | null, limit = 60): Message[] {
+    const types = JSON.stringify(group === "visual" ? ["image", "video"] : ["document"]);
+    const rows = this
+      .q(
+        `select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and media is not null and deleted_at is null
+         and json_extract(media, '$.type') in (select value from json_each(?)) and at < ? order by at desc, rowid desc limit ?`,
+      )
+      .all(jid, types, before ?? Number.MAX_SAFE_INTEGER, limit) as Row[];
+    return this.decorate(jid, rows);
+  }
+
   private reactionsOf(chatJid: string, ids: string[]): Map<string, Message["reactions"]> {
     const out = new Map<string, Message["reactions"]>();
     if (!ids.length) return out;

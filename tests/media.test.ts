@@ -31,3 +31,18 @@ test("Jev aprende com a etiqueta escolhida à mão (exemplo de outra conversa, a
   const state = JSON.parse(buildState("Ana", [], new Date(0), s.labelExamples(PN)));
   assert.equal(state.exemplos_de_etiquetas_corrigidas_pelo_usuario[0].etiqueta, "Cotação");
 });
+
+test("mídias do perfil: fotos/vídeos e documentos separados, mais recentes primeiro, com paginação", () => {
+  const s = new Store(":memory:");
+  const add = (id: string, at: number, type: string) =>
+    s.addMessage({ chatJid: PN, id, rawJid: PN, fromMe: false, at, text: `[${type}]`, kind: type, media: JSON.stringify({ type, mimetype: "x/y", mediaKey: "k", directPath: "/p" }) }, false);
+  add("img", 1, "image");
+  add("vid", 2, "video");
+  add("doc", 3, "document");
+  add("aud", 4, "audio");
+  s.addMessage({ chatJid: PN, id: "txt", rawJid: PN, fromMe: false, at: 5, text: "oi", kind: "text" }, false);
+  assert.deepEqual(s.listMedia(PN, "visual", null).map((m) => m.id), ["vid", "img"]);
+  assert.deepEqual(s.listMedia(PN, "docs", null).map((m) => m.id), ["doc"]);
+  assert.deepEqual(s.listMedia(PN, "visual", 2).map((m) => m.id), ["img"]);
+  assert.deepEqual(s.listMedia(OTHER, "visual", null), []);
+});

@@ -91,6 +91,17 @@ export type AiStatus = {
   summary: { provider: "same" | "deepseek" | "claude"; deepseekModel: DeepSeekModel; claudeModel: ClaudeModel };
 };
 export type Summary = { resumo: string; pedido: string; proximoPasso: string };
+/** Perfil da pessoa gerado pela IA a partir do histórico (at: quando; messages: quantas mensagens leu). */
+export type Persona = {
+  resumo: string;
+  trabalho: string[];
+  comportamento: string[];
+  personalidade: string[];
+  pagamento: string[];
+  atencao: string[];
+  at: number;
+  messages: number;
+};
 /** Resumo organizado de uma mensagem de voz. */
 export type AudioSummary = { assunto: string; pontos: string[]; tratativa: string; prioridade: "alta" | "media" | "baixa"; motivo: string };
 
@@ -277,6 +288,10 @@ export const api = {
   setAiUsageRate: (rate: number) => request<{ ok: true }>("PUT", "/api/ai/usage/rate", { rate }),
   draft: (jid: string, text?: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, text ? { text } : {}),
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
+  persona: (jid: string) => request<{ persona: Persona | null }>("GET", `${chatPath(jid)}/persona`),
+  generatePersona: (jid: string) => request<{ persona: Persona }>("POST", `${chatPath(jid)}/persona`, {}),
+  media: (jid: string, type: "visual" | "docs", before?: number) =>
+    request<Message[]>("GET", `${chatPath(jid)}/media?type=${type}${before ? `&before=${before}` : ""}`),
   quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
   importQuickReplies: () =>

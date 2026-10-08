@@ -110,6 +110,8 @@ export type Api = {
     status: () => unknown;
     draft: (jid: string, text?: string) => Promise<string>;
     summarize: (jid: string) => Promise<unknown>;
+    /** Perfil da pessoa pela IA. Sem force, devolve só o que já está guardado (ou null). */
+    persona: (jid: string, force: boolean) => Promise<unknown>;
     setInstructions: (text: string | null) => void;
     setProvider: (provider: "deepseek" | "claude") => void;
     setDeepseekModel: (model: "deepseek-v4-pro" | "deepseek-flash") => void;
@@ -518,6 +520,16 @@ export function createHandler(api: Api) {
       if (action === "/summary" && method === "POST") {
         await readJson(req);
         return json(res, 200, await api.ai.summarize(jid));
+      }
+      if (action === "/media" && method === "GET") {
+        const group = url.searchParams.get("type") === "docs" ? "docs" : "visual";
+        const before = Number(url.searchParams.get("before")) || null;
+        return json(res, 200, store.listMedia(jid, group, before));
+      }
+      if (action === "/persona" && method === "GET") return json(res, 200, { persona: await api.ai.persona(jid, false) });
+      if (action === "/persona" && method === "POST") {
+        await readJson(req);
+        return json(res, 200, { persona: await api.ai.persona(jid, true) });
       }
       if (action === "/classify" && method === "POST") {
         await readJson(req);

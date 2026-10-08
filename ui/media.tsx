@@ -256,7 +256,7 @@ function useDialog(panel: React.RefObject<HTMLElement | null>, first: React.RefO
 }
 
 /** Abre o arquivo dentro do app, sem baixar. Formatos que o app não mostra vão para o app padrão do Windows. */
-function FileViewer({ m, onClose }: { m: Message; onClose: () => void }) {
+export function FileViewer({ m, onClose }: { m: Message; onClose: () => void }) {
   const media = m.media!;
   const src = mediaUrl(m);
   const name = media.fileName ?? "Documento";
@@ -402,7 +402,7 @@ function DocCard({ m }: { m: Message }) {
   );
 }
 
-function Lightbox({ m, src, download, onClose }: { m: Message; src: string; download: string; onClose: () => void }) {
+export function Lightbox({ m, src, download, onClose }: { m: Message; src: string; download: string; onClose: () => void }) {
   const panel = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string | null>(null);
