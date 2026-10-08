@@ -24,16 +24,34 @@ function inline(nodes: WaNode[], live: boolean, key = ""): ReactNode[] {
 /** Links clicáveis; abrem fora do app (navegador padrão). */
 function linked(text: string, key: string): ReactNode {
   const parts = splitLinks(text);
-  if (parts.length === 1 && typeof parts[0] === "string") return text;
+  if (parts.length === 1 && typeof parts[0] === "string") return mentioned(text, key);
   return parts.map((p, idx) =>
     typeof p === "string" ? (
-      p
+      <Fragment key={`${key}-${idx}`}>{mentioned(p, `${key}-${idx}`)}</Fragment>
     ) : (
       <a key={`${key}-${idx}`} className="wa-link" href={p.href} target="_blank" rel="noopener noreferrer" title={p.href}>
         {p.url}
       </a>
     ),
   );
+}
+
+const MENTION = /(^|[\s(])(@[\p{L}\p{N}_.-]*[\p{L}\p{N}_])/gu;
+
+/** "@nome" e "@5511…" viram chip destacado, como no WhatsApp. */
+function mentioned(text: string, key: string): ReactNode {
+  if (!text.includes("@")) return text;
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(MENTION)) {
+    const at = m.index! + m[1].length;
+    out.push(text.slice(last, at));
+    out.push(<span key={`${key}@${at}`} className="wa-mention">{m[2]}</span>);
+    last = at + m[2].length;
+  }
+  if (!out.length) return text;
+  out.push(text.slice(last));
+  return out;
 }
 
 const LIST = /^(\s*)([-*•]|\d{1,3}\.)\s+(.*)$/;
