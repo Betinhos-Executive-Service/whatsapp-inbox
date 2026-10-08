@@ -318,15 +318,12 @@ ul, ol { margin: 0; padding: 0; }
 .chat-find {
   display: flex; align-items: center; gap: var(--bt-space-2);
   padding: var(--bt-space-2) var(--bt-space-4) var(--bt-space-2) var(--bt-space-5);
-  background-color: #FCFCFB;
+  background-color: var(--bt-color-surface-neutral);
   border-bottom: var(--bt-border-width-default) solid var(--bt-color-border);
 }
-.chat-find__icon { flex: 0 0 auto; color: var(--bt-color-slate-700); }
-.chat-find__input {
-  flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 var(--bt-space-2);
-  border: 0; background: transparent; font: inherit; color: inherit; outline: none;
-}
-.chat-find__count { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chat-find__box { flex: 1 1 auto; min-width: 0; max-width: 480px; }
+.chat-find__count { flex: 0 0 auto; min-width: 9ch; font-size: var(--bt-font-size-12); color: var(--bt-color-text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.chat-find__nav { display: flex; align-items: center; gap: var(--bt-space-1); margin-left: auto; }
 .chat-pane__title { flex: 1 1 120px; display: flex; align-items: center; gap: var(--bt-space-3); min-width: 0; }
 .chat-pane__name { display: flex; flex-direction: column; min-width: 0; }
 .chat-pane__name .heading-card { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
