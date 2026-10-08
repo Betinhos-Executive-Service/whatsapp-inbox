@@ -539,6 +539,9 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     syncArchive: (jid, archived) => {
       wa?.setArchived(jid, archived).catch((e: Error) => console.warn(`Arquivar no celular falhou: ${e.message}`));
     },
+    syncMute: (jid, until) => {
+      wa?.setMuted(jid, until).catch((e: Error) => console.warn(`Silenciar no celular falhou: ${e.message}`));
+    },
     deleteMessage: async (jid, id, mode) => {
       const ref = store.messageKey(jid, id);
       if (!ref) throw new Error("Mensagem não encontrada.");

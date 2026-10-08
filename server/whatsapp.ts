@@ -49,6 +49,13 @@ const LIVE_WINDOW_MS = 2 * 60 * 1000;
 /** A agenda é pedida de novo a cada 6 h: nomes salvos no celular depois chegam sozinhos. */
 const CONTACTS_RESYNC_MS = 6 * 60 * 60 * 1000;
 const logger = pino({ level: "silent" });
+/** "Silenciar sempre" no app: a maior data possível (a mesma da tela). */
+const MUTE_FOREVER = 8_640_000_000_000_000;
+/** Fim do silêncio vindo do celular: null/0 = não silenciada; -1 = sempre. */
+const mutedUntilOf = (raw: number | { toNumber(): number } | null | undefined): number | null => {
+  const end = raw == null ? 0 : typeof raw === "object" ? raw.toNumber() : Number(raw);
+  return !end ? null : end < 0 ? MUTE_FOREVER : end;
+};
 
 /** Conversas individuais e grupos; status, listas e canais ficam de fora. */
 function isConversation(jid: string | null | undefined): jid is string {
@@ -118,6 +125,8 @@ export class WhatsApp extends EventEmitter<{
   private sock: WASocket | null = null;
   /** Arquivar/desarquivar feito aqui que ainda não chegou ao celular (ex.: faltava a chave). */
   private pendingArchive = new Map<string, boolean>();
+  /** Silenciar à espera de conexão ou da chave do celular (fim em ms; null = reativar). */
+  private pendingMute = new Map<string, number | null>();
   /** Contatos bloqueados (JID da conversa), lidos ao conectar e mantidos pelos eventos. */
   private blocked = new Set<string>();
   private retries = 0;
@@ -630,6 +639,7 @@ export class WhatsApp extends EventEmitter<{
           this.store.ensureChat(jid, { status: unread > 0 ? "aberta" : "resolvida", unread: Math.max(0, unread) });
           if (c.name) this.store.setNames(jid, { saved: c.name });
           if (typeof c.archived === "boolean") this.store.updateChat(jid, { archived: c.archived });
+          if (c.muteEndTime !== undefined) this.store.updateChat(jid, { mutedUntil: mutedUntilOf(c.muteEndTime) });
           if (c.ephemeralExpiration != null) this.store.setEphemeral(jid, Number(c.ephemeralExpiration) || null);
           if (c.markedAsUnread) this.store.updateChat(jid, { markedUnread: true });
         }
@@ -658,6 +668,10 @@ export class WhatsApp extends EventEmitter<{
         } else if (u.unreadCount === 0 && (current.markedUnread || current.unread > 0)) {
           this.store.clearMarkedUnread(jid);
           this.store.markRead(jid);
+          changed = true;
+        }
+        if (u.muteEndTime !== undefined && mutedUntilOf(u.muteEndTime) !== current.mutedUntil) {
+          this.store.updateChat(jid, { mutedUntil: mutedUntilOf(u.muteEndTime) });
           changed = true;
         }
         if (u.ephemeralExpiration !== undefined && (Number(u.ephemeralExpiration) || null) !== current.ephemeral) {
@@ -1113,6 +1127,26 @@ export class WhatsApp extends EventEmitter<{
     if (this.sock) await this.pushArchives(this.sock);
   }
 
+  /** Silencia ou reativa também no celular. Sem conexão ou sem a chave, fica pendente. */
+  async setMuted(jid: string, until: number | null): Promise<void> {
+    this.pendingMute.set(jid, until);
+    if (this.sock) await this.pushMutes(this.sock);
+  }
+
+  private async pushMutes(sock: WASocket): Promise<void> {
+    for (const [jid, until] of [...this.pendingMute]) {
+      const rawJid = this.store.lastMessageKey(jid)?.rawJid ?? jid;
+      try {
+        // No WhatsApp, "sempre" é -1; o resto é o fim em ms.
+        await sock.chatModify({ mute: until === null ? null : until >= MUTE_FOREVER ? -1 : until }, rawJid);
+      } catch (error) {
+        if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(sock);
+        throw error;
+      }
+      if (this.pendingMute.get(jid) === until) this.pendingMute.delete(jid);
+    }
+  }
+
   /** O WhatsApp pede a última mensagem da conversa junto com o arquivar. */
   private async pushArchives(sock: WASocket): Promise<void> {
     for (const [jid, archived] of [...this.pendingArchive]) {
@@ -1140,6 +1174,7 @@ export class WhatsApp extends EventEmitter<{
     try {
       if (!(await this.hasAppStateKey(sock))) return void (await this.requestAppStateKey(sock));
       await this.pushArchives(sock);
+      await this.pushMutes(sock);
       await sock.authState.keys.set({ "app-state-sync-version": { regular_low: null } });
       await sock.resyncAppState(["regular_low"], false);
     } catch (error) {
