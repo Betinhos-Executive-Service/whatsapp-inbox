@@ -1,9 +1,10 @@
-import { Reply, Users, X } from "lucide-react";
+import { Reply, Sparkles, Users, X } from "lucide-react";
 import { useEffect, useRef } from "react";
-import type { Message, Participant } from "./api.ts";
+import type { Chat, Message, Participant } from "./api.ts";
 import { Avatar } from "./avatar.tsx";
 import { Button, Dialog } from "./ds/index.ts";
-import { normalize } from "./format.ts";
+import { listTime, normalize } from "./format.ts";
+import { WaInline } from "./wa-format.tsx";
 
 import { MENTION_ALL, MENTION_ALL_LABEL } from "./mentions.ts";
 
@@ -85,6 +86,43 @@ export function ReplyBar({ message, isGroup, chatName, onCancel }: { message: Me
         <span className="quote__text">{body}</span>
       </div>
       <Button variant="ghost" size="compact" icon={<X size={16} aria-hidden />} aria-label="Cancelar resposta" onClick={onCancel} />
+    </div>
+  );
+}
+
+/**
+ * Resposta proposta por uma IA (Claude Code via MCP) à espera da pessoa: nada sai sem Enviar.
+ * Mesma linha visual da ReplyBar; superfície neutra para separar do campo de texto.
+ */
+export function PendingDraftBar({ draft, busy, onSend, onEdit, onDiscard }: {
+  draft: NonNullable<Chat["pendingDraft"]>;
+  busy: boolean;
+  onSend: () => void;
+  onEdit: () => void;
+  onDiscard: () => void;
+}) {
+  const who = draft.source === "claude" ? "Claude" : draft.source;
+  return (
+    <div className="pending-bar" role="status" aria-busy={busy || undefined}>
+      <Sparkles className="pending-bar__icon" size={16} aria-hidden />
+      <div className="quote quote--static">
+        <span className="quote__author">
+          Rascunho do {who} · {listTime(draft.createdAt)}
+          {draft.hasMedia && " · com anexo"}
+        </span>
+        <span className="quote__text">{draft.text ? <WaInline text={draft.text} /> : "Só o anexo, sem legenda"}</span>
+      </div>
+      <div className="pending-bar__actions">
+        <Button variant="action" size="compact" loading={busy} onClick={onSend}>
+          Enviar
+        </Button>
+        <Button variant="secondary" size="compact" disabled={busy} onClick={onEdit}>
+          Editar
+        </Button>
+        <Button variant="ghost" size="compact" disabled={busy} onClick={onDiscard}>
+          Descartar
+        </Button>
+      </div>
     </div>
   );
 }
