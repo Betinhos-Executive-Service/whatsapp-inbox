@@ -802,7 +802,8 @@ export class WhatsApp extends EventEmitter<{
           senderTimestampMs: Date.now(),
         },
       },
-      {},
+      // Como o WhatsApp Web: o voto vai marcado como de enquete; sem isso o servidor não entrega aos outros aparelhos.
+      { additionalNodes: [{ tag: "meta", attrs: { polltype: "vote" } }] },
     );
     const message = this.store.recordVote(jid, pollId, "me", valid);
     if (message) this.emit("update", { message, chat: this.store.getChat(jid)! });
