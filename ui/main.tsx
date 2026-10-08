@@ -2145,29 +2145,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           />
         ) : (
           <>
-        <Button
-          variant="ghost"
-          aria-label="Anexar arquivo"
-          title="Anexar imagem, vídeo ou documento (ou arraste para a conversa, ou cole com Ctrl+V)"
-          disabled={!connected || sending}
-          onClick={() => fileInput.current?.click()}
-          icon={<Paperclip size={18} aria-hidden />}
-        />
         <EmojiButton disabled={!connected} onPick={insertEmoji} onClose={() => composer.current?.focus()} />
-        <Button
-          variant="ghost"
-          aria-label="Enviar contato"
-          title="Enviar contato"
-          disabled={!connected || sending}
-          onClick={() => setPickingContact(true)}
-          icon={<Contact size={18} aria-hidden />}
-        />
         <Menu
           align="start"
           trigger={(t) => (
-            <Button {...t} variant="ghost" aria-label="Enviar enquete, localização ou figurinha" title="Enquete, localização ou figurinha" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
+            <Button {...t} variant="ghost" aria-label="Anexar arquivo, contato, enquete, localização ou figurinha" title="Anexar (arquivo, contato, enquete, localização ou figurinha)" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
           )}
           actions={[
+            { id: "file", label: "Arquivo", icon: <Paperclip size={16} aria-hidden />, onSelect: () => fileInput.current?.click() },
+            { id: "contact", label: "Contato", icon: <Contact size={16} aria-hidden />, onSelect: () => setPickingContact(true) },
             { id: "poll", label: "Enquete", icon: <ListChecks size={16} aria-hidden />, onSelect: () => setComposeDialog("poll") },
             { id: "location", label: "Localização", icon: <MapPin size={16} aria-hidden />, onSelect: () => setComposeDialog("location") },
             { id: "sticker", label: "Figurinha", icon: <Sticker size={16} aria-hidden />, onSelect: () => setComposeDialog("sticker") },
