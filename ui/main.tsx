@@ -1803,7 +1803,17 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       )}
       <PinnedBar key={chat.jid} chat={chat} canAct={connected} onJump={jump} onUnpin={unpin} />
       <div className="chat-pane__body">
-      <div className="messages" ref={scroller} aria-live="polite" aria-busy={messages === null}>
+      <div
+        className="messages"
+        ref={scroller}
+        aria-live="polite"
+        aria-busy={messages === null}
+        // Só acompanha o fim quem já está lá: votar, reagir ou favoritar lá em cima não pode rolar a conversa.
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+        }}
+      >
         {messages === null ? (
           <div className="messages__loading">
             <LoaderCircle className="spin" size={24} aria-hidden />

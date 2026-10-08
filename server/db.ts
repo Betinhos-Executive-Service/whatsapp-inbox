@@ -835,6 +835,12 @@ export class Store {
     }
   }
 
+  /** Conversa da enquete pelo id: o voto pode chegar endereçado pelo LID, fora da conversa do número. */
+  pollChat(id: string): string | null {
+    const r = this.q("select chat_jid from messages where id = ? and kind = 'poll' limit 1").get(id) as Row | undefined;
+    return r ? String(r.chat_jid) : null;
+  }
+
   /** Dado rico guardado (com segredos), para quem precisa dele no servidor. */
   messageExtra(chatJid: string, id: string): Extra | null {
     const r = this.q("select extra from messages where chat_jid = ? and id = ?").get(chatJid, id) as Row | undefined;
