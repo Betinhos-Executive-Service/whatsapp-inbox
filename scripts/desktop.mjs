@@ -31,7 +31,25 @@ if (release) {
       code === 0 ? ok() : fail(new Error(`git push falhou (código ${code}).`)),
     ),
   );
-  pushed.catch(() => {}); // a falha é tratada no await antes de publicar
+  pushed.catch(() => {}); // a falha é tratada em confirmPush(), antes de gerar o instalador
+}
+
+/**
+ * Se a main andou durante o build (outro merge chegou), a execução seguinte do CI já
+ * inclui estas mudanças e publica a versão; esta encerra sem erro e sem instalador.
+ */
+async function confirmPush() {
+  try {
+    await pushed;
+  } catch (error) {
+    const base = git("rev-parse", "HEAD~1");
+    git("fetch", "--quiet", "origin", "main");
+    const remote = git("rev-parse", "origin/main");
+    const advanced = remote !== base && git("merge-base", "HEAD~1", "origin/main") === base;
+    if (!advanced) throw error;
+    console.warn(`A main recebeu commits novos durante o build; v${build.version} fica para a próxima execução.`);
+    process.exit(0);
+  }
 }
 
 await rm(resolve(root, "dist"), { recursive: true, force: true });
@@ -83,6 +101,7 @@ if (runOnly) {
   const electron = (await import("electron")).default;
   spawn(electron, ["."], { cwd: root, stdio: "inherit" }).on("exit", (code) => process.exit(code ?? 0));
 } else {
+  if (release) await confirmPush();
   const { build: pack } = await import("electron-builder");
   // O instalador e o latest.yml são gerados aqui; o envio ao GitHub é feito pelo gh (abaixo),
   // porque o envio do electron-builder não retoma quando a conexão cai no meio.
@@ -91,7 +110,6 @@ if (runOnly) {
   if (!release) {
     console.log(`Instalador pronto: ${installer}`);
   } else {
-    await pushed;
     await publishRelease(build.version, files);
   }
 }
