@@ -93,6 +93,7 @@ export type Api = {
   /** Leva ao celular o arquivar/desarquivar feito aqui (sem bloquear a tela). */
   syncArchive: (jid: string, archived: boolean) => void;
   syncMute: (jid: string, until: number | null) => void;
+  syncPin: (jid: string, pinned: boolean) => void;
   classify: (jid: string) => Promise<unknown>;
   saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
@@ -345,6 +346,7 @@ export function createHandler(api: Api) {
         if (patch.note !== undefined) store.setNote(jid, patch.note);
         if (patch.archived !== undefined) api.syncArchive(jid, patch.archived);
         if (patch.mutedUntil !== undefined) api.syncMute(jid, patch.mutedUntil);
+        if (patch.pinned !== undefined) api.syncPin(jid, patch.pinned);
         if (patch.markedUnread) api.syncUnread(jid, true);
         api.onChatChanged(jid);
         return json(res, 200, store.getChat(jid));
