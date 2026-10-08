@@ -653,10 +653,25 @@ async function closeAll() {
   await Promise.all(running.map((a) => a.close().catch((e: Error) => console.error("Falha ao encerrar uma conta:", e))));
 }
 
+const APP_ID = "br.com.betinhos.whatsapp-inbox";
+
+// Sem isso o Windows pode exibir "Electron" como remetente das notificações
+// (ex.: nome guardado em cache após rodar em modo dev com o mesmo ID).
+function registerNotificationName() {
+  if (process.platform !== "win32") return;
+  const key = `HKCU\\Software\\Classes\\AppUserModelId\\${APP_ID}`;
+  const set = (name: string, value: string) =>
+    spawn("reg", ["add", key, "/v", name, "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true, stdio: "ignore" })
+      .on("error", (e) => console.error("Falha ao registrar nome das notificações:", e));
+  set("DisplayName", "WhatsApp Inbox");
+  set("IconUri", process.execPath);
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.setAppUserModelId("br.com.betinhos.whatsapp-inbox");
+  app.setAppUserModelId(APP_ID);
+  registerNotificationName();
   app.on("second-instance", showWindow);
   app.on("window-all-closed", () => {
     // Fica na bandeja: não encerra quando a janela some.
