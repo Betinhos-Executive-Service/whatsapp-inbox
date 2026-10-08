@@ -75,7 +75,7 @@ export function encryptVote(options: string[], ctx: { secret: Uint8Array; pollId
  * Decifra tentando as formas possíveis de quem criou e de quem votou (número ou LID): o WhatsApp usa
  * a que estava valendo na conversa, e o aparelho conectado nem sempre sabe qual. null = nenhuma serviu.
  */
-export function decryptVote(vote: EncVote, ctx: { secret: Uint8Array; pollId: string; creators: string[]; voters: string[] }): Buffer[] | null {
+export function decryptVote(vote: EncVote, ctx: { secret: Uint8Array; pollId: string; creators: string[]; voters: string[] }): { hashes: Buffer[]; creator: string; voter: string } | null {
   const payload = Buffer.from(vote.encPayload);
   if (payload.length < 16) return null;
   const body = payload.subarray(0, -16);
@@ -86,7 +86,8 @@ export function decryptVote(vote: EncVote, ctx: { secret: Uint8Array; pollId: st
         const decipher = createDecipheriv("aes-256-gcm", voteKey(ctx.secret, ctx.pollId, creator, voter), vote.encIv);
         decipher.setAAD(aad(ctx.pollId, voter));
         decipher.setAuthTag(tag);
-        return decodeVote(Buffer.concat([decipher.update(body), decipher.final()]));
+        // Devolve também a forma que serviu: diz se o outro lado endereça a enquete por número ou LID.
+        return { hashes: decodeVote(Buffer.concat([decipher.update(body), decipher.final()])), creator, voter };
       } catch {
         // chave errada: tenta a próxima combinação
       }

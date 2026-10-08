@@ -59,9 +59,10 @@ test("ligação: registro do celular vira texto; pin e temporárias são ações
 test("voto de enquete: cifra e decifra com JID em número ou LID; hash desconhecido é ignorado", () => {
   const secret = randomBytes(32);
   const enc = encryptVote(["8h"], { secret, pollId: "P1", creator: PN, voter: "999@lid" });
-  const hashes = decryptVote(enc, { secret, pollId: "P1", creators: ["111@lid", PN], voters: ["5511@s.whatsapp.net", "999@lid"] });
-  assert.ok(hashes);
-  assert.deepEqual(optionsFromHashes(["7h", "8h"], hashes), ["8h"]);
+  const got = decryptVote(enc, { secret, pollId: "P1", creators: ["111@lid", PN], voters: ["5511@s.whatsapp.net", "999@lid"] });
+  assert.ok(got);
+  assert.deepEqual(optionsFromHashes(["7h", "8h"], got.hashes), ["8h"]);
+  assert.deepEqual([got.creator, got.voter], [PN, "999@lid"], "informa a forma que serviu");
   assert.equal(decryptVote(enc, { secret, pollId: "P2", creators: [PN], voters: ["999@lid"] }), null, "outra enquete não decifra");
 });
 
