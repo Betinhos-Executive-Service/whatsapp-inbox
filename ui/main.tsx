@@ -42,12 +42,13 @@ import {
   Sticker,
   Timer,
   UserRoundPlus,
+  PencilLine,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status } from "./api.ts";
-import { ChatItemMenu, drafts, isMuted, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
+import { ChatItemMenu, drafts, isMuted, useDraft, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
@@ -223,6 +224,9 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
   // Prioridade dita pela IA aparece sempre; "baixa" só quando não há nada mais relevante.
   const aiPriority = chat.ai?.priority ?? null;
   const showPriority = !!aiPriority && chat.status !== "resolvida" && (aiPriority !== "baixa" || (!level && !urgent && chat.reminderAt === null));
+  // Rascunho não enviado toma o lugar da prévia, como no WhatsApp; na conversa aberta ele já está no campo.
+  const draft = useDraft(chat.jid).trim();
+  const showDraft = !!draft && !selected;
   return (
     <li>
       <button
@@ -252,10 +256,20 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
             <span className={`chat-item__time${chat.unread || chat.markedUnread ? " chat-item__time--unread" : ""}`}>{listTime(chat.lastAt)}</span>
           </span>
           <span className="chat-item__row">
-            <span className="chat-item__preview">
-              {chat.lastFromMe && <span className="chat-item__me">Você: </span>}
-              {chat.lastText ? <WaInline text={chat.lastText} /> : "Sem mensagens"}
-            </span>
+            {showDraft ? (
+              <span className="chat-item__preview chat-item__preview--draft" title={`Rascunho não enviado: ${draft}`}>
+                <span className="chat-item__draft">
+                  <PencilLine size={12} aria-hidden />
+                  Rascunho:
+                </span>{" "}
+                {draft.replace(/\s+/g, " ")}
+              </span>
+            ) : (
+              <span className="chat-item__preview">
+                {chat.lastFromMe && <span className="chat-item__me">Você: </span>}
+                {chat.lastText ? <WaInline text={chat.lastText} /> : "Sem mensagens"}
+              </span>
+            )}
             {chat.unread > 0 ? (
               <span className="count" aria-label={`${chat.unread} não lidas`}>
                 {chat.unread > 99 ? "99+" : chat.unread}
@@ -1129,8 +1143,17 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, [chat.jid, notify, focus, unreadAtOpen]);
 
   // Rascunho por conversa: volta ao abrir e é guardado enquanto digita (não durante uma edição).
-  useEffect(() => setDraft(drafts.get(chat.jid)), [chat.jid]);
+  // Na troca, o texto da conversa anterior ainda está no estado: pula um ciclo para não gravá-lo na nova.
+  const draftLoading = useRef(false);
   useEffect(() => {
+    draftLoading.current = true;
+    setDraft(drafts.get(chat.jid));
+  }, [chat.jid]);
+  useEffect(() => {
+    if (draftLoading.current) {
+      draftLoading.current = false;
+      return;
+    }
     if (!editing) drafts.set(chat.jid, draft);
   }, [chat.jid, draft, editing]);
 
@@ -1310,7 +1333,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       // Otimista: o texto novo aparece na hora; volta ao original se o servidor recusar.
       const original = editing;
       setEditing(null);
-      setDraft("");
+      setDraft(drafts.get(chat.jid));
       if (text === original.text) return;
       replaceMessage({ ...original, text, editedAt: Date.now() });
       try {
@@ -1653,9 +1676,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setDraft(m.text);
     requestAnimationFrame(() => composer.current?.focus());
   }, []);
+  // Ao sair da edição, volta o rascunho que estava no campo antes dela.
   const cancelEdit = () => {
     setEditing(null);
-    setDraft("");
+    setDraft(drafts.get(chat.jid));
   };
 
   // "digitando" do contato: assina ao abrir a conversa e limpa sozinho se o aviso de parada não vier.

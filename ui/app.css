@@ -284,6 +284,9 @@ ul, ol { margin: 0; padding: 0; }
 .chat-item__time--unread { color: var(--bt-color-action); font-weight: var(--bt-font-weight-extrabold); }
 .chat-item__preview { font-size: var(--bt-font-size-12); color: var(--bt-color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-item__me { font-weight: var(--bt-font-weight-bold); color: var(--bt-color-slate-700); }
+/* Rascunho não enviado: estado neutro (§3.2), rótulo + ícone para não depender de cor. */
+.chat-item__draft { display: inline-flex; align-items: center; gap: var(--bt-space-1); vertical-align: -1px; font-weight: var(--bt-font-weight-extrabold); color: var(--bt-color-text-primary); }
+.chat-item__draft svg { flex: 0 0 auto; }
 .chat-item__tags { display: flex; flex-wrap: wrap; gap: var(--bt-space-1); margin-top: 2px; }
 
 /* Prévia ao parar o mouse num item: não captura o ponteiro, some ao sair. */
