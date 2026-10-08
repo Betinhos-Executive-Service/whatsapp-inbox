@@ -1143,9 +1143,29 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     async (localId: string) => {
       const out = outbox.current.get(localId);
       if (!out) return;
+      const startedAt = Date.now();
       setMessages((list) => list && list.map((x) => (x.id === localId ? { ...x, pending: "sending" } : x)));
+      // Se a bolha já foi trocada pela real (SSE) ou a real já está no fim da conversa, some com a local.
+      const settle = (fresh: Message[]) => {
+        const sent = fresh.some((x) => x.fromMe && x.text === out.text && x.at >= startedAt - 5_000);
+        setMessages((list) => {
+          if (!list) return list;
+          const merged = mergeTail(list, fresh);
+          return sent ? merged.filter((x) => x.id !== localId) : merged;
+        });
+        return sent;
+      };
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const updated = await api.send(chat.jid, out.text, { quotedId: out.quotedId, quotedChat: out.quotedChat, mentions: out.mentions.length ? out.mentions : undefined, mentionAll: out.mentionAll });
+        // Sem resposta do servidor em 6 s: confere se saiu mesmo assim antes de marcar falha.
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("O servidor não confirmou o envio.")), 20_000);
+        });
+        const updated = await Promise.race([
+          api.send(chat.jid, out.text, { quotedId: out.quotedId, quotedChat: out.quotedChat, mentions: out.mentions.length ? out.mentions : undefined, mentionAll: out.mentionAll }),
+          timeout,
+        ]);
+        clearTimeout(timer);
         outbox.current.delete(localId);
         onChat(updated);
         // A versão real chega pelo SSE e já substitui a bolha; se não chegou, recarrega o fim da conversa.
@@ -1155,7 +1175,13 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           () => undefined,
         );
       } catch (e) {
-        setMessages((list) => list && list.map((x) => (x.id === localId ? { ...x, pending: "failed" } : x)));
+        clearTimeout(timer);
+        const sent = await api.messages(chat.jid).then(settle, () => false);
+        if (sent) {
+          outbox.current.delete(localId);
+          return;
+        }
+        setMessages((list) => list && list.map((x) => (x.id === localId && x.pending === "sending" ? { ...x, pending: "failed" } : x)));
         notify("error", `Mensagem não enviada. ${(e as Error).message}`);
       }
     },
