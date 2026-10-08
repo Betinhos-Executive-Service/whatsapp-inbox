@@ -48,7 +48,25 @@ export type ConnectionState = { status: ConnectionStatus; qr: string | null; me:
 const LIVE_WINDOW_MS = 2 * 60 * 1000;
 /** A agenda é pedida de novo a cada 6 h: nomes salvos no celular depois chegam sozinhos. */
 const CONTACTS_RESYNC_MS = 6 * 60 * 60 * 1000;
-const logger = pino({ level: "silent" });
+/**
+ * O Baileys descarta as respostas rápidas do WhatsApp Business ("unprocessable update"), mas avisa no
+ * log de debug. O logger fica mudo e só repassa essas ações a quem estiver ouvindo.
+ */
+type QuickReplySync = { id: string; shortcut: string; text: string; deleted: boolean };
+const quickReplyListeners = new Set<(q: QuickReplySync) => void>();
+const logger = pino({
+  level: "debug",
+  hooks: {
+    logMethod(args) {
+      const m = (args[0] as { syncAction?: { syncAction?: { value?: { quickReplyAction?: { shortcut?: string | null; message?: string | null; deleted?: boolean | null } } }; index?: string[] } })?.syncAction;
+      const q = m?.syncAction?.value?.quickReplyAction;
+      if (q && quickReplyListeners.size) {
+        const item = { id: String(m?.index?.[1] ?? q.shortcut ?? ""), shortcut: q.shortcut ?? "", text: q.message ?? "", deleted: !!q.deleted };
+        quickReplyListeners.forEach((fn) => fn(item));
+      }
+    },
+  },
+});
 /** "Silenciar sempre" no app: a maior data possível (a mesma da tela). */
 const MUTE_FOREVER = 8_640_000_000_000_000;
 /** Fim do silêncio vindo do celular: null/0 = não silenciada; -1 = sempre. */
@@ -779,6 +797,31 @@ export class WhatsApp extends EventEmitter<{
     } catch (error) {
       process.stderr.write(`[whatsapp] agenda não sincronizou: ${error instanceof Error ? error.message : error}\n`);
     }
+  }
+
+  /**
+   * Relê do celular as respostas rápidas do WhatsApp Business. Zera a versão das coleções do app state
+   * para receber o retrato completo (o que já existe é reaplicado sem efeito). Só leitura no celular.
+   */
+  async businessQuickReplies(): Promise<{ shortcut: string; text: string }[]> {
+    const sock = this.ready();
+    if (!(await this.hasAppStateKey(sock))) {
+      await this.requestAppStateKey(sock);
+      throw new Error("Falta a chave de sincronização do celular. Abra o WhatsApp no celular e tente de novo em instantes.");
+    }
+    const found = new Map<string, QuickReplySync>();
+    const listen = (q: QuickReplySync) => void found.set(q.id, q);
+    quickReplyListeners.add(listen);
+    try {
+      const names = ["regular", "regular_low", "regular_high"] as const;
+      await sock.authState.keys.set({ "app-state-sync-version": Object.fromEntries(names.map((n) => [n, null])) });
+      await sock.resyncAppState([...names], false);
+    } finally {
+      quickReplyListeners.delete(listen);
+    }
+    return [...found.values()]
+      .filter((q) => !q.deleted && q.shortcut.trim() && q.text.trim())
+      .map((q) => ({ shortcut: q.shortcut.trim().replace(/^\//, ""), text: q.text }));
   }
 
   private ready(): WASocket {

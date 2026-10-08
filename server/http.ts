@@ -55,6 +55,7 @@ export type Api = {
   send: (jid: string, text: string, opts: { quotedId?: string; quotedChat?: string; mentions?: string[]; mentionAll?: boolean }) => Promise<void>;
   sendMedia: (jid: string, file: { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number }, quotedId?: string) => Promise<void>;
   sendPoll: (jid: string, question: string, options: string[], multiple: boolean) => Promise<void>;
+  businessQuickReplies: () => Promise<{ shortcut: string; text: string }[]>;
   vote: (jid: string, id: string, options: string[]) => Promise<unknown>;
   sendLocation: (jid: string, place: { lat: number; lng: number; name?: string; address?: string }) => Promise<void>;
   sendContacts: (jid: string, contacts: { name: string; phone: string }[]) => Promise<void>;
@@ -209,6 +210,27 @@ const quickRepliesSchema = z
   )
   .max(100)
   .refine((l) => new Set(l.map((x) => x.shortcut)).size === l.length, "Há respostas rápidas com o mesmo atalho.");
+
+/** Atalho do WhatsApp Business ("/Bom Dia") no formato do app ("bom-dia"). */
+export const toShortcut = (raw: string): string =>
+  raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30);
+
+/** Junta as importadas às locais: mesmo atalho atualiza o texto; novas vão ao fim (limite de 100). */
+export function mergeQuickReplies(current: { shortcut: string; text: string }[], incoming: { shortcut: string; text: string }[]) {
+  const list = current.map((q) => ({ ...q }));
+  let added = 0;
+  let updated = 0;
+  for (const q of incoming) {
+    const shortcut = toShortcut(q.shortcut);
+    const text = q.text.trim().slice(0, 4096);
+    if (!shortcut || !text) continue;
+    const same = list.find((x) => x.shortcut === shortcut);
+    if (same) {
+      if (same.text !== text) (same.text = text), updated++;
+    } else if (list.length < 100) list.push({ shortcut, text }), added++;
+  }
+  return { list, added, updated };
+}
 
 const settingsSchema = z.object({
   prefs: prefsSchema.partial().optional(),
@@ -642,6 +664,12 @@ export function createHandler(api: Api) {
     if (path === "/api/quick-replies" && method === "GET") return json(res, 200, store.listQuickReplies());
     if (path === "/api/quick-replies" && method === "PUT") {
       return json(res, 200, store.saveQuickReplies(parse(quickRepliesSchema, await readJson(req))));
+    }
+    if (path === "/api/quick-replies/import" && method === "POST") {
+      await readJson(req);
+      const imported = await api.businessQuickReplies();
+      const merged = mergeQuickReplies(store.listQuickReplies(), imported);
+      return json(res, 200, { list: store.saveQuickReplies(merged.list), added: merged.added, updated: merged.updated, found: imported.length });
     }
     if (path === "/api/labels" && method === "GET") return json(res, 200, store.listLabels());
     if (path === "/api/labels" && method === "PUT") {

@@ -279,6 +279,8 @@ export const api = {
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
   quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
+  importQuickReplies: () =>
+    request<{ list: QuickReply[]; added: number; updated: number; found: number }>("POST", "/api/quick-replies/import", {}),
   cachedTranscript: (jid: string, id: string) =>
     request<{ text: string | null; summary: AudioSummary | null }>("GET", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`),
   summarizeAudio: (jid: string, id: string, force = false) =>

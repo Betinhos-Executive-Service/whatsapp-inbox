@@ -191,6 +191,7 @@ test("HTTP: bloqueia Host/Origin estranhos e escrita sem JSON; valida etiquetas"
       typing: async () => undefined,
       sendMedia: async (_jid, file) => void sentMedia.push(file),
       sendPoll: async () => undefined,
+      businessQuickReplies: async () => [],
       vote: async () => null,
       sendLocation: async () => undefined,
       sendContacts: async () => undefined,
