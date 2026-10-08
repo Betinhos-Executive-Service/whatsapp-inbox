@@ -759,6 +759,15 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
             {newDay && <div className="day">{dayLabel(m.at)}</div>}
             <div
               className="message-line"
+              onDoubleClick={(e) => {
+                // Duplo clique na bolha entra no modo de resposta, como no WhatsApp. Ignora
+                // controles (botões, links, mídia), bolhas ainda não confirmadas pelo servidor
+                // e o modo de seleção (ali o clique marca/desmarca).
+                if (selected || m.pending || !canAct) return;
+                if ((e.target as HTMLElement).closest("button, a, audio, video, input, textarea")) return;
+                window.getSelection()?.removeAllRanges();
+                onReply(m);
+              }}
               onClickCapture={(e) => {
                 // Selecionando: clicar em qualquer ponto da mensagem marca/desmarca (links e mídia não abrem).
                 if (!selected) return;
