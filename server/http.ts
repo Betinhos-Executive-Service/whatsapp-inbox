@@ -5,6 +5,7 @@ import { z } from "zod";
 import { claudeOptionsSchema, type ClaudeOptions } from "./claude.ts";
 import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
 import { STATUSES, type Store } from "./db.ts";
+import { linkPreview } from "./link-preview.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
 
 /** Documento sem tipo (octet-stream): deduz pela extensão os formatos que a visualização abre. */
@@ -40,6 +41,9 @@ export type Api = {
   react: (jid: string, id: string, emoji: string) => Promise<void>;
   editMessage: (jid: string, id: string, text: string) => Promise<void>;
   forward: (from: string, id: string, to: string) => Promise<void>;
+  sendContacts: (jid: string, list: { name: string; phone: string }[]) => Promise<void>;
+  /** Abre (ou cria vazia) a conversa com o número, para o "Conversar" do cartão de contato. */
+  openChat: (phone: string) => unknown;
   /** Conversa aberta na tela: assina o "digitando" do contato. */
   watch: (jid: string) => Promise<void>;
   typing: (jid: string, state: "composing" | "paused") => Promise<void>;
@@ -234,6 +238,15 @@ export function createHandler(api: Api) {
     if (path === "/api/events" && method === "GET") return api.subscribe(res);
     if (path === "/api/state" && method === "GET") return json(res, 200, api.state());
     if (path === "/api/chats" && method === "GET") return json(res, 200, store.listChats());
+    if (path === "/api/link-preview" && method === "GET") {
+      const target = url.searchParams.get("url") ?? "";
+      if (!/^https?:\/\//i.test(target) || target.length > 2048) throw new HttpError(400, "Link inválido.");
+      return json(res, 200, await linkPreview(target));
+    }
+    if (path === "/api/open-chat" && method === "POST") {
+      const { phone } = parse(z.object({ phone: z.string().regex(/^\d{8,15}$/, "Número inválido.") }), await readJson(req));
+      return json(res, 200, api.openChat(phone));
+    }
     if (path === "/api/search" && method === "GET") {
       const q = (url.searchParams.get("q") ?? "").slice(0, 200);
       return json(res, 200, store.search(q));
@@ -273,6 +286,14 @@ export function createHandler(api: Api) {
         if (!body.length) throw new HttpError(400, "Arquivo vazio.");
         if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
         await api.sendMedia(jid, { ...file, body }, quotedId);
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/send-contacts" && method === "POST") {
+        const { contacts } = parse(
+          z.object({ contacts: z.array(z.object({ name: z.string().trim().min(1).max(200), phone: z.string().regex(/^\d{8,15}$/, "Número inválido.") })).min(1).max(20) }),
+          await readJson(req),
+        );
+        await api.sendContacts(jid, contacts);
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/send" && method === "POST") {
