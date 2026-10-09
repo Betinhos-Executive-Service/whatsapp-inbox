@@ -265,6 +265,7 @@ export const api = {
   pendingDraftMediaUrl: (jid: string) => `${chatPath(jid)}/pending-draft/media`,
   send: (jid: string, text: string, opts: { quotedId?: string; quotedChat?: string; mentions?: string[]; mentionAll?: boolean } = {}) =>
     request<Chat>("POST", `${chatPath(jid)}/send`, { text, ...opts }),
+  sendLog: () => request<{ file: string; lines: string[] }>("GET", "/api/send-log"),
   sendPoll: (jid: string, poll: { question: string; options: string[]; multiple: boolean }) => request<Chat>("POST", `${chatPath(jid)}/poll`, poll),
   vote: (jid: string, id: string, options: string[]) => request<Message | null>("POST", `${chatPath(jid)}/vote`, { id, options }),
   sendLocation: (jid: string, place: { lat: number; lng: number; name?: string; address?: string }) => request<Chat>("POST", `${chatPath(jid)}/location`, place),

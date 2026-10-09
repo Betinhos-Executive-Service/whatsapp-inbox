@@ -1575,3 +1575,9 @@ kbd {
 .contact-card__action:disabled { opacity: var(--bt-opacity-disabled); cursor: not-allowed; }
 .contact-card__action:focus-visible { outline: 0; box-shadow: inset var(--bt-focus-ring); }
 @media (hover: hover) and (pointer: fine) { .contact-card__action:hover:not(:disabled) { background-color: var(--bt-color-action-soft); } }
+
+/* Log de envios (Configurações › Conta e dados): lista neutra, erro em destaque. */
+.send-log { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; border: var(--bt-border-width-default) solid var(--bt-color-border); border-radius: var(--bt-radius-md); background-color: var(--bt-color-surface-neutral); }
+.send-log__line { padding: var(--bt-space-1) var(--bt-space-2); font-family: var(--bt-font-family-mono); font-size: var(--bt-font-size-12); color: var(--bt-color-text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); }
+.send-log__line:last-child { border-bottom: 0; }
+.send-log__line--error { color: var(--bt-color-danger); background-color: var(--bt-color-danger-soft); }
