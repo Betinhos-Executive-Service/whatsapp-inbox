@@ -301,7 +301,7 @@ ul, ol { margin: 0; padding: 0; }
 .chat-item__meta-icon { flex: 0 0 auto; color: var(--bt-color-text-secondary); }
 .chat-item__meta-icon--due { color: var(--bt-color-warning); }
 /* Botões de status no próprio item. O ativo é um círculo cheio na cor do status (legível até
-   sobre o fundo azul da conversa selecionada) e um pouco maior; os demais encolhem. A troca anima rápido. */
+   sobre o fundo azul da conversa selecionada), no mesmo tamanho dos demais. A troca anima rápido. */
 .chat-status { position: absolute; right: var(--bt-space-4); bottom: var(--bt-space-2); display: flex; align-items: center; gap: var(--bt-space-1); }
 .chat-status__item {
   display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0;
@@ -309,7 +309,7 @@ ul, ol { margin: 0; padding: 0; }
   color: var(--bt-color-text-secondary); opacity: .55; transform: scale(.85);
   transition: transform var(--bt-duration-fast) var(--bt-ease-out), opacity var(--bt-duration-fast) ease, background-color var(--bt-duration-fast) ease, color var(--bt-duration-fast) ease;
 }
-.chat-status__item[aria-checked='true'] { opacity: 1; transform: scale(1.1); color: var(--bt-color-white); }
+.chat-status__item[aria-checked='true'] { opacity: 1; transform: scale(.85); color: var(--bt-color-white); }
 .chat-status__item--action[aria-checked='true'] { background-color: var(--bt-color-action); }
 .chat-status__item--warning[aria-checked='true'] { background-color: var(--bt-color-warning); }
 .chat-status__item--success[aria-checked='true'] { background-color: var(--bt-color-success); }
