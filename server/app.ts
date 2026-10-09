@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { Store, type Chat, type Label, type Message, type QuickReply, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { cacheMedia, loadMedia } from "./media.ts";
+import { DeliveryLog } from "./delivery-log.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
 import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPTIONS, findClaudeBin, isClaudeModel, parseClaudeOptions, runClaude, type ClaudeModel } from "./claude.ts";
 import { addArgs, displayCommand, getArgs, isRegistered, removeArgs, type McpEntry } from "./mcp-register.ts";
@@ -85,6 +86,8 @@ const PER_NUMBER_SETTINGS = new Set(["account", "contacts_backfill", "wa_version
 export async function startApp(options: AppOptions): Promise<RunningApp> {
   mkdirSync(options.dataDir, { recursive: true });
   const store = new Store(join(options.dataDir, "inbox.db"));
+  // Cada tentativa de envio (confirmada ou não) fica em texto, para conferir o que de fato saiu.
+  const deliveryLog = new DeliveryLog(join(options.dataDir, "envios.log"));
   const disabled = !!options.waDisabled;
   let port = options.port;
 
@@ -401,6 +404,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     });
     client.on("chat", (chat) => broadcast("chat", chat));
     client.on("update", (u) => broadcast("update", u));
+    client.on("remove", (r) => broadcast("remove", r));
+    client.on("delivery", (entry) => deliveryLog.record(entry));
     client.on("presence", (p) => broadcast("presence", p));
     client.on("reload", () => broadcast("reload", null));
     client.on("message", ({ message, chat, live }) => {
@@ -544,14 +549,21 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     token,
     distDir: options.distDir,
     state: publicState,
-    send: (jid, text, opts) =>
-      connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(opts.quotedChat ?? jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll }),
+    send: async (jid, text, opts) => {
+      await connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(opts.quotedChat ?? jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll });
+    },
     sendMedia,
-    sendPoll: (jid, question, options, multiple) => connected().sendPoll(jid, question, options, multiple),
+    sendPoll: async (jid, question, options, multiple) => {
+      await connected().sendPoll(jid, question, options, multiple);
+    },
     businessQuickReplies: () => connected().businessQuickReplies(),
     vote: (jid, id, options) => connected().votePoll(jid, id, options),
-    sendLocation: (jid, place) => connected().sendLocation(jid, place),
-    sendContacts: (jid, contacts) => connected().sendContacts(jid, contacts),
+    sendLocation: async (jid, place) => {
+      await connected().sendLocation(jid, place);
+    },
+    sendContacts: async (jid, contacts) => {
+      await connected().sendContacts(jid, contacts);
+    },
     sendSticker: async (jid, from) => {
       const m = store.getMessage(from.chatJid, from.id);
       if (m?.media?.type !== "sticker") throw new Error("Figurinha não encontrada.");
@@ -590,16 +602,28 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       const text = store.messageText(from, id) ?? "";
       // Enquete e localização vão no próprio formato, não como texto "[Enquete] …".
       const extra = store.messageExtra(from, id);
-      if (extra?.type === "poll") return connected().sendPoll(to, extra.question, extra.options, extra.selectable !== 1);
-      if (extra?.type === "location") return connected().sendLocation(to, { lat: extra.lat, lng: extra.lng, name: extra.name ?? undefined, address: extra.address ?? undefined });
+      if (extra?.type === "poll") {
+        await connected().sendPoll(to, extra.question, extra.options, extra.selectable !== 1);
+        return;
+      }
+      if (extra?.type === "location") {
+        await connected().sendLocation(to, { lat: extra.lat, lng: extra.lng, name: extra.name ?? undefined, address: extra.address ?? undefined });
+        return;
+      }
       const cards = m.contacts?.flatMap((c) => (c.phones[0] ? [{ name: c.name, phone: c.phones[0].wa ?? c.phones[0].number }] : []));
-      if (cards?.length) return connected().sendContacts(to, cards);
+      if (cards?.length) {
+        await connected().sendContacts(to, cards);
+        return;
+      }
       if (m.kind === "call" || m.kind === "system") throw new Error("Avisos e ligações não podem ser encaminhados.");
       if (m.media?.type === "sticker") {
         const file = await readMedia(from, id);
         return sendMedia(to, { body: file.body, mimetype: "image/webp", fileName: "figurinha.webp", sticker: true });
       }
-      if (!m.media) return connected().send(to, text);
+      if (!m.media) {
+        await connected().send(to, text);
+        return;
+      }
       // Mídia: baixa (ou lê do cache) e envia de novo, com a mesma legenda.
       const file = await readMedia(from, id);
       let caption = text.replace(/^\[[^\]]+\]\s*/, "");
@@ -807,6 +831,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       broadcast("chat", chat);
       return chat;
     },
+    sendLog: () => ({ file: deliveryLog.file, lines: deliveryLog.tail(200) }),
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
       store.db.prepare("vacuum into ?").run(file);

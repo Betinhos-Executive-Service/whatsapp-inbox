@@ -304,6 +304,44 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
 }
 
 /** Contas do WhatsApp neste app: cada uma é separada (conversas, número e configurações). */
+/** Log de envios: cada tentativa com resultado, destino, id e tempo; os erros ficam em destaque. */
+function SendLogPanel() {
+  const [log, setLog] = useState<{ file: string; lines: string[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [onlyErrors, setOnlyErrors] = useState(false);
+  const load = () => {
+    setError(null);
+    api.sendLog().then(setLog, (e: Error) => setError(e.message));
+  };
+  useEffect(load, []);
+  const lines = log ? (onlyErrors ? log.lines.filter((l) => l.includes("  ERRO  ")) : log.lines) : [];
+  const failures = log ? log.lines.filter((l) => l.includes("  ERRO  ")).length : 0;
+  return (
+    <section className="surface stack">
+      <h3 className="eyebrow">Log de envios</h3>
+      <p className="hint">
+        Uma mensagem só aparece como enviada depois que o WhatsApp confirma o recebimento. Sem confirmação em 20 s, ela sai da conversa e fica aqui como erro.
+        {log?.file && <> Arquivo: <code>{log.file}</code></>}
+      </p>
+      <div className="cluster">
+        <Button variant="secondary" size="compact" icon={<RefreshCw size={14} aria-hidden />} onClick={load}>
+          Atualizar
+        </Button>
+        <Checkbox checked={onlyErrors} onChange={(e) => setOnlyErrors(e.target.checked)} label={`Só erros${log ? ` (${failures})` : ""}`} />
+      </div>
+      {error && <p className="hint hint--warning" role="alert">{error}</p>}
+      {log && !lines.length && <p className="hint">{onlyErrors ? "Nenhum erro registrado." : "Nenhum envio registrado ainda."}</p>}
+      {lines.length > 0 && (
+        <ol className="send-log" aria-label="Tentativas de envio, da mais recente para a mais antiga">
+          {lines.map((line, i) => (
+            <li key={i} className={`send-log__line${line.includes("  ERRO  ") ? " send-log__line--error" : ""}`}>{line}</li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 function AccountsPanel() {
   const bridge = desktop();
   const account = useAccount();
@@ -990,6 +1028,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
               )}
             </section>
           )}
+          {tab === "conta" && <SendLogPanel />}
         </div>
 
         <footer className="drawer__footer">

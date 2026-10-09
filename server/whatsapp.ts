@@ -19,6 +19,7 @@ import makeWASocket, {
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
+import type { DeliveryEntry } from "./delivery-log.ts";
 import { buildVcard, extractContacts } from "./contacts.ts";
 import { sendPreview } from "./link-preview.ts";
 import { decryptVote, encryptVote, optionsFromHashes } from "./poll.ts";
@@ -67,6 +68,19 @@ const logger = pino({
     },
   },
 });
+/** Quanto esperar o ack do servidor antes de tratar o envio como não feito. */
+const ACK_TIMEOUT_MS = 20_000;
+/** Por quanto tempo uma mensagem não confirmada ainda pode voltar se o ack chegar atrasado. */
+const ABANDONED_TTL_MS = 10 * 60_000;
+/** Status "chegou ao servidor" (um tique), o mesmo número do WhatsApp. */
+const SERVER_ACK = proto.WebMessageInfo.Status.SERVER_ACK;
+/** Erros do ack em texto para a pessoa; os demais ficam só com o código. */
+const ackError = (code: string): string =>
+  code === "463"
+    ? "O WhatsApp bloqueou o envio para este número (conta restrita para iniciar conversas)."
+    : code === "479"
+      ? "O WhatsApp recusou a mensagem (sessão do aparelho desatualizada). Tente de novo em instantes."
+      : `O WhatsApp recusou a mensagem (erro ${code}).`;
 /** "Silenciar sempre" no app: a maior data possível (a mesma da tela). */
 const MUTE_FOREVER = 8_640_000_000_000_000;
 /** Fim do silêncio vindo do celular: null/0 = não silenciada; -1 = sempre. */
@@ -137,9 +151,19 @@ export class WhatsApp extends EventEmitter<{
   chat: [Chat];
   /** Contato digitando ou gravando áudio; null = parou. */
   presence: [{ jid: string; state: "composing" | "recording" | null }];
+  /** Mensagem que o WhatsApp não confirmou saiu da conversa (a tela tira a bolha). */
+  remove: [{ chatJid: string; id: string; chat: Chat }];
+  /** Resultado de cada tentativa de envio (texto, anexo, enquete…), confirmado ou não, para o log. */
+  delivery: [DeliveryEntry];
   reload: [];
 }> {
   state: ConnectionState = { status: "iniciando", qr: null, me: null, error: null };
+  /** Envios à espera do ack do servidor, por id: resolve no ack bom, rejeita no ack com erro ou na queda. */
+  private pendingAcks = new Map<string, { chatJid: string; resolve: () => void; reject: (e: Error) => void }>();
+  /** Enviadas sem confirmação a tempo (já fora da conversa): se o ack chegar atrasado, voltam para a tela. */
+  private abandoned = new Map<string, WAMessage>();
+  /** Espera pelo ack do servidor; os testes encurtam. */
+  ackTimeoutMs = ACK_TIMEOUT_MS;
   private sock: WASocket | null = null;
   /** Arquivar/desarquivar feito aqui que ainda não chegou ao celular (ex.: faltava a chave). */
   private pendingArchive = new Map<string, boolean>();
@@ -621,6 +645,8 @@ export class WhatsApp extends EventEmitter<{
       },
     });
     this.sock = sock;
+    // Ack do servidor para cada stanza enviada. O Baileys só trata o ack com erro; o ack bom (um tique) fica conosco.
+    (sock.ws as unknown as EventEmitter).on("CB:ack,class:message", (node: { attrs: Record<string, string | undefined> }) => this.applyAck(node.attrs));
 
     sock.ev.on("creds.update", (update) => {
       // Logo depois de ler o QR o número já é conhecido, antes do histórico chegar.
@@ -654,6 +680,7 @@ export class WhatsApp extends EventEmitter<{
       if (u.connection === "close") {
         if (this.sock !== sock) return;
         this.sock = null;
+        this.failPending("A conexão com o WhatsApp caiu antes da confirmação.");
         const code = (u.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
         if (this.stopped) return;
         if (code === DisconnectReason.loggedOut) {
@@ -829,6 +856,85 @@ export class WhatsApp extends EventEmitter<{
     return this.sock;
   }
 
+  /** `<ack class="message">` do servidor: sem `error` a mensagem chegou ao WhatsApp (um tique); com `error`, foi recusada. */
+  private applyAck(attrs: Record<string, string | undefined>) {
+    const id = attrs.id;
+    if (!id) return;
+    const waiting = this.pendingAcks.get(id);
+    if (attrs.error) {
+      if (waiting) {
+        this.pendingAcks.delete(id);
+        waiting.reject(new Error(ackError(attrs.error)));
+      }
+      return;
+    }
+    const late = this.abandoned.get(id);
+    if (late) {
+      // Confirmação atrasada de algo que já tinha saído da tela: a mensagem chegou, então volta.
+      this.abandoned.delete(id);
+      this.ingest(late, true);
+    }
+    const chatJid = waiting?.chatJid ?? (late?.key.remoteJid ? this.canonical(late.key.remoteJid, late.key.remoteJidAlt) : null);
+    if (chatJid) {
+      const message = this.store.setAck(chatJid, id, SERVER_ACK);
+      if (message) this.emit("update", { message, chat: this.store.getChat(chatJid)! });
+    }
+    if (waiting) {
+      this.pendingAcks.delete(id);
+      waiting.resolve();
+    }
+  }
+
+  /** Mede e registra a tentativa (sucesso ou erro) no evento `delivery`; o erro continua subindo. */
+  private async tracked(kind: string, jid: string, run: () => Promise<string | null>): Promise<string | null> {
+    const startedAt = Date.now();
+    try {
+      const id = await run();
+      this.emit("delivery", { kind, jid, id, ok: true, ms: Date.now() - startedAt });
+      return id;
+    } catch (error) {
+      this.emit("delivery", { kind, jid, ok: false, ms: Date.now() - startedAt, error: (error as Error).message });
+      throw error;
+    }
+  }
+
+  private failPending(reason: string) {
+    for (const [id, waiting] of this.pendingAcks) {
+      this.pendingAcks.delete(id);
+      waiting.reject(new Error(reason));
+    }
+  }
+
+  /**
+   * Garante o envio: a mensagem só conta como enviada depois do ack do servidor. Sem ack a tempo, ou com
+   * ack de erro, ela sai da conversa (para não parecer enviada) e o erro sobe até a tela.
+   */
+  private async confirm(sent: WAMessage | undefined): Promise<WAMessage> {
+    const id = sent?.key.id;
+    if (!sent || !id || !sent.key.remoteJid) throw new Error("O WhatsApp não devolveu a mensagem enviada.");
+    const chatJid = this.canonical(sent.key.remoteJid, sent.key.remoteJidAlt);
+    this.ingest(sent, true);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pendingAcks.delete(id);
+          reject(new Error(`O WhatsApp não confirmou o recebimento em ${Math.round(this.ackTimeoutMs / 1000)} s. Confira a conexão e tente de novo.`));
+        }, this.ackTimeoutMs);
+        this.pendingAcks.set(id, {
+          chatJid,
+          resolve: () => (clearTimeout(timer), resolve()),
+          reject: (e) => (clearTimeout(timer), reject(e)),
+        });
+      });
+    } catch (error) {
+      this.abandoned.set(id, sent);
+      setTimeout(() => this.abandoned.delete(id), ABANDONED_TTL_MS).unref();
+      if (this.store.deleteMessage(chatJid, id)) this.emit("remove", { chatJid, id, chat: this.store.getChat(chatJid)! });
+      throw error;
+    }
+    return sent;
+  }
+
   /** Mensagem mínima para a citação: chave + texto. */
   private quoted(ref: MessageKeyRef | null | undefined): { quoted: WAMessage } | undefined {
     if (!ref) return undefined;
@@ -846,7 +952,12 @@ export class WhatsApp extends EventEmitter<{
     return { ...this.quoted(quoted), ...(ephemeral ? { ephemeralExpiration: ephemeral } : {}) };
   }
 
-  async send(jid: string, text: string, opts: SendOptions = {}): Promise<void> {
+  /** Texto. Só resolve depois do ack do servidor; devolve o id enviado. */
+  async send(jid: string, text: string, opts: SendOptions = {}): Promise<string | null> {
+    return this.tracked("texto", jid, () => this.sendText(jid, text, opts));
+  }
+
+  private async sendText(jid: string, text: string, opts: SendOptions): Promise<string | null> {
     const sock = this.ready();
     const all = opts.mentionAll && isJidGroup(jid);
     // "@todos": marca o grupo (nonJidMentions) e menciona cada participante, para todos serem
@@ -857,13 +968,15 @@ export class WhatsApp extends EventEmitter<{
     // Prévia do primeiro link (título, descrição e miniatura), como o WhatsApp faz ao digitar.
     const preview = await sendPreview(text).catch(() => null);
     const sent = await sock.sendMessage(jid, { text, ...mentions, ...(preview ? { linkPreview: preview } : {}) }, this.sendOptions(jid, opts.quoted));
-    if (sent) this.ingest(sent, true);
+    return (await this.confirm(sent)).key.id ?? null;
   }
 
   /** Enquete; `multiple` deixa marcar mais de uma opção. */
-  async sendPoll(jid: string, question: string, options: string[], multiple: boolean): Promise<void> {
-    const sent = await this.ready().sendMessage(jid, { poll: { name: question, values: options, selectableCount: multiple ? 0 : 1 } }, this.sendOptions(jid));
-    if (sent) this.ingest(sent, true);
+  async sendPoll(jid: string, question: string, options: string[], multiple: boolean): Promise<string | null> {
+    return this.tracked("enquete", jid, async () => {
+      const sent = await this.ready().sendMessage(jid, { poll: { name: question, values: options, selectableCount: multiple ? 0 : 1 } }, this.sendOptions(jid));
+      return (await this.confirm(sent)).key.id ?? null;
+    });
   }
 
   /** Meu voto (lista vazia tira o voto). Vai cifrado como o do celular e já conta aqui. */
@@ -906,17 +1019,21 @@ export class WhatsApp extends EventEmitter<{
     return message;
   }
 
-  async sendLocation(jid: string, place: { lat: number; lng: number; name?: string; address?: string }): Promise<void> {
-    const location = { degreesLatitude: place.lat, degreesLongitude: place.lng, ...(place.name ? { name: place.name } : {}), ...(place.address ? { address: place.address } : {}) };
-    const sent = await this.ready().sendMessage(jid, { location }, this.sendOptions(jid));
-    if (sent) this.ingest(sent, true);
+  async sendLocation(jid: string, place: { lat: number; lng: number; name?: string; address?: string }): Promise<string | null> {
+    return this.tracked("local", jid, async () => {
+      const location = { degreesLatitude: place.lat, degreesLongitude: place.lng, ...(place.name ? { name: place.name } : {}), ...(place.address ? { address: place.address } : {}) };
+      const sent = await this.ready().sendMessage(jid, { location }, this.sendOptions(jid));
+      return (await this.confirm(sent)).key.id ?? null;
+    });
   }
 
-  async sendContacts(jid: string, contacts: { name: string; phone: string }[]): Promise<void> {
-    const cards = contacts.map((c) => ({ displayName: c.name, vcard: buildVcard(c.name, c.phone) }));
-    const displayName = cards.length === 1 ? cards[0].displayName : `${cards.length} contatos`;
-    const sent = await this.ready().sendMessage(jid, { contacts: { displayName, contacts: cards } }, this.sendOptions(jid));
-    if (sent) this.ingest(sent, true);
+  async sendContacts(jid: string, contacts: { name: string; phone: string }[]): Promise<string | null> {
+    return this.tracked("contato", jid, async () => {
+      const cards = contacts.map((c) => ({ displayName: c.name, vcard: buildVcard(c.name, c.phone) }));
+      const displayName = cards.length === 1 ? cards[0].displayName : `${cards.length} contatos`;
+      const sent = await this.ready().sendMessage(jid, { contacts: { displayName, contacts: cards } }, this.sendOptions(jid));
+      return (await this.confirm(sent)).key.id ?? null;
+    });
   }
 
   /** Chave de uma mensagem guardada, no formato do WhatsApp. */
@@ -1175,6 +1292,11 @@ export class WhatsApp extends EventEmitter<{
 
   /** Envia anexo; o tipo da mensagem (imagem, vídeo, voz, documento) sai do mimetype. Devolve o id enviado. */
   async sendMedia(jid: string, file: OutgoingFile, opts: SendOptions = {}): Promise<string | null> {
+    const kind = file.sticker ? "figurinha" : file.ptt ? "voz" : file.mimetype.split("/")[0] === "image" ? "imagem" : file.mimetype.startsWith("video/") ? "vídeo" : file.mimetype.startsWith("audio/") ? "áudio" : "arquivo";
+    return this.tracked(kind, jid, () => this.sendFile(jid, file, opts));
+  }
+
+  private async sendFile(jid: string, file: OutgoingFile, opts: SendOptions): Promise<string | null> {
     const sock = this.ready();
     const { body, fileName } = file;
     const caption = file.caption?.trim() || undefined;
@@ -1190,9 +1312,7 @@ export class WhatsApp extends EventEmitter<{
           : base.startsWith("audio/")
             ? { audio: body, mimetype: base }
             : { document: body, mimetype: base || "application/octet-stream", fileName, caption };
-    const sent = await sock.sendMessage(jid, content, this.sendOptions(jid, opts.quoted));
-    if (!sent) return null;
-    this.ingest(sent, true);
+    const sent = await this.confirm(await sock.sendMessage(jid, content, this.sendOptions(jid, opts.quoted)));
     return sent.key.id ?? null;
   }
 

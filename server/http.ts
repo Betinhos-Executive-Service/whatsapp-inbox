@@ -132,6 +132,8 @@ export type Api = {
   proposeVoucher: (jid: string, caption: string, voucher: Voucher) => Promise<unknown>;
   /** Caminho de uma cópia consistente do banco, para download. */
   backup: () => Promise<string>;
+  /** Log de envios: arquivo e últimas linhas (mais recente primeiro). */
+  sendLog: () => { file: string; lines: string[] };
   subscribe: (res: ServerResponse) => void;
   onChatChanged: (jid: string) => void;
 };
@@ -814,6 +816,7 @@ export function createHandler(api: Api) {
       await api.reset(reconnect);
       return json(res, 200, api.state());
     }
+    if (path === "/api/send-log" && method === "GET") return json(res, 200, api.sendLog());
     if (path === "/api/backup" && method === "GET") {
       const file = await api.backup();
       try {

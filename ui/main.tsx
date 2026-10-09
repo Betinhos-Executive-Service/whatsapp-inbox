@@ -1312,9 +1312,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       };
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        // Sem resposta do servidor em 6 s: confere se saiu mesmo assim antes de marcar falha.
+        // O servidor espera até 20 s pela confirmação do WhatsApp; sem resposta em 30 s, confere se saiu antes de marcar falha.
         const timeout = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error("O servidor não confirmou o envio.")), 6_000);
+          timer = setTimeout(() => reject(new Error("O app não respondeu ao envio.")), 30_000);
         });
         const updated = await Promise.race([
           api.send(chat.jid, out.text, { quotedId: out.quotedId, quotedChat: out.quotedChat, mentions: out.mentions.length ? out.mentions : undefined, mentionAll: out.mentionAll }),
