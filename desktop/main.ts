@@ -2,7 +2,7 @@
 // próprio Electron, mostra cada conta numa área própria da mesma janela e mantém tudo rodando
 // na bandeja quando a janela é fechada. Cada conta é uma instância separada (dados, auth e
 // configurações próprios); a troca de conta só alterna qual área aparece.
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell, Tray, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell, Tray, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -533,6 +533,33 @@ function setupIpc() {
 
 // ---- janela e bandeja
 
+/** Menu de botão direito com recortar, copiar e colar: sem menu de aplicativo, o Electron não mostra nenhum. */
+function editMenu(wc: WebContents) {
+  wc.on("context-menu", (_event, params) => {
+    const { editFlags, isEditable, selectionText, linkURL } = params;
+    const items: Electron.MenuItemConstructorOptions[] = [];
+    if (isEditable) {
+      items.push(
+        { label: "Desfazer", role: "undo", enabled: editFlags.canUndo },
+        { label: "Refazer", role: "redo", enabled: editFlags.canRedo },
+        { type: "separator" },
+        { label: "Recortar", role: "cut", enabled: editFlags.canCut },
+        { label: "Copiar", role: "copy", enabled: editFlags.canCopy },
+        { label: "Colar", role: "paste", enabled: editFlags.canPaste },
+        { type: "separator" },
+        { label: "Selecionar tudo", role: "selectAll" },
+      );
+    } else if (selectionText.trim()) {
+      items.push({ label: "Copiar", role: "copy" });
+    }
+    if (linkURL && /^https?:/i.test(linkURL)) {
+      if (items.length) items.push({ type: "separator" });
+      items.push({ label: "Copiar endereço do link", click: () => clipboard.writeText(linkURL) });
+    }
+    if (items.length) Menu.buildFromTemplate(items).popup();
+  });
+}
+
 function createWindow() {
   window = new BrowserWindow({
     title: PRODUCT,
@@ -572,7 +599,10 @@ function createWindow() {
       activate(account.id);
     });
   shortcuts(window.webContents);
-  app.on("web-contents-created", (_event, wc) => shortcuts(wc));
+  app.on("web-contents-created", (_event, wc) => {
+    shortcuts(wc);
+    editMenu(wc);
+  });
   // Fechar a janela só esconde: o WhatsApp continua recebendo e o Jev classificando.
   window.on("close", (event) => {
     if (quitting) return;
