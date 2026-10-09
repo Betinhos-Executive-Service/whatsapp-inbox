@@ -78,6 +78,7 @@
       ]
     },
     "nsis": {
+      "include": "installer/installer.nsh",
       "oneClick": true,
       "perMachine": false,
       "createDesktopShortcut": true,
