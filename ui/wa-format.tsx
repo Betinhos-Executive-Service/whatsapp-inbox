@@ -98,7 +98,7 @@ export function WaLive({ text }: { text: string }) {
   return <>{inline(parseWa(text), true)}{"\n"}</>;
 }
 
-/** Só a formatação em linha — prévia da lista e citação. */
+/** Só a formatação em linha — prévia da lista e citação. Quebras viram espaço: bloco ``` (pre-wrap) não pode furar o corte em uma linha. */
 export function WaInline({ text }: { text: string }) {
-  return <>{inline(parseWa(text), false)}</>;
+  return <>{inline(parseWa(text.replace(/\s*\n\s*/g, " ")), false)}</>;
 }
