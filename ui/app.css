@@ -568,6 +568,7 @@ ul, ol { margin: 0; padding: 0; }
 .wa--code, .wa--mono { font-family: var(--bt-font-mono); font-size: 0.92em; }
 .wa--code { padding: 0 3px; border-radius: 4px; background-color: var(--bt-color-surface-soft); border: var(--bt-border-width-default) solid var(--bt-color-border); }
 .wa--mono { white-space: pre-wrap; }
+.chat-item__preview .wa, .quote__text .wa { white-space: inherit; }
 /* no espelho, nada pode mudar a largura dos caracteres: negrito por contorno, código só com fundo */
 .wa--live.wa--b { font-weight: inherit; -webkit-text-stroke: 0.45px currentColor; }
 .wa--live.wa--code, .wa--live.wa--mono { font-family: inherit; font-size: inherit; padding: 0; border: 0; background-color: var(--bt-color-surface-soft); }
