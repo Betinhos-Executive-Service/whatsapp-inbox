@@ -9,7 +9,7 @@ import { createHandler } from "./http.ts";
 import { cacheMedia, loadMedia } from "./media.ts";
 import { DeliveryLog } from "./delivery-log.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
-import { ClaudePlanAI, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPTIONS, findClaudeBin, isClaudeModel, parseClaudeOptions, runClaude, type ClaudeModel } from "./claude.ts";
+import { ClaudePlanAI, CLAUDE_API_IDS, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPTIONS, findClaudeBin, isClaudeModel, parseClaudeOptions, runClaude, type ClaudeModel } from "./claude.ts";
 import { addArgs, displayCommand, getArgs, isRegistered, removeArgs, type McpEntry } from "./mcp-register.ts";
 import { renderVoucherPdf } from "./voucher.ts";
 import { AGENT_TOOLS, AGENT_WINDOW, analysisSchema, analyzePrompt, parseOutcome, scheduleSchema, schedulePrompt, type AgentStep, type Analysis, type Scheduled } from "./agent.ts";
@@ -136,6 +136,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   const deepseekOptions = () => parseDeepSeekOptions(store.getSetting("deepseek_options"));
   const deepseek = new DeepSeekAI(fetch, deepseekModel, deepseekOptions);
   const deepseekKey = () => process.env.DEEPSEEK_API_KEY || store.getSetting("deepseek_api_key");
+  const anthropicKey = () => process.env.ANTHROPIC_API_KEY || store.getSetting("anthropic_api_key");
   const groqKey = () => process.env.GROQ_API_KEY || store.getSetting("groq_api_key");
   const autoTranscribeAll = () => store.getSetting("auto_transcribe") === "1";
   /** A escolha da conversa vale mais que a global. */
@@ -146,7 +147,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   };
   const claudeOptions = () => parseClaudeOptions(store.getSetting("claude_options"));
   // Pasta própria: a pessoa pode pôr ali um CLAUDE.md só de atendimento.
-  const claude = new ClaudePlanAI(join(options.dataDir, "claude"), claudeModel, findClaudeBin, runClaude, claudeOptions);
+  const claude = new ClaudePlanAI(join(options.dataDir, "claude"), claudeModel, findClaudeBin, runClaude, claudeOptions, anthropicKey);
   type Provider = "deepseek" | "claude";
   // "local" salvo de versões antigas (IA offline removida) cai na DeepSeek.
   const provider = (): Provider => (store.getSetting("ai_provider") === "claude" ? "claude" : "deepseek");
@@ -173,7 +174,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     return c.provider === "claude" ? { provider: "claude", model: c.claudeModel } : { provider: "deepseek", model: c.deepseekModel };
   };
   const summaryDeepseek = new DeepSeekAI(fetch, () => summaryTarget().model as DeepSeekModel, deepseekOptions);
-  const summaryClaude = new ClaudePlanAI(join(options.dataDir, "claude"), () => summaryTarget().model as ClaudeModel, findClaudeBin, runClaude, claudeOptions);
+  const summaryClaude = new ClaudePlanAI(join(options.dataDir, "claude"), () => summaryTarget().model as ClaudeModel, findClaudeBin, runClaude, claudeOptions, anthropicKey);
 
   const aiInstructions = () => store.getSetting("ai_instructions") || DEFAULT_INSTRUCTIONS;
   const aiState = () => ({
@@ -187,7 +188,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       defaults: DEFAULT_DEEPSEEK_OPTIONS,
     },
     claude: {
-      configured: !!findClaudeBin(),
+      configured: claudeOptions().backend === "api" ? !!anthropicKey() : !!findClaudeBin(),
+      planFound: !!findClaudeBin(),
+      apiConfigured: !!anthropicKey(),
+      apiFromEnv: !!process.env.ANTHROPIC_API_KEY,
       model: claudeModel(),
       models: (Object.keys(CLAUDE_MODELS) as ClaudeModel[]).map((id) => ({ id, ...CLAUDE_MODELS[id] })),
       folder: join(options.dataDir, "claude"),
@@ -202,11 +206,12 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   // ---- gastos com IA: cada chamada (inclusive falha) entra no painel de gastos
 
   const usdBrl = () => Number(store.getSetting("usd_brl")) || DEFAULT_USD_BRL;
+  const claudeUsageModel = (alias: string) => (claudeOptions().backend === "api" && isClaudeModel(alias) ? CLAUDE_API_IDS[alias] : `claude-${alias}`);
   type UsageExtra = { label?: string; confidence?: number; needsReply?: number; urgent?: number; model?: string };
   function recordUsage(provider: UsageProvider, kind: UsageKind, jid: string | null, usage: TokenUsage | null, extra: UsageExtra = {}) {
     const at = Date.now();
     const u = usage ?? { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
-    const model = extra.model ? (provider === "claude" ? `claude-${extra.model}` : extra.model) : provider === "deepseek" ? deepseekModel() : provider === "claude" ? `claude-${claudeModel()}` : provider === "jev" ? JEV_MODEL : provider;
+    const model = extra.model ? (provider === "claude" ? claudeUsageModel(extra.model) : extra.model) : provider === "deepseek" ? deepseekModel() : provider === "claude" ? claudeUsageModel(claudeModel()) : provider === "jev" ? JEV_MODEL : provider;
     store.recordAiUsage({
       at, provider, kind, chatJid: jid, model,
       usage: u, costUsd: estimateCostUsd(provider, u, new Date(at), model),
@@ -685,6 +690,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       }
       if (s.jevApiKey !== undefined) store.setSetting("jev_api_key", s.jevApiKey);
       if (s.groqApiKey !== undefined) store.setSetting("groq_api_key", s.groqApiKey);
+      if (s.anthropicApiKey !== undefined) store.setSetting("anthropic_api_key", s.anthropicApiKey);
       if (s.autoTranscribe !== undefined) store.setSetting("auto_transcribe", s.autoTranscribe ? "1" : "0");
       if (s.autoSummarize !== undefined) store.setSetting("auto_summarize", s.autoSummarize ? "1" : "0");
       if (s.deepseekApiKey !== undefined) {

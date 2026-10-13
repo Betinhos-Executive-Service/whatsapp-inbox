@@ -4,7 +4,7 @@ export type Classifier = "jev" | "deepseek";
 export type DeepSeekModel = "deepseek-v4-pro" | "deepseek-flash";
 export type ClaudeModel = "sonnet" | "opus" | "fable" | "haiku";
 export type ClaudeEffort = "default" | "low" | "medium" | "high" | "xhigh" | "max";
-export type ClaudeOptions = { effort: ClaudeEffort; contextMessages: number; messageChars: number };
+export type ClaudeOptions = { backend: "plan" | "api"; effort: ClaudeEffort; contextMessages: number; messageChars: number };
 export type Theme = "system" | "light" | "dark";
 export type Thinking = "off" | "low" | "high" | "max";
 export type DeepSeekTask = "draft" | "summary" | "classify";
@@ -111,7 +111,7 @@ export type AiStatus = {
   customInstructions: boolean;
   provider: "deepseek" | "claude";
   deepseek: { configured: boolean; fromEnv: boolean; model: DeepSeekModel; models: { id: DeepSeekModel; name: string; hint: string }[]; options: DeepSeekOptions; defaults: DeepSeekOptions };
-  claude: { configured: boolean; model: ClaudeModel; models: { id: ClaudeModel; name: string; hint: string }[]; folder: string; options: ClaudeOptions; defaults: ClaudeOptions };
+  claude: { configured: boolean; planFound: boolean; apiConfigured: boolean; apiFromEnv: boolean; model: ClaudeModel; models: { id: ClaudeModel; name: string; hint: string }[]; folder: string; options: ClaudeOptions; defaults: ClaudeOptions };
   /** Janela de mensagens da classificação pelo Jev. */
   jev: { contextMessages: number };
   /** IA do resumo (conversa e áudio); "same" segue a do rascunho. */
@@ -343,7 +343,7 @@ export const api = {
     request<{ text: string }>("POST", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`, {}),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),
   saveLabels: (labels: Label[]) => request<Label[]>("PUT", "/api/labels", labels),
-  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: Classifier; prefs?: Partial<Prefs> }) =>
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; anthropicApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: Classifier; prefs?: Partial<Prefs> }) =>
     request<AppState>("PUT", "/api/settings", s),
   logout: () => request<AppState>("POST", "/api/logout", {}),
   reset: (reconnect: boolean) => request<AppState>("POST", "/api/reset", { reconnect }),

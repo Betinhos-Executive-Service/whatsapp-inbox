@@ -2,6 +2,7 @@
 // logado na conta da pessoa. Herda o CLAUDE.md global, os hooks e os MCPs/conectores do
 // claude.ai já autorizados. Só funciona neste computador e consome o limite do plano.
 // Ferramentas ficam bloqueadas, exceto a leitura do Dataverse (lista abaixo).
+import Anthropic from "@anthropic-ai/sdk";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -27,7 +28,20 @@ export const DEFAULT_CLAUDE_MODEL: ClaudeModel = "sonnet";
 export const CLAUDE_EFFORTS = ["default", "low", "medium", "high", "xhigh", "max"] as const;
 export type ClaudeEffort = (typeof CLAUDE_EFFORTS)[number];
 
+/** IDs da API da Anthropic para cada alias do plano. */
+export const CLAUDE_API_IDS: Record<ClaudeModel, string> = {
+  sonnet: "claude-sonnet-5-5",
+  opus: "claude-opus-5-5",
+  fable: "claude-fable-5-1",
+  haiku: "claude-haiku-5-5",
+};
+
+/** "plan" = Claude Code logado neste PC; "api" = API da Anthropic com chave (cobra por token). */
+export const CLAUDE_BACKENDS = ["plan", "api"] as const;
+export type ClaudeBackend = (typeof CLAUDE_BACKENDS)[number];
+
 export const claudeOptionsSchema = z.object({
+  backend: z.enum(CLAUDE_BACKENDS).catch("plan"),
   effort: z.enum(CLAUDE_EFFORTS).catch("default"),
   /** Quantas mensagens recentes da conversa vão para o Claude. */
   contextMessages: z.number().int().min(10).max(1000).catch(DEEPSEEK_CONTEXT_MESSAGES),
@@ -101,6 +115,8 @@ export class ClaudePlanAI {
   private readonly bin: () => string | null;
   private readonly run: ClaudeRun;
   private readonly options: () => ClaudeOptions;
+  private readonly apiKey: () => string | null | undefined;
+  private readonly api: (key: string) => Pick<Anthropic, "beta">;
 
   constructor(
     cwd: string,
@@ -108,7 +124,11 @@ export class ClaudePlanAI {
     bin: () => string | null = findClaudeBin,
     run: ClaudeRun = runClaude,
     options: () => ClaudeOptions = () => DEFAULT_CLAUDE_OPTIONS,
+    apiKey: () => string | null | undefined = () => null,
+    api: (key: string) => Pick<Anthropic, "beta"> = (key) => new Anthropic({ apiKey: key, maxRetries: 2 }),
   ) {
+    this.apiKey = apiKey;
+    this.api = api;
     this.cwd = cwd;
     this.model = model;
     this.bin = bin;
@@ -123,10 +143,54 @@ export class ClaudePlanAI {
 
   /** Execução com ferramentas próprias (agente): `disallowed` vence permissões globais do Claude Code. */
   async agent(prompt: Prompt, tools: { allowed: string[]; disallowed: string[]; timeoutMs: number }): Promise<{ text: string; usage: TokenUsage }> {
-    return this.complete(prompt, { ...tools, hint: "" });
+    return this.completePlan(prompt, { ...tools, hint: "" });
   }
 
-  private async complete({ system, user }: Prompt, tools?: { allowed: string[]; disallowed: string[]; hint: string; timeoutMs: number }): Promise<{ text: string; usage: TokenUsage }> {
+  /** Modelo efetivamente usado, para o registro de uso (`claude-sonnet` no plano, ID da API na API). */
+  get usedModel(): string {
+    return this.options().backend === "api" ? CLAUDE_API_IDS[this.model()] : `claude-${this.model()}`;
+  }
+
+  private complete(prompt: Prompt): Promise<{ text: string; usage: TokenUsage }> {
+    return this.options().backend === "api" ? this.completeApi(prompt) : this.completePlan(prompt);
+  }
+
+  /** API da Anthropic: sem ferramentas (o Dataverse só existe no Claude Code), com cache do prompt. */
+  private async completeApi({ system, user }: Prompt): Promise<{ text: string; usage: TokenUsage }> {
+    const key = this.apiKey();
+    if (!key) throw new Error("Chave da API da Anthropic não configurada. Confira em Configurações › IA.");
+    const model = this.model();
+    const { effort } = this.options();
+    let res: Anthropic.Beta.BetaMessage;
+    try {
+      res = await this.api(key).beta.messages.create(
+        {
+          model: CLAUDE_API_IDS[model],
+          max_tokens: 16000,
+          cache_control: { type: "ephemeral" },
+          system,
+          messages: [{ role: "user", content: user }],
+          ...(effort === "default" ? {} : { output_config: { effort } }),
+          // Haiku não tem fallback no servidor; nos demais, uma recusa indevida segue em outro modelo.
+          ...(model === "haiku" ? {} : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }),
+        },
+        { timeout: EFFORT_TIMEOUT[effort] },
+      );
+    } catch (e) {
+      if (e instanceof Anthropic.AuthenticationError) throw new Error("Chave da API da Anthropic inválida. Confira em Configurações › IA.");
+      if (e instanceof Anthropic.RateLimitError) throw new Error("Limite da API da Anthropic atingido. Tente de novo em instantes.");
+      if (e instanceof Anthropic.APIError) throw new Error(`A API da Anthropic recusou o pedido (${e.status ?? "sem status"}: ${e.message.slice(0, 200)}).`);
+      throw e;
+    }
+    if (res.stop_reason === "refusal") throw new Error("O Claude recusou responder a este pedido.");
+    const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
+    if (!text) throw new Error("O Claude não respondeu.");
+    const u = res.usage;
+    const cached = (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+    return { text, usage: { inputTokens: u.input_tokens + cached, outputTokens: u.output_tokens, cachedTokens: u.cache_read_input_tokens ?? 0 } };
+  }
+
+  private async completePlan({ system, user }: Prompt, tools?: { allowed: string[]; disallowed: string[]; hint: string; timeoutMs: number }): Promise<{ text: string; usage: TokenUsage }> {
     const bin = this.bin();
     if (!bin) throw new Error("Claude Code não encontrado neste PC. Instale e faça login com `claude` no terminal.");
     mkdirSync(this.cwd, { recursive: true });
