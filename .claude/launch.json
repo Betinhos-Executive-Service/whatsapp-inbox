@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "inbox-dev-sem-whatsapp",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set WA_DISABLED=1&& pnpm dev"],
+      "port": 38291
+    }
+  ]
+}
