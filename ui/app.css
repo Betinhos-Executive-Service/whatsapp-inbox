@@ -343,6 +343,7 @@ ul, ol { margin: 0; padding: 0; }
 }
 .chat-peek__msg--me { align-self: flex-end; background-color: var(--bt-color-action-soft); }
 .chat-peek__text { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.chat-peek__day { align-self: center; font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); padding-top: var(--bt-space-1); }
 .chat-peek__author { font-weight: var(--bt-font-weight-bold); color: var(--bt-color-slate-700); }
 .chat-peek__time { flex: 0 0 auto; font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); font-variant-numeric: tabular-nums; }
 .chat-peek__empty { display: flex; align-items: center; gap: var(--bt-space-1); margin: 0; padding: var(--bt-space-1); font-size: var(--bt-font-size-12); color: var(--bt-color-text-secondary); }
