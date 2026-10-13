@@ -1,4 +1,4 @@
-import { CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, MessageCircleReply, Pencil, Pin, PinOff, Reply, Star, StarOff, Trash2, UserRound } from "lucide-react";
+import { Brush, CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, MessageCircleReply, Pencil, Pin, PinOff, Reply, Star, StarOff, Trash2, UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { mediaUrl, type Message } from "./api.ts";
 import { canEdit, REACTIONS } from "./message-extras.tsx";
@@ -15,6 +15,8 @@ export type MessageMenuActions = {
   onCopyMedia: (m: Message) => void;
   /** Abre a visualização dentro do app, sem baixar. */
   onView: (m: Message) => void;
+  /** Abre a imagem no editor; o resultado entra na bandeja de anexos desta conversa. */
+  onEditImage: (m: Message) => void;
   onForward: (m: Message) => void;
   onEdit: (m: Message) => void;
   onDelete: (m: Message) => void;
@@ -77,6 +79,7 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
           ? [{ id: "copy-media", label: image ? "Copiar imagem" : "Copiar arquivo", icon: image ? <ImageIcon size={16} aria-hidden /> : <Copy size={16} aria-hidden />, run: () => actions.onCopyMedia(m) }]
           : []),
         ...(viewable ? [{ id: "view", label: "Visualizar", icon: <Eye size={16} aria-hidden />, run: () => actions.onView(m) }] : []),
+        ...(m.media?.type === "image" ? [{ id: "edit-image", label: "Editar e enviar", icon: <Brush size={16} aria-hidden />, disabled: !canAct, run: () => actions.onEditImage(m) }] : []),
         ...(call ? [] : [{ id: "forward", label: "Encaminhar", icon: <Forward size={16} aria-hidden />, disabled: !canAct, run: () => actions.onForward(m) }]),
         { id: "star", label: m.starred ? "Desfavoritar" : "Favoritar", icon: m.starred ? <StarOff size={16} aria-hidden /> : <Star size={16} aria-hidden />, run: () => actions.onStar(m) },
         ...(call

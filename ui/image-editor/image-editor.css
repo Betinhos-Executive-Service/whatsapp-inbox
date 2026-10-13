@@ -1,0 +1,24 @@
+/* Editor de imagem: tela cheia sobre o mesmo véu navy do lightbox; barras em superfície clara. */
+.image-editor { position: fixed; inset: 0; z-index: var(--bt-z-index-drawer); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "bar" "stage" "tools"; background-color: rgba(0, 26, 61, .84); animation: fade var(--bt-duration-normal) var(--bt-ease-out); }
+.image-editor__bar { grid-area: bar; display: flex; align-items: center; gap: var(--bt-space-2); padding: var(--bt-space-2) var(--bt-space-3); background-color: var(--bt-color-surface); border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); }
+.image-editor__title { flex: 1; min-width: 0; font-weight: var(--bt-font-weight-extrabold); color: var(--bt-color-text-primary); }
+.image-editor__stage { grid-area: stage; display: grid; place-items: center; padding: var(--bt-space-4); overflow: hidden; }
+.image-editor__canvas { position: relative; overflow: hidden; touch-action: none; user-select: none; border-radius: var(--bt-radius-md); }
+.image-editor__canvas canvas { display: block; width: 100%; height: 100%; }
+.image-editor__canvas--draw, .image-editor__canvas--blur, .image-editor__canvas--crop { cursor: crosshair; }
+.image-editor__canvas--text { cursor: text; }
+/* Escurece fora do recorte com o mesmo véu; não é sombra de elevação. */
+.image-editor__crop { position: absolute; pointer-events: none; outline: 2px solid var(--bt-color-surface); outline-offset: -2px; box-shadow: 0 0 0 9999px rgba(0, 26, 61, .84); }
+.image-editor__handle { position: absolute; width: 14px; height: 14px; border-radius: var(--bt-radius-full); background-color: var(--bt-color-surface); border: 2px solid var(--bt-color-action); }
+.image-editor__handle--nw { left: 0; top: 0; }
+.image-editor__handle--ne { right: 0; top: 0; }
+.image-editor__handle--sw { left: 0; bottom: 0; }
+.image-editor__handle--se { right: 0; bottom: 0; }
+.image-editor__text { position: absolute; transform: translate(-50%, -50%); field-sizing: content; min-width: 2ch; max-width: 90%; margin: 0; padding: 0 var(--bt-space-1); border: 0; outline: 1px dashed var(--bt-color-surface); background-color: transparent; text-align: center; line-height: 1.2; resize: none; overflow: hidden; }
+.image-editor__tools { grid-area: tools; display: flex; flex-direction: column; align-items: center; gap: var(--bt-space-2); padding: var(--bt-space-3); background-color: var(--bt-color-surface); border-top: var(--bt-border-width-default) solid var(--bt-color-border); }
+.image-editor__tools > * { width: 100%; max-width: 560px; }
+.image-editor__options { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--bt-space-2); min-height: 32px; }
+.image-editor__inks { display: flex; gap: var(--bt-space-1-5); }
+.image-editor__ink { width: 32px; height: 32px; padding: 0; border-radius: var(--bt-radius-full); border: var(--bt-border-width-default) solid var(--bt-color-border); cursor: pointer; }
+.image-editor__ink[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--bt-color-surface), 0 0 0 4px var(--bt-color-action); }
+@media (prefers-reduced-motion: reduce) { .image-editor { animation: none; } }

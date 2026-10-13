@@ -1,7 +1,8 @@
-import { Check, Copy, Download, ExternalLink, Eye, FileText, LoaderCircle, Mic, Pause, Play, RefreshCw, Reply, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { Check, Copy, Download, ExternalLink, Eye, FileText, LoaderCircle, Mic, Pause, Pencil, Play, RefreshCw, Reply, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, mediaUrl, type AudioSummary, type Message, type OutgoingMedia } from "./api.ts";
 import { desktop } from "./desktop.ts";
+import { canEditImage } from "./image-editor/model.ts";
 import { webmToOgg } from "./ogg.ts";
 import { Button, Select } from "./ds/index.ts";
 
@@ -667,7 +668,7 @@ export async function fileToOutgoing(file: File, caption?: string): Promise<Outg
 
 export const MAX_ATTACHMENT = 32 * 1024 * 1024;
 
-export function AttachmentTray({ items, onRemove, disabled }: { items: Attachment[]; onRemove: (id: number) => void; disabled: boolean }) {
+export function AttachmentTray({ items, onRemove, onEdit, disabled }: { items: Attachment[]; onRemove: (id: number) => void; onEdit: (a: Attachment) => void; disabled: boolean }) {
   return (
     <ul className="attachments" aria-label="Anexos a enviar">
       {items.map((a) => (
@@ -683,6 +684,9 @@ export function AttachmentTray({ items, onRemove, disabled }: { items: Attachmen
             <span className="attachment__name">{a.file.name}</span>
             <span className="hint">{fileSize(a.file.size)}</span>
           </span>
+          {a.preview && !a.voice && canEditImage(a.file.type) && (
+            <Button variant="ghost" size="compact" icon={<Pencil size={14} aria-hidden />} aria-label={`Editar ${a.file.name}`} title="Editar imagem" disabled={disabled} onClick={() => onEdit(a)} />
+          )}
           <Button variant="ghost" size="compact" icon={<X size={14} aria-hidden />} aria-label={`Remover ${a.file.name}`} disabled={disabled} onClick={() => onRemove(a.id)} />
         </li>
       ))}
