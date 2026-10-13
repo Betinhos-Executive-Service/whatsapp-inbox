@@ -78,6 +78,7 @@ import { applyTheme, storedTheme } from "./theme.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
 import { ResizeHandle } from "./resize.tsx";
 import { ImageEditor } from "./image-editor/ImageEditor.tsx";
+import { canEditImage } from "./image-editor/model.ts";
 import { AttachmentTray, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
@@ -1619,6 +1620,22 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       ),
     [notify],
   );
+  const editImage = useCallback(
+    async (m: Message) => {
+      try {
+        const res = await fetch(mediaUrl(m));
+        if (!res.ok) throw new Error("Não foi possível abrir a imagem. Ela pode ter expirado no WhatsApp.");
+        const blob = await res.blob();
+        const type = blob.type || m.media?.mimetype || "";
+        if (!canEditImage(type)) throw new Error("Este formato de imagem não pode ser editado.");
+        const name = m.media?.fileName || `imagem-${m.id}.${type === "image/png" ? "png" : "jpg"}`;
+        setImageEditing({ file: new File([blob], name, { type }), attachmentId: null, seq: Date.now() });
+      } catch (e) {
+        notify("error", e instanceof Error ? e.message : String(e));
+      }
+    },
+    [notify],
+  );
   const askDelete = useCallback((m: Message) => setDeleting(m), []);
   const replaceMessage = (updated: Message) => setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
   const react = useCallback(
@@ -2129,7 +2146,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }
           pinned={chat.pins.some((p) => p.id === menuAt.message.id && p.until > Date.now())}
           canPrivateReply={chat.isGroup && !menuAt.message.fromMe && !!menuAt.message.sender}
-          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect }}
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onEditImage: (m) => void editImage(m), onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect }}
           onClose={closeMenu}
         />
       )}
