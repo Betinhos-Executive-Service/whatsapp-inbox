@@ -76,3 +76,25 @@ test("preço DeepSeek por modelo: Flash mais barato, modelo desconhecido cai no 
   assert.equal(Number(estimateCostUsd("deepseek", u, offPeak, "deepseek-v4-pro").toFixed(6)), 2.662);
   assert.equal(Number(estimateCostUsd("deepseek", u, offPeak, "outro").toFixed(6)), 2.662);
 });
+
+test("uso de IA: filtro por provedor e Claude pela API vs. equivalente do plano", () => {
+  const s = new Store(":memory:");
+  add(s, PN, 1000);
+  const at = Date.parse("2026-10-06T12:00:00Z");
+  const row = { at, chatJid: PN, confidence: null, needsReply: null, urgent: null, label: null, ok: true, kind: "rascunho" as const };
+  s.recordAiUsage({ ...row, provider: "deepseek", model: "deepseek-v4-pro", usage: usage(1000), costUsd: 0.001 });
+  s.recordAiUsage({ ...row, provider: "claude", model: "claude-sonnet-5-5", usage: usage(1_000_000), costUsd: 2 });
+  s.recordAiUsage({ ...row, provider: "claude", model: "claude-sonnet", usage: usage(1_000_000, 1_000_000), costUsd: 0 });
+
+  const only = s.aiUsageSummary(null, 5, "claude");
+  assert.equal(only.provider, "claude");
+  assert.equal(only.totals.calls, 2);
+  assert.deepEqual(only.byProvider.map((p) => p.provider), ["claude"]);
+  assert.deepEqual(only.topChats.map((c) => c.calls), [2]);
+  assert.deepEqual(only.claude, { apiCalls: 1, apiUsd: 2, planCalls: 1, planTokens: 2_000_000, planEquivUsd: 12 });
+
+  const ds = s.aiUsageSummary(null, 5, "deepseek");
+  assert.equal(ds.totals.calls, 1);
+  assert.equal(ds.claude.planCalls, 0);
+  assert.equal(s.aiUsageSummary(null, 5).totals.calls, 3);
+});

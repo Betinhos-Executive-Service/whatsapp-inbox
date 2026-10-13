@@ -36,6 +36,13 @@ export const CLAUDE_API_RATES: Record<string, { input: number; cached: number; o
   "claude-haiku-5-5": { input: 0.1, cached: 0.01, output: 0.5 },
 };
 
+/** Quanto custaria pela API uma chamada feita pelo plano (modelo gravado como `claude-<alias>`). */
+export function claudePlanEquivalentUsd(model: string | null, usage: TokenUsage): number {
+  const alias = (model ?? "").replace(/^claude-/, "");
+  const id = Object.keys(CLAUDE_API_RATES).find((k) => k.startsWith(`claude-${alias}-`)) ?? "claude-sonnet-5-5";
+  return estimateCostUsd("claude", usage, new Date(), id);
+}
+
 /** Horário de pico da DeepSeek: segunda a sexta, 01:00–04:00 e 06:00–10:00 UTC. */
 export function isDeepseekPeak(at = new Date()): boolean {
   const day = at.getUTCDay();

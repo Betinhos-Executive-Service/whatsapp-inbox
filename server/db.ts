@@ -1,6 +1,6 @@
 import type { ContactCard } from "./contacts.ts";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
-import type { Provider, TokenUsage, UsageKind } from "./pricing.ts";
+import { CLAUDE_API_RATES, claudePlanEquivalentUsd, type Provider, type TokenUsage, type UsageKind } from "./pricing.ts";
 import type { Extra } from "./text.ts";
 
 export const STATUSES = ["aberta", "aguardando", "resolvida"] as const;
@@ -124,6 +124,10 @@ export type AiUsageSummary = {
     byLabel: { label: string; count: number; avgConfidence: number }[];
   };
   topChats: { jid: string; name: string; calls: number; costUsd: number }[];
+  /** Provedor filtrado (null = todas as IAs). */
+  provider: Provider | null;
+  /** Claude: custo real pela API e quanto as chamadas pelo plano custariam pela API. */
+  claude: { apiCalls: number; apiUsd: number; planCalls: number; planTokens: number; planEquivUsd: number };
 };
 
 export type Reminder = { id: number; chatJid: string; dueAt: number; text: string; firedAt: number | null };
@@ -1423,22 +1427,25 @@ export class Store {
   }
 
   /** Resumo para o painel de gastos. sinceAt = null: tudo. */
-  aiUsageSummary(sinceAt: number | null, usdBrl: number): AiUsageSummary {
+  aiUsageSummary(sinceAt: number | null, usdBrl: number, provider: Provider | null = null): AiUsageSummary {
     const since = sinceAt ?? 0;
+    // Filtro opcional por provedor, aplicado a todas as consultas do painel.
+    const pf = provider ? " and provider = ?" : "";
+    const args: (number | string)[] = provider ? [since, provider] : [since];
     const totals = this.q(
       `select count(*) calls, coalesce(sum(ok = 0), 0) failures, coalesce(sum(input_tokens), 0) input_tokens,
               coalesce(sum(output_tokens), 0) output_tokens, coalesce(sum(cached_tokens), 0) cached_tokens, coalesce(sum(cost_usd), 0) cost_usd
-       from ai_usage where at >= ?`,
-    ).get(since) as Row;
+       from ai_usage where at >= ?${pf}`,
+    ).get(...args) as Row;
     const group = (col: "kind" | "provider") =>
       this.q(
         `select ${col} k, count(*) calls, coalesce(sum(input_tokens + output_tokens), 0) tokens, coalesce(sum(cost_usd), 0) cost_usd
-         from ai_usage where at >= ? group by ${col} order by cost_usd desc, calls desc`,
-      ).all(since) as Row[];
+         from ai_usage where at >= ?${pf} group by ${col} order by cost_usd desc, calls desc`,
+      ).all(...args) as Row[];
     // Dia em America/Sao_Paulo: o SQLite só conhece UTC, então o agrupamento por dia é feito aqui.
     const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
     const days = new Map<string, { calls: number; costUsd: number }>();
-    for (const r of this.q("select at, cost_usd from ai_usage where at >= ? order by at").all(since) as Row[]) {
+    for (const r of this.q(`select at, cost_usd from ai_usage where at >= ?${pf} order by at`).all(...args) as Row[]) {
       const key = dayKey.format(Number(r.at));
       const d = days.get(key) ?? { calls: 0, costUsd: 0 };
       d.calls++;
@@ -1448,21 +1455,38 @@ export class Store {
     const cls = this.q(
       `select count(*) total, coalesce(sum(ok = 0), 0) failures, avg(case when ok = 1 then confidence end) avg_confidence,
               avg(case when ok = 1 then needs_reply end) needs_reply, avg(case when ok = 1 then urgent end) urgent
-       from ai_usage where kind = 'classificar' and at >= ?`,
-    ).get(since) as Row;
+       from ai_usage where kind = 'classificar' and at >= ?${pf}`,
+    ).get(...args) as Row;
     const byLabel = this.q(
       `select label, count(*) count, avg(confidence) avg_confidence from ai_usage
-       where kind = 'classificar' and ok = 1 and label is not null and at >= ? group by label order by count desc, label`,
-    ).all(since) as Row[];
+       where kind = 'classificar' and ok = 1 and label is not null and at >= ?${pf} group by label order by count desc, label`,
+    ).all(...args) as Row[];
     const topChats = this.q(
       `select u.chat_jid jid, c.saved_name, c.push_name, count(*) calls, coalesce(sum(u.cost_usd), 0) cost_usd
        from ai_usage u left join chats c on c.jid = u.chat_jid
-       where u.chat_jid is not null and u.at >= ? group by u.chat_jid order by cost_usd desc, calls desc limit 5`,
-    ).all(since) as Row[];
+       where u.chat_jid is not null and u.at >= ?${pf.replace("provider", "u.provider")} group by u.chat_jid order by cost_usd desc, calls desc limit 5`,
+    ).all(...args) as Row[];
+    const claude = { apiCalls: 0, apiUsd: 0, planCalls: 0, planTokens: 0, planEquivUsd: 0 };
+    if (!provider || provider === "claude") {
+      for (const r of this.q("select model, input_tokens, output_tokens, cached_tokens, cost_usd from ai_usage where provider = 'claude' and at >= ?").all(since) as Row[]) {
+        const model = r.model == null ? null : String(r.model);
+        if (model && model in CLAUDE_API_RATES) {
+          claude.apiCalls++;
+          claude.apiUsd += Number(r.cost_usd);
+        } else {
+          const usage = { inputTokens: Number(r.input_tokens), outputTokens: Number(r.output_tokens), cachedTokens: Number(r.cached_tokens) };
+          claude.planCalls++;
+          claude.planTokens += usage.inputTokens + usage.outputTokens;
+          claude.planEquivUsd += claudePlanEquivalentUsd(model, usage);
+        }
+      }
+    }
     const n = (v: unknown) => (v == null ? null : Number(v));
     return {
       sinceAt,
       usdBrl,
+      provider,
+      claude,
       totals: {
         calls: Number(totals.calls), failures: Number(totals.failures), inputTokens: Number(totals.input_tokens),
         outputTokens: Number(totals.output_tokens), cachedTokens: Number(totals.cached_tokens), costUsd: Number(totals.cost_usd),

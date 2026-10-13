@@ -125,7 +125,7 @@ export type Api = {
     /** null volta tudo ao padrão. */
     setDeepseekOptions: (options: DeepSeekOptions | null) => void;
     /** Resumo de gastos; days = null: desde sempre. */
-    usage: (days: number | null) => unknown;
+    usage: (days: number | null, provider?: "jev" | "deepseek" | "local" | "claude" | null) => unknown;
     setUsdBrl: (rate: number | null) => void;
   };
   /** Gera o PDF do voucher e o deixa como rascunho pendente da conversa, com a legenda. */
@@ -669,7 +669,9 @@ export function createHandler(api: Api) {
     if (path === "/api/ai" && method === "GET") return json(res, 200, api.ai.status());
     if (path === "/api/ai/usage" && method === "GET") {
       const days = url.searchParams.get("days");
-      return json(res, 200, api.ai.usage(days === null || days === "all" ? null : Math.max(1, Math.min(3650, Number(days) || 30))));
+      const p = url.searchParams.get("provider");
+      const provider = p === "jev" || p === "deepseek" || p === "local" || p === "claude" ? p : null;
+      return json(res, 200, api.ai.usage(days === null || days === "all" ? null : Math.max(1, Math.min(3650, Number(days) || 30)), provider));
     }
     if (path === "/api/ai/usage/rate" && method === "PUT") {
       const { rate } = parse(z.object({ rate: z.number().positive().max(100).nullable() }), await readJson(req));

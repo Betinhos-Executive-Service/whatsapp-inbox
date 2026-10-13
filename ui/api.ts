@@ -101,6 +101,8 @@ export type AiUsageSummary = {
     byLabel: { label: string; count: number; avgConfidence: number }[];
   };
   topChats: { jid: string; name: string; calls: number; costUsd: number }[];
+  provider: UsageProvider | null;
+  claude: { apiCalls: number; apiUsd: number; planCalls: number; planTokens: number; planEquivUsd: number };
 };
 
 /** Registro do servidor MCP deste app no Claude Code do PC. */
@@ -319,7 +321,8 @@ export const api = {
   /** null volta tudo ao padrão. */
   setDeepseekOptions: (options: DeepSeekOptions | null) => request<AiStatus>("PUT", "/api/ai/deepseek-options", { options }),
   setAiInstructions: (text: string | null) => request<AiStatus>("PUT", "/api/ai/instructions", { text }),
-  aiUsage: (days: number | null) => request<AiUsageSummary>("GET", `/api/ai/usage?days=${days ?? "all"}`),
+  aiUsage: (days: number | null, provider: UsageProvider | null = null) =>
+    request<AiUsageSummary>("GET", `/api/ai/usage?days=${days ?? "all"}${provider ? `&provider=${provider}` : ""}`),
   setAiUsageRate: (rate: number) => request<{ ok: true }>("PUT", "/api/ai/usage/rate", { rate }),
   draft: (jid: string, text?: string) => request<{ text: string }>("POST", `${chatPath(jid)}/draft`, text ? { text } : {}),
   agentJobs: () => request<AgentJob[]>("GET", "/api/agent"),

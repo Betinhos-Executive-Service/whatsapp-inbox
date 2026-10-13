@@ -1,6 +1,6 @@
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, type AiUsageSummary } from "./api.ts";
+import { api, type AiUsageSummary, type UsageProvider } from "./api.ts";
 import { publishUsdBrl } from "./ai-state.ts";
 import { Alert, Button, Input, SegmentedControl } from "./ds/index.ts";
 import { formatBrl, formatCount, formatTokens, formatUsd, percent } from "./format.ts";
@@ -10,6 +10,12 @@ const PERIODS: { id: Period; label: string }[] = [
   { id: 7, label: "7 dias" },
   { id: 30, label: "30 dias" },
   { id: null, label: "Tudo" },
+];
+const AI_FILTERS: { id: UsageProvider | null; label: string }[] = [
+  { id: null, label: "Todas" },
+  { id: "claude", label: "Claude" },
+  { id: "deepseek", label: "DeepSeek" },
+  { id: "jev", label: "Jev" },
 ];
 const KIND_LABEL = { classificar: "Classificação (Jev)", rascunho: "Rascunho de resposta", resumo: "Resumo da conversa" } as const;
 const PROVIDER_LABEL = { jev: "Jev (TypeSafe)", deepseek: "DeepSeek", local: "IA local (removida)", claude: "Claude" } as const;
@@ -51,6 +57,7 @@ function Bars({ rows, unit }: { rows: { key: string; label: string; value: numbe
 /** Painel "Gastos com IA" das Configurações: tokens, custo estimado e como foram as classificações. */
 export function AiUsagePanel({ notify }: { notify: (kind: "error" | "success", text: string) => void }) {
   const [period, setPeriod] = useState<Period>(30);
+  const [provider, setProvider] = useState<UsageProvider | null>(null);
   const [data, setData] = useState<AiUsageSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rate, setRate] = useState("");
@@ -60,7 +67,7 @@ export function AiUsagePanel({ notify }: { notify: (kind: "error" | "success", t
     let alive = true;
     setError(null);
     api
-      .aiUsage(period)
+      .aiUsage(period, provider)
       .then((d) => {
         if (!alive) return;
         setData(d);
@@ -71,7 +78,7 @@ export function AiUsagePanel({ notify }: { notify: (kind: "error" | "success", t
     return () => {
       alive = false;
     };
-  }, [period]);
+  }, [period, provider]);
 
   const saveRate = async () => {
     const value = Number(rate.replace(",", "."));
@@ -82,7 +89,7 @@ export function AiUsagePanel({ notify }: { notify: (kind: "error" | "success", t
     setSavingRate(true);
     try {
       await api.setAiUsageRate(value);
-      const d = await api.aiUsage(period);
+      const d = await api.aiUsage(period, provider);
       setData(d);
       publishUsdBrl(d.usdBrl);
       notify("success", "Cotação salva. Os valores em reais foram recalculados.");
@@ -108,6 +115,13 @@ export function AiUsagePanel({ notify }: { notify: (kind: "error" | "success", t
           value={String(period)}
           onChange={(v) => setPeriod(PERIODS.find((p) => String(p.id) === v)!.id)}
         />
+        <SegmentedControl
+          aria-label="Qual IA"
+          size="compact"
+          options={AI_FILTERS.map((f) => ({ value: String(f.id), label: f.label }))}
+          value={String(provider)}
+          onChange={(v) => setProvider(AI_FILTERS.find((f) => String(f.id) === v)!.id)}
+        />
         {!data && !error && <LoaderCircle className="spin" size={16} aria-hidden />}
       </div>
 
@@ -126,8 +140,22 @@ export function AiUsagePanel({ notify }: { notify: (kind: "error" | "success", t
             <Kpi label="Custo por chamada" value={t.calls ? brl(t.costUsd / t.calls) : "—"} hint={t.cachedTokens ? `${formatTokens(t.cachedTokens)} em cache (mais barato)` : undefined} />
           </div>
 
+          {(provider === null || provider === "claude") && data.claude.apiCalls + data.claude.planCalls > 0 && (
+            <section className="stack">
+              <h4 className="eyebrow">Claude</h4>
+              <div className="kpis kpis--compact">
+                <Kpi label="Pela API (cobrado)" value={brl(data.claude.apiUsd)} hint={`${data.claude.apiCalls}× · ${formatUsd(data.claude.apiUsd)}`} />
+                <Kpi
+                  label="Pelo plano (equivalente na API)"
+                  value={brl(data.claude.planEquivUsd)}
+                  hint={`${data.claude.planCalls}× · ${formatTokens(data.claude.planTokens)} · sai do limite do plano`}
+                />
+              </div>
+            </section>
+          )}
+
           {t.calls === 0 ? (
-            <p className="hint">Nenhuma chamada de IA {periodLabel}. Classificações, rascunhos e resumos aparecem aqui assim que forem usados.</p>
+            <p className="hint">Nenhuma chamada {provider ? `de ${PROVIDER_LABEL[provider]}` : "de IA"} {periodLabel}. Classificações, rascunhos e resumos aparecem aqui assim que forem usados.</p>
           ) : (
             <>
               <section className="stack">
@@ -187,7 +215,7 @@ export function AiUsagePanel({ notify }: { notify: (kind: "error" | "success", t
               </Button>
             </div>
             <p id="usd-brl-help" className="hint">
-              Estimativa com a tabela pública: Jev US$ 0,042 por milhão de tokens de entrada; DeepSeek US$ 0,15 por milhão na entrada, US$ 0,003 em cache e US$ 0,60 na saída (dobra no horário de pico, de madrugada no Brasil). O valor exato é o da fatura de cada serviço.
+              Estimativa com a tabela pública: Jev US$ 0,042 por milhão de tokens de entrada; DeepSeek conforme o modelo (dobra no horário de pico, de madrugada no Brasil); Claude pela API conforme o modelo (ex.: Sonnet US$ 2 entrada e US$ 10 saída por milhão). Chamadas do Claude pelo plano não são cobradas por token; o equivalente na API é só referência. O valor exato é o da fatura de cada serviço.
             </p>
           </section>
         </>

@@ -781,7 +781,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         await saveAudioSummary(dir, jid, "persona", record);
         return record;
       },
-      usage: (days) => store.aiUsageSummary(days === null ? null : Date.now() - days * 86_400_000, usdBrl()),
+      usage: (days, provider = null) => store.aiUsageSummary(days === null ? null : Date.now() - days * 86_400_000, usdBrl(), provider),
       setUsdBrl: (rate) => store.setSetting("usd_brl", rate === null ? null : String(rate)),
       setProvider: (p) => {
         store.setSetting("ai_provider", p);
