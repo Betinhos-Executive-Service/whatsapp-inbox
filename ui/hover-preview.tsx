@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { api, type Chat, type Message } from "./api.ts";
 import { messageBody } from "./conversation.tsx";
-import { formatTime } from "./format.ts";
+import { dayLabel, formatTime, sameDay } from "./format.ts";
 import { WaInline } from "./wa-format.tsx";
 
 /** Tempo com o mouse parado antes da prévia abrir. */
@@ -61,16 +61,20 @@ export function ChatPeek({ chat, anchor }: { chat: Chat; anchor: DOMRect }) {
         <p className="chat-peek__empty">Sem mensagens.</p>
       ) : (
         <ol className="chat-peek__list">
-          {list.map((m) => {
+          {list.map((m, i) => {
             const { author, body } = messageBody(m, chat.isGroup);
+            const newDay = i === 0 || !sameDay(list[i - 1].at, m.at);
             return (
-              <li key={m.id} className={`chat-peek__msg${m.fromMe ? " chat-peek__msg--me" : ""}`}>
+              <Fragment key={m.id}>
+              {newDay && <li className="chat-peek__day" aria-hidden>{dayLabel(m.at)}</li>}
+              <li className={`chat-peek__msg${m.fromMe ? " chat-peek__msg--me" : ""}`}>
                 <span className="chat-peek__text">
                   {author && <span className="chat-peek__author">{author}: </span>}
                   {m.deleted ? <em>Mensagem apagada</em> : body ? <WaInline text={body} /> : <em>Mensagem sem texto</em>}
                 </span>
                 <span className="chat-peek__time">{formatTime(m.at)}</span>
               </li>
+              </Fragment>
             );
           })}
         </ol>
