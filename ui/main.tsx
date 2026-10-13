@@ -77,6 +77,7 @@ import { ProfilePanel, type ProfileTarget } from "./profile.tsx";
 import { applyTheme, storedTheme } from "./theme.ts";
 import { NotesPanel, reminderLabel } from "./notes.tsx";
 import { ResizeHandle } from "./resize.tsx";
+import { ImageEditor } from "./image-editor/ImageEditor.tsx";
 import { AttachmentTray, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
@@ -1054,6 +1055,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const mirror = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Imagem aberta no editor: da bandeja (substitui o anexo) ou de uma mensagem (entra na bandeja).
+  const [imageEditing, setImageEditing] = useState<{ file: File; attachmentId: number | null; seq: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const recorder = useRecorder((text) => notify("error", text));
   const addFiles = (files: Iterable<File>) => {
@@ -1071,12 +1074,21 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       if (gone?.preview) URL.revokeObjectURL(gone.preview);
       return list.filter((a) => a.id !== id);
     });
+  const replaceAttachment = (id: number, file: File) =>
+    setAttachments((list) =>
+      list.map((a) => {
+        if (a.id !== id) return a;
+        if (a.preview) URL.revokeObjectURL(a.preview);
+        return toAttachment(file);
+      }),
+    );
   useEffect(() => {
     setAttachments((list) => {
       list.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
       return [];
     });
     recorder.cancel();
+    setImageEditing(null);
     setReplyTo(null);
     setReplyFrom(null);
     setComposeDialog(null);
@@ -2121,6 +2133,18 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           onClose={closeMenu}
         />
       )}
+      {imageEditing && (
+        <ImageEditor
+          key={imageEditing.seq}
+          file={imageEditing.file}
+          onClose={() => setImageEditing(null)}
+          onDone={(file) => {
+            if (imageEditing.attachmentId != null) replaceAttachment(imageEditing.attachmentId, file);
+            else addFiles([file]);
+            setImageEditing(null);
+          }}
+        />
+      )}
       {forwarding && (
         <ForwardDialog
           messages={forwarding}
@@ -2189,7 +2213,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           />
         )}
         {replyTo && replyFrom && <p className="hint reply-origin">Resposta em particular a uma mensagem de {replyFrom.name}</p>}
-        {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} disabled={sending} />}
+        {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} onEdit={(a) => setImageEditing({ file: a.file, attachmentId: a.id, seq: Date.now() })} disabled={sending} />}
         <input
           ref={fileInput}
           type="file"
