@@ -1965,7 +1965,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         </div>
         {/* Ações rápidas ficam sempre na linha do perfil, mesmo quando a classificação desce. */}
         <div className="chat-pane__actions">
-          <ClaudeAgentButton jid={chat.jid} available={!!ai?.claude.configured} notify={notify} />
+          <ClaudeAgentButton jid={chat.jid} available={!!ai?.claude.planFound} notify={notify} />
           <Button
             variant="secondary"
             size="compact"

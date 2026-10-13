@@ -28,6 +28,14 @@ export const DEEPSEEK_RATES: Record<string, { input: number; cached: number; out
   "deepseek-flash": { input: 0.15, cached: 0.003, output: 0.6 },
 };
 
+/** Claude pela API da Anthropic (cobrado por token). Tabela pública consultada em 13/10/2026. */
+export const CLAUDE_API_RATES: Record<string, { input: number; cached: number; output: number }> = {
+  "claude-fable-5-1": { input: 10, cached: 0.25, output: 50 },
+  "claude-opus-5-5": { input: 4, cached: 0.2, output: 20 },
+  "claude-sonnet-5-5": { input: 2, cached: 0.2, output: 10 },
+  "claude-haiku-5-5": { input: 0.1, cached: 0.01, output: 0.5 },
+};
+
 /** Horário de pico da DeepSeek: segunda a sexta, 01:00–04:00 e 06:00–10:00 UTC. */
 export function isDeepseekPeak(at = new Date()): boolean {
   const day = at.getUTCDay();
@@ -37,7 +45,10 @@ export function isDeepseekPeak(at = new Date()): boolean {
 }
 
 export function estimateCostUsd(provider: Provider, usage: TokenUsage, at = new Date(), model?: string): number {
-  const r = provider === "deepseek" && model ? (DEEPSEEK_RATES[model] ?? RATES.deepseek) : RATES[provider];
+  const r =
+    provider === "deepseek" && model ? (DEEPSEEK_RATES[model] ?? RATES.deepseek)
+    : provider === "claude" && model ? (CLAUDE_API_RATES[model] ?? RATES.claude)
+    : RATES[provider];
   const fresh = Math.max(0, usage.inputTokens - usage.cachedTokens);
   const usd = (fresh * r.input + usage.cachedTokens * r.cached + usage.outputTokens * r.output) / 1_000_000;
   return provider === "deepseek" && isDeepseekPeak(at) ? usd * 2 : usd;

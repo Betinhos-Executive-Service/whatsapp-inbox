@@ -26,6 +26,7 @@
     "release": "node scripts/desktop.mjs --publish"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.133.0",
     "@typesafe-ai/sdk": "0.6.0",
     "@whiskeysockets/baileys": "7.0.0-rc14",
     "electron-updater": "6.8.9",

@@ -182,6 +182,7 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
   const live = useAiStatus();
   const [local, setLocal] = useState<AiStatus | null>(null);
   const [switching, setSwitching] = useState(false);
+  const [anKey, setAnKey] = useState("");
   // A resposta da ação vale até o próximo evento ao vivo; depois o evento vence.
   const ai = local ?? live;
   useEffect(() => setLocal(null), [live]);
@@ -216,6 +217,25 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
       setSwitching(false);
     }
   };
+  const chooseBackend = async (backend: AiStatus["claude"]["options"]["backend"]) => {
+    if (backend === ai.claude.options.backend || switching) return;
+    setSwitching(true);
+    try {
+      setLocal(await api.setClaudeOptions({ ...ai.claude.options, backend }));
+    } finally {
+      setSwitching(false);
+    }
+  };
+  const saveAnthropicKey = async (value: string | null) => {
+    setSwitching(true);
+    try {
+      await api.saveSettings({ anthropicApiKey: value });
+      setAnKey("");
+      setLocal(await api.ai());
+    } finally {
+      setSwitching(false);
+    }
+  };
   const dsModel = ai.deepseek.models.find((m) => m.id === ai.deepseek.model);
   const clModel = ai.claude.models.find((m) => m.id === ai.claude.model);
   return (
@@ -225,7 +245,7 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
         options={(
           [
             ["deepseek", "DeepSeek (nuvem)"],
-            ["claude", "Claude (plano)"],
+            ["claude", "Claude"],
           ] as const
         ).map(([id, label]) => ({ value: id, label, disabled: switching }))}
         value={ai.provider}
@@ -276,6 +296,42 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
         </>
       ) : ai.provider === "claude" ? (
         <>
+          <Field label="Como acessar o Claude">
+            <SegmentedControl
+              aria-label="Como acessar o Claude"
+              options={(
+                [
+                  ["plan", "Plano (Claude Code)"],
+                  ["api", "API (chave)"],
+                ] as const
+              ).map(([id, label]) => ({ value: id, label, disabled: switching }))}
+              value={ai.claude.options.backend}
+              onChange={(id) => void chooseBackend(id)}
+            />
+          </Field>
+          {ai.claude.options.backend === "api" &&
+            (ai.claude.apiFromEnv ? (
+              <p className="hint">A chave da Anthropic está definida no arquivo .env.local deste computador.</p>
+            ) : (
+              <>
+                <Field
+                  label="Chave de API da Anthropic"
+                  hint={ai.claude.apiConfigured ? "A chave fica salva só neste computador e nunca volta para a tela." : "Crie a chave em platform.claude.com › API keys e salve aqui."}
+                >
+                  <Input type="password" autoComplete="off" placeholder={ai.claude.apiConfigured ? "Chave salva. Cole outra para trocar." : "Cole a chave (sk-ant-…)"} value={anKey} onChange={(e) => setAnKey(e.target.value)} />
+                </Field>
+                <div className="cluster">
+                  <Button variant="secondary" size="compact" loading={switching} disabled={anKey.trim().length < 10} onClick={() => void saveAnthropicKey(anKey.trim())}>
+                    Salvar chave
+                  </Button>
+                  {ai.claude.apiConfigured && (
+                    <Button variant="secondary" size="compact" disabled={switching} onClick={() => void saveAnthropicKey(null)}>
+                      Remover chave
+                    </Button>
+                  )}
+                </div>
+              </>
+            ))}
           <Field label="Modelo" hint={clModel?.hint}>
             <SegmentedControl
               aria-label="Modelo do Claude"
@@ -285,7 +341,9 @@ function AiPanel({ instructions, setInstructions, dsKey, setDsKey, removeDsKey, 
             />
           </Field>
           <p className="hint">
-            {ai.claude.configured
+            {ai.claude.options.backend === "api"
+              ? "Usa a API da Anthropic com a sua chave: cobra por token (estimativa em Uso de IA), responde em segundos e não acessa o Dataverse. O agente continua no Claude Code."
+              : ai.claude.configured
               ? "Usa o Claude Code deste PC, logado na sua conta: sem chave de API, consome o limite do seu plano e leva cerca de 1 minuto por resposta. Herda suas instruções e MCPs; só a leitura do Dataverse fica liberada."
               : "Claude Code não encontrado neste PC. Instale e faça login rodando claude no terminal."}
           </p>

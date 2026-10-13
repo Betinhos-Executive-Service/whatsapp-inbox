@@ -86,7 +86,7 @@ export type Api = {
   syncMute: (jid: string, until: number | null) => void;
   syncPin: (jid: string, pinned: boolean) => void;
   classify: (jid: string) => Promise<unknown>;
-  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
+  saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; anthropicApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
@@ -246,6 +246,7 @@ const settingsSchema = z.object({
   jevApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   deepseekApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   groqApiKey: z.string().trim().min(10).max(500).nullable().optional(),
+  anthropicApiKey: z.string().trim().min(10).max(500).nullable().optional(),
   autoTranscribe: z.boolean().optional(),
   autoSummarize: z.boolean().optional(),
   autoClassify: z.boolean().optional(),
