@@ -5,7 +5,7 @@ type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 /** Cor de token do design system (anotações nunca usam hexadecimal solto). */
 export const tokenColor = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(`--bt-color-${name}`).trim();
 
-export const textFont = (size: number) => `800 ${size}px "Manrope Variable", sans-serif`;
+export const textFont = (size: number) => `800 ${size}px "Manrope", "Segoe UI", sans-serif`;
 const LINE = 1.2;
 
 let measurer: OffscreenCanvasRenderingContext2D | null = null;

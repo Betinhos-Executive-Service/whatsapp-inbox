@@ -27,7 +27,8 @@ type Gesture =
   | { kind: "draw"; draft: Layer }
   | { kind: "blur"; from: Point; draft: Layer | null }
   | { kind: "crop"; handle: Handle; from: Point; start: Rect; rect: Rect | null }
-  | { kind: "text"; layer: TextLayer; from: Point; draft: Layer | null };
+  | { kind: "text"; layer: TextLayer; from: Point; draft: Layer | null }
+  | { kind: "text-new"; at: Point };
 
 let lastLayerId = 0;
 const nextLayerId = () => ++lastLayerId;
@@ -57,8 +58,9 @@ export function ImageEditor({ file, onDone, onClose }: { file: File; onDone: (fi
   useEffect(() => {
     let alive = true;
     let opened: ImageBitmap | null = null;
-    loadBitmap(file).then(
-      (b) => {
+    // A fonte do app entra antes do primeiro paint, para o texto medir e desenhar com ela.
+    Promise.all([loadBitmap(file), document.fonts.load(textFont(30)).catch(() => undefined)]).then(
+      ([b]) => {
         if (!alive) return b.close();
         opened = b;
         setBitmap(b);
@@ -163,6 +165,8 @@ export function ImageEditor({ file, onDone, onClose }: { file: File; onDone: (fi
   const down = (e: ReactPointerEvent<HTMLDivElement>) => {
     // Com texto aberto, o clique só tira o foco do campo (o blur confirma o texto).
     if (!view || !s || saving || e.button !== 0 || typingRef.current) return;
+    // Sem isto, o mousedown de compatibilidade tira o foco do campo de texto recém-aberto.
+    e.preventDefault();
     const p = pointOut(e);
     const src = outToSrc(view, p);
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -178,13 +182,15 @@ export function ImageEditor({ file, onDone, onClose }: { file: File; onDone: (fi
     } else {
       const hit = textAt(view, p, measureText);
       if (hit) gesture.current = { kind: "text", layer: hit, from: src, draft: null };
-      else setTyping({ id: null, at: src, value: "", color: tokenColor(ink), size: TEXT[size] / scale });
+      // O campo abre no pointerup, para não perder o foco para o clique que o criou.
+      else gesture.current = { kind: "text-new", at: src };
     }
   };
 
   const move = (e: ReactPointerEvent<HTMLDivElement>) => {
     const g = gesture.current;
-    if (!g || !view) return;
+    // Texto novo não tem arrasto: só abre o campo no pointerup.
+    if (!g || !view || g.kind === "text-new") return;
     const p = pointOut(e);
     const src = outToSrc(view, p);
     if (g.kind === "draw" && g.draft.kind === "stroke") {
@@ -210,7 +216,9 @@ export function ImageEditor({ file, onDone, onClose }: { file: File; onDone: (fi
     setDraft(null);
     setCropDraft(null);
     if (!g || !view || !s) return;
-    if (g.kind === "draw") change((st) => addLayer(st, g.draft));
+    if (g.kind === "text-new") {
+      setTyping({ id: null, at: g.at, value: "", color: tokenColor(ink), size: TEXT[size] / scale });
+    } else if (g.kind === "draw") change((st) => addLayer(st, g.draft));
     else if (g.kind === "blur" && g.draft?.kind === "blur") {
       const rect = clampRect(s, g.draft.rect);
       if (rect.w * scale >= 6 && rect.h * scale >= 6) change((st) => addLayer(st, { kind: "blur", id: nextLayerId(), rect }));
