@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  addLayer, blurBlock, canEditImage, clampRect, commit, editedName, exportType, initialState, isDirty, outputSize, outToSrc,
+  addLayer, aspectCrop, blurBlock, canEditImage, clampRect, commit, cropHandleAt, dragCrop, editedName, exportType, initialState, isDirty, outputSize, outToSrc,
   rectOutToSrc, rectSrcToOut, redo, removeLayer, replaceLayer, resetGeometry, rotate, setCrop, srcToOut, startHistory,
-  toggleFlip, undo, type EditState, type Point, type Rotation, type TextLayer,
+  textAt, toggleFlip, undo, type EditState, type Point, type Rotation, type TextLayer,
 } from "../ui/image-editor/model.ts";
 
 const near = (a: Point, b: Point) =>
@@ -90,4 +90,43 @@ test("exportação: PNG continua PNG; o resto vira JPEG com sufixo -editada", ()
   assert.equal(editedName("", "image/jpeg"), "imagem-editada.jpg");
   assert.equal(canEditImage("image/gif"), false);
   assert.equal(canEditImage("image/jpeg"), true);
+});
+
+test("recorte: alça no canto, dentro move, fora cria novo", () => {
+  const r = { x: 10, y: 10, w: 100, h: 50 };
+  assert.equal(cropHandleAt(r, { x: 12, y: 8 }, 8), "nw");
+  assert.equal(cropHandleAt(r, { x: 109, y: 61 }, 8), "se");
+  assert.equal(cropHandleAt(r, { x: 108, y: 12 }, 8), "ne");
+  assert.equal(cropHandleAt(r, { x: 50, y: 30 }, 8), "move");
+  assert.equal(cropHandleAt(r, { x: 200, y: 30 }, 8), "new");
+});
+
+test("recorte: mover fica dentro dos limites", () => {
+  const b = { width: 200, height: 100 };
+  assert.deepEqual(dragCrop({ x: 10, y: 10, w: 100, h: 50 }, "move", { x: 0, y: 0 }, { x: 500, y: -50 }, b, null), { x: 100, y: 0, w: 100, h: 50 });
+});
+
+test("recorte: canto redimensiona preso ao canto oposto e trava a proporção", () => {
+  const b = { width: 200, height: 100 };
+  const r = { x: 10, y: 10, w: 100, h: 50 };
+  assert.deepEqual(dragCrop(r, "se", { x: 110, y: 60 }, { x: 150, y: 90 }, b, null), { x: 10, y: 10, w: 140, h: 80 });
+  assert.deepEqual(dragCrop(r, "se", { x: 110, y: 60 }, { x: 150, y: 60 }, b, 1), { x: 10, y: 10, w: 90, h: 90 });
+  assert.deepEqual(dragCrop(r, "nw", { x: 10, y: 10 }, { x: -20, y: -20 }, b, null), { x: 0, y: 0, w: 110, h: 60 });
+  assert.deepEqual(dragCrop(r, "new", { x: 20, y: 20 }, { x: 60, y: 40 }, b, null), { x: 20, y: 20, w: 40, h: 20 });
+});
+
+test("recorte: proporção fixa centraliza o maior retângulo possível", () => {
+  assert.deepEqual(aspectCrop({ width: 200, height: 100 }, 1), { x: 50, y: 0, w: 100, h: 100 });
+  assert.deepEqual(aspectCrop({ width: 200, height: 100 }, 16 / 9), { x: 11, y: 0, w: 178, h: 100 });
+  assert.deepEqual(aspectCrop({ width: 200, height: 100 }, null), { x: 0, y: 0, w: 200, h: 100 });
+});
+
+test("texto: acerta a camada de cima pelo retângulo medido em volta do centro", () => {
+  const a: TextLayer = { kind: "text", id: 1, color: "#000", size: 20, text: "a", at: { x: 50, y: 50 } };
+  const b: TextLayer = { ...a, id: 2, at: { x: 60, y: 50 } };
+  const s = addLayer(addLayer(initialState(200, 100), a), b);
+  const measure = () => ({ width: 40, height: 20 });
+  assert.equal(textAt(s, { x: 55, y: 50 }, measure)?.id, 2);
+  assert.equal(textAt(s, { x: 35, y: 50 }, measure)?.id, 1);
+  assert.equal(textAt(s, { x: 150, y: 50 }, measure), null);
 });

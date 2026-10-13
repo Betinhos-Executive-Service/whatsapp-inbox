@@ -142,3 +142,78 @@ export function editedName(name: string, type: string): string {
   const base = (name.replace(/\.[^.]+$/, "") || "imagem").replace(/-editada$/, "");
   return `${base}-editada.${exportType(type) === "image/png" ? "png" : "jpg"}`;
 }
+
+// ---- Gestos de recorte (coordenadas de saída da vista sem recorte)
+
+export type Handle = "move" | "nw" | "ne" | "sw" | "se" | "new";
+export type Bounds = { width: number; height: number };
+
+export function cropHandleAt(r: Rect, p: Point, tolerance: number): Handle {
+  const near = (x: number, y: number) => Math.abs(p.x - x) <= tolerance && Math.abs(p.y - y) <= tolerance;
+  if (near(r.x, r.y)) return "nw";
+  if (near(r.x + r.w, r.y)) return "ne";
+  if (near(r.x, r.y + r.h)) return "sw";
+  if (near(r.x + r.w, r.y + r.h)) return "se";
+  const inside = p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  return inside ? "move" : "new";
+}
+
+/** Retângulo do canto fixo `anchor` até `p`, dentro dos limites e, se pedido, na proporção `aspect` (largura/altura). */
+function fromCorners(anchor: Point, p: Point, aspect: number | null, b: Bounds): Rect {
+  let w = clamp(p.x, 0, b.width) - anchor.x;
+  let h = clamp(p.y, 0, b.height) - anchor.y;
+  if (aspect) {
+    const sx = Math.sign(w) || 1;
+    const sy = Math.sign(h) || 1;
+    let W = Math.max(Math.abs(w), Math.abs(h) * aspect);
+    let H = W / aspect;
+    const maxW = sx > 0 ? b.width - anchor.x : anchor.x;
+    const maxH = sy > 0 ? b.height - anchor.y : anchor.y;
+    if (W > maxW) { W = maxW; H = W / aspect; }
+    if (H > maxH) { H = maxH; W = H * aspect; }
+    w = sx * W;
+    h = sy * H;
+  }
+  return rectFrom(anchor, { x: anchor.x + w, y: anchor.y + h });
+}
+
+export function dragCrop(start: Rect, handle: Handle, from: Point, to: Point, b: Bounds, aspect: number | null): Rect {
+  if (handle === "move") {
+    return {
+      x: clamp(start.x + to.x - from.x, 0, b.width - start.w),
+      y: clamp(start.y + to.y - from.y, 0, b.height - start.h),
+      w: start.w,
+      h: start.h,
+    };
+  }
+  if (handle === "new") return fromCorners(from, to, aspect, b);
+  const anchor = {
+    nw: { x: start.x + start.w, y: start.y + start.h },
+    ne: { x: start.x, y: start.y + start.h },
+    sw: { x: start.x + start.w, y: start.y },
+    se: { x: start.x, y: start.y },
+  }[handle];
+  return fromCorners(anchor, to, aspect, b);
+}
+
+/** Maior retângulo centralizado na proporção pedida; sem proporção, a imagem toda. */
+export function aspectCrop(b: Bounds, aspect: number | null): Rect {
+  if (!aspect) return { x: 0, y: 0, w: b.width, h: b.height };
+  const w = Math.round(b.width / b.height > aspect ? b.height * aspect : b.width);
+  const h = Math.round(b.width / b.height > aspect ? b.height : b.width / aspect);
+  return { x: Math.round((b.width - w) / 2), y: Math.round((b.height - h) / 2), w, h };
+}
+
+// ---- Texto
+
+/** Texto de cima que contém `pOut` (coordenadas de saída). `measure` devolve largura e altura em px da imagem. */
+export function textAt(s: EditState, pOut: Point, measure: (l: TextLayer) => Bounds): TextLayer | null {
+  for (let i = s.layers.length - 1; i >= 0; i--) {
+    const l = s.layers[i];
+    if (l.kind !== "text") continue;
+    const c = srcToOut(s, l.at);
+    const { width, height } = measure(l);
+    if (Math.abs(pOut.x - c.x) <= width / 2 && Math.abs(pOut.y - c.y) <= height / 2) return l;
+  }
+  return null;
+}
