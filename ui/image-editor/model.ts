@@ -132,8 +132,8 @@ export const rectOutToSrc = (s: EditState, r: Rect): Rect => rectFrom(outToSrc(s
 
 // ---- Borrado e exportação
 
-/** Lado do bloco da pixelação: cerca de 10 blocos no lado menor, nunca menos de 6 px. */
-export const blurBlock = (r: Rect) => Math.max(6, Math.round(Math.min(r.w, r.h) / 10));
+/** Lado do bloco da pixelação: cerca de 4 blocos no lado menor, nunca menos de 8 px. */
+export const blurBlock = (r: Rect) => Math.max(8, Math.round(Math.min(r.w, r.h) / 4));
 
 export const canEditImage = (type: string) => EDITABLE.includes(type);
 export const exportType = (type: string) => (type === "image/png" ? "image/png" : "image/jpeg");

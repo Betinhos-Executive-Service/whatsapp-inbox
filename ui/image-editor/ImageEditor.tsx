@@ -125,16 +125,19 @@ export function ImageEditor({ file, onDone, onClose }: { file: File; onDone: (fi
         } else tryClose();
         return;
       }
-      if (typingRef.current) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
-      if (mod && key === "z") {
-        e.preventDefault();
-        setHist((h) => h && (e.shiftKey ? redo(h) : undo(h)));
-      } else if (mod && key === "y") {
-        e.preventDefault();
-        setHist((h) => h && redo(h));
+      if (!typingRef.current) {
+        if (mod && key === "z") {
+          e.preventDefault();
+          setHist((h) => h && (e.shiftKey ? redo(h) : undo(h)));
+        } else if (mod && key === "y") {
+          e.preventDefault();
+          setHist((h) => h && redo(h));
+        }
       }
+      // Atalhos globais do app não valem com o editor aberto; sem preventDefault, para o campo de texto seguir normal.
+      if (mod || e.altKey || e.key === "?") e.stopPropagation();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -178,7 +181,11 @@ export function ImageEditor({ file, onDone, onClose }: { file: File; onDone: (fi
       gesture.current = { kind: "blur", from: src, draft: null };
     } else if (tool === "crop") {
       const rect = rectSrcToOut(view, s.crop);
-      gesture.current = { kind: "crop", handle: cropHandleAt(rect, p, handlePx / scale), from: p, start: rect, rect: null };
+      let handle = cropHandleAt(rect, p, handlePx / scale);
+      // Com a imagem inteira selecionada não há por onde "mover": o arrasto passa a desenhar um recorte novo.
+      const whole = outputSize(view);
+      if (handle === "move" && rect.x <= 0.5 && rect.y <= 0.5 && Math.abs(rect.w - whole.width) <= 0.5 && Math.abs(rect.h - whole.height) <= 0.5) handle = "new";
+      gesture.current = { kind: "crop", handle, from: p, start: rect, rect: null };
     } else {
       const hit = textAt(view, p, measureText);
       if (hit) gesture.current = { kind: "text", layer: hit, from: src, draft: null };
@@ -220,11 +227,15 @@ export function ImageEditor({ file, onDone, onClose }: { file: File; onDone: (fi
       setTyping({ id: null, at: g.at, value: "", color: tokenColor(ink), size: TEXT[size] / scale });
     } else if (g.kind === "draw") change((st) => addLayer(st, g.draft));
     else if (g.kind === "blur" && g.draft?.kind === "blur") {
-      const rect = clampRect(s, g.draft.rect);
+      const d = g.draft.rect;
+      const x = Math.floor(d.x);
+      const y = Math.floor(d.y);
+      const rect = clampRect(s, { x, y, w: Math.ceil(d.x + d.w) - x, h: Math.ceil(d.y + d.h) - y });
       if (rect.w * scale >= 6 && rect.h * scale >= 6) change((st) => addLayer(st, { kind: "blur", id: nextLayerId(), rect }));
     } else if (g.kind === "crop" && g.rect && g.rect.w * scale >= 12 && g.rect.h * scale >= 12) {
-      const rect = g.rect;
-      change((st) => setCrop(st, rectOutToSrc(view, rect)));
+      const next = setCrop(s, rectOutToSrc(view, g.rect)).crop;
+      const cur = s.crop;
+      if (next.x !== cur.x || next.y !== cur.y || next.w !== cur.w || next.h !== cur.h) change((st) => setCrop(st, rectOutToSrc(view, g.rect!)));
     } else if (g.kind === "text") {
       if (g.draft) {
         const moved = g.draft;
@@ -249,7 +260,7 @@ export function ImageEditor({ file, onDone, onClose }: { file: File; onDone: (fi
 
   const done = async () => {
     if (!bitmap || !hist || saving) return;
-    if (!isDirty(hist)) return onClose();
+    if (!isDirty(hist)) return onDone(file);
     setSaving(true);
     setError(null);
     try {

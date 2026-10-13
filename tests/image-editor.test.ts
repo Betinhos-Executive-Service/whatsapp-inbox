@@ -76,9 +76,9 @@ test("editor: camadas entram, mudam e saem pelo id", () => {
   assert.equal(removeLayer(s, 1).layers.length, 0);
 });
 
-test("editor: bloco do borrado cresce com a área e nunca fica abaixo de 6 px", () => {
-  assert.equal(blurBlock({ x: 0, y: 0, w: 20, h: 20 }), 6);
-  assert.equal(blurBlock({ x: 0, y: 0, w: 400, h: 200 }), 20);
+test("editor: bloco do borrado cresce com a área e nunca fica abaixo de 8 px", () => {
+  assert.equal(blurBlock({ x: 0, y: 0, w: 20, h: 20 }), 8);
+  assert.equal(blurBlock({ x: 0, y: 0, w: 400, h: 200 }), 50);
 });
 
 test("exportação: PNG continua PNG; o resto vira JPEG com sufixo -editada", () => {

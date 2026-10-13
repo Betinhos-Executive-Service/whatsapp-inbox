@@ -2156,8 +2156,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           file={imageEditing.file}
           onClose={() => setImageEditing(null)}
           onDone={(file) => {
-            if (imageEditing.attachmentId != null) replaceAttachment(imageEditing.attachmentId, file);
-            else addFiles([file]);
+            // Sem alteração o editor devolve o arquivo original: na bandeja não há o que trocar.
+            if (imageEditing.attachmentId == null) addFiles([file]);
+            else if (file !== imageEditing.file) replaceAttachment(imageEditing.attachmentId, file);
             setImageEditing(null);
           }}
         />
