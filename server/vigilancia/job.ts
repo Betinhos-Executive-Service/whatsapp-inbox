@@ -35,7 +35,10 @@ export type ResultadoCiclo = {
   ensaio: boolean;
 };
 
-type Fonte = "Dataverse" | "Infleet" | "rota";
+const SEM_CHAVE = "Chave da API da Anthropic não configurada.";
+const mensagemErro = (e: unknown) => (e instanceof Error && e.message ? e.message : String(e));
+
+type Fonte ="Dataverse" | "Infleet" | "rota";
 
 export class Vigilancia {
   private timer: NodeJS.Timeout | null = null;
@@ -64,7 +67,7 @@ export class Vigilancia {
 
   iniciar(): void {
     if (this.timer) return;
-    const tick = () => void this.ciclo().catch((e: Error) => this.deps.log(`Vigilância: ciclo falhou: ${e.message}`));
+    const tick = () => void this.ciclo().catch((e: unknown) => this.deps.log(`Vigilância: ciclo falhou: ${mensagemErro(e)}`));
     this.timer = setInterval(tick, this.config.cadenciaMin * MIN);
     this.timer.unref();
     tick();
@@ -93,29 +96,33 @@ export class Vigilancia {
 
     let rotaFalhou = false, rotaPedida = false;
     for (const os of lista) {
-      const posicao = os.placa ? (frota.get(normalizarPlaca(os.placa)) ?? null) : null;
-      const parada = posicao ? marcarParada(this.paradas.get(normalizarPlaca(os.placa!)), posicao) : null;
-      if (posicao && parada) this.paradas.set(normalizarPlaca(os.placa!), parada);
-      let embarque: Coord | null = null;
-      if (os.endereco) {
-        try {
-          embarque = await this.deps.geocodificador.localizar(os.endereco);
-        } catch (e) {
-          r.erros.push(`Geocodificação de "${os.endereco}": ${(e as Error).message}`);
+      try {
+        const posicao = os.placa ? (frota.get(normalizarPlaca(os.placa)) ?? null) : null;
+        const parada = posicao ? marcarParada(this.paradas.get(normalizarPlaca(os.placa!)), posicao) : null;
+        if (posicao && parada) this.paradas.set(normalizarPlaca(os.placa!), parada);
+        let embarque: Coord | null = null;
+        if (os.endereco) {
+          try {
+            embarque = await this.deps.geocodificador.localizar(os.endereco);
+          } catch (e) {
+            r.erros.push(`Geocodificação da ${os.numero ?? os.id}: ${mensagemErro(e)}`);
+          }
         }
+        let rota: Rota | null = null;
+        if (posicao && embarque && os.saidaAt - agora <= this.config.regras.rotaAteMin * MIN) {
+          rotaPedida = true;
+          rota = await this.deps.roteador.rota(posicao, embarque);
+          if (!rota) rotaFalhou = true;
+        }
+        const av = avaliar({ os, posicao, rota, embarque, parada, agora, cfg: this.config.regras });
+        const anterior = this.deps.estado.vigilanciaNivel(os.id);
+        r.avaliadas.push({ osId: os.id, os: av.fatos.os, nivel: av.nivel, anterior, folgaMin: av.fatos.folgaMin });
+        if (deveEnviar(anterior, av.nivel)) await this.avisar(av, os, r);
+      } catch (e) {
+        r.erros.push(`${os.numero ?? os.id}: ${mensagemErro(e)}`);
       }
-      let rota: Rota | null = null;
-      if (posicao && embarque && os.saidaAt - agora <= this.config.regras.rotaAteMin * MIN) {
-        rotaPedida = true;
-        rota = await this.deps.roteador.rota(posicao, embarque);
-        if (!rota) rotaFalhou = true;
-      }
-      const av = avaliar({ os, posicao, rota, embarque, parada, agora, cfg: this.config.regras });
-      const anterior = this.deps.estado.vigilanciaNivel(os.id);
-      r.avaliadas.push({ osId: os.id, os: av.fatos.os, nivel: av.nivel, anterior, folgaMin: av.fatos.folgaMin });
-      if (deveEnviar(anterior, av.nivel)) await this.avisar(av, os, r);
     }
-    if (rotaPedida) this.contarFonte("rota", rotaFalhou, r);
+    if (rotaPedida) await this.contarFonte("rota", rotaFalhou, r);
     return this.concluir(r);
   }
 
@@ -125,7 +132,8 @@ export class Vigilancia {
       return;
     }
     const red = await this.deps.redator.redigir(av);
-    this.deps.registrarUso?.(red.usage, !red.reserva);
+    // Sem chave da API nada foi chamado: não conta como uso nem como falha.
+    if (!(red.usage === null && red.reserva && red.erro === SEM_CHAVE)) this.deps.registrarUso?.(red.usage, !red.reserva);
     if (red.erro) this.deps.log(`Vigilância: redação pela API falhou (${red.erro}); usando o template.`);
     const id = await this.deps.enviar(this.config.grupoJid, red.texto);
     if (id === null) {
@@ -137,15 +145,16 @@ export class Vigilancia {
   }
 
   private async fonte<T>(nome: Fonte, buscar: () => Promise<T>, r: ResultadoCiclo): Promise<T | null> {
+    let v: T;
     try {
-      const v = await buscar();
-      await this.contarFonte(nome, false, r);
-      return v;
+      v = await buscar();
     } catch (e) {
-      r.erros.push(`${nome}: ${(e as Error).message}`);
+      r.erros.push(`${nome}: ${mensagemErro(e)}`);
       await this.contarFonte(nome, true, r);
       return null;
     }
+    await this.contarFonte(nome, false, r);
+    return v;
   }
 
   /** 3 falhas seguidas → aviso no grupo (1 por hora); ao voltar, avisa que normalizou. */
@@ -165,7 +174,12 @@ export class Vigilancia {
       r.enviadas.push({ osId: "", nivel: "ok", texto, reserva: true });
       return true;
     }
-    return (await this.deps.enviar(this.config.grupoJid, texto)) !== null;
+    try {
+      return (await this.deps.enviar(this.config.grupoJid, texto)) !== null;
+    } catch (e) {
+      r.erros.push(`Aviso de serviço não enviado: ${mensagemErro(e)}`);
+      return false;
+    }
   }
 
   private concluir(r: ResultadoCiclo): ResultadoCiclo {

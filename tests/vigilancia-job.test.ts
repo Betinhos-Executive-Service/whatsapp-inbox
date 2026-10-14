@@ -160,3 +160,31 @@ test("iniciar/parar: ciclos não se sobrepõem e parar cancela o timer", async (
   await new Promise((r) => setTimeout(r, 40));
   assert.equal(v.ultimo()!.em, n);
 });
+
+test("ciclo: falha ao enviar uma OS não derruba as demais nem grava o estado dela", async () => {
+  const m = montar({
+    lista: [os({ id: "os-1", numero: "OS-1" }), os({ id: "os-2", numero: "OS-2" })],
+    rota: { minutos: 55, km: 40, semTransito: false },
+  });
+  let chamadas = 0;
+  m.deps.enviar = async (jid, texto) => {
+    if (chamadas++ === 0) throw new Error("socket caiu");
+    m.enviados.push({ jid, texto });
+    return "id-1";
+  };
+  const r = await new Vigilancia(m.deps, CFG).ciclo();
+  assert.equal(r.avaliadas.length, 2);
+  assert.equal(r.erros.length, 1);
+  assert.match(r.erros[0], /OS-1: socket caiu/);
+  assert.equal(m.store.vigilanciaNivel("os-1"), null);
+  assert.equal(m.store.vigilanciaNivel("os-2"), "atraso");
+});
+
+test("ciclo: sem chave da API não registra uso", async () => {
+  const m = montar({
+    rota: { minutos: 55, km: 40, semTransito: false },
+    redator: { redigir: async () => ({ texto: "x", usage: null, reserva: true, erro: "Chave da API da Anthropic não configurada." }) },
+  });
+  await new Vigilancia(m.deps, CFG).ciclo();
+  assert.deepEqual(m.usos, []);
+});
