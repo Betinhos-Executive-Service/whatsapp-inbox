@@ -70,3 +70,29 @@ test("roteador: TomTom e OSRM fora devolve null", async () => {
   const f = (async () => resposta({}, 500)) as typeof fetch;
   assert.equal(await new Roteador("chave", f).rota({ lat: 0, lon: 0 }, { lat: 1, lon: 1 }), null);
 });
+
+test("geocodificador: consultas concorrentes são serializadas e respeitam 1,1 s", async () => {
+  const urls: string[] = [];
+  const esperas: number[] = [];
+  const f = (async (u: string) => (urls.push(u), resposta([{ lat: "1", lon: "2" }]))) as typeof fetch;
+  const g = new Geocodificador(cacheMemoria(), f, async (ms) => void esperas.push(ms), () => 0);
+  await Promise.all([g.localizar("A"), g.localizar("B")]);
+  assert.deepEqual(esperas, [1100]);
+  assert.equal(urls.length, 2);
+  assert.match(urls[0], /q=A(&|$)/);
+  assert.match(urls[1], /q=B(&|$)/);
+});
+
+test("geocodificador: erro HTTP devolve null, não repete por 5 min e tenta de novo depois", async () => {
+  let n = 0;
+  const f = (async () => (n++, resposta({}, 500))) as typeof fetch;
+  let agora = 0;
+  const g = new Geocodificador(cacheMemoria(), f, async () => undefined, () => agora);
+  assert.equal(await g.localizar("Rua Com Erro 1"), null);
+  agora = 4 * 60_000;
+  assert.equal(await g.localizar("Rua Com Erro 1"), null);
+  assert.equal(n, 1);
+  agora = 6 * 60_000;
+  assert.equal(await g.localizar("Rua Com Erro 1"), null);
+  assert.equal(n, 2);
+});

@@ -5,12 +5,15 @@ export type GeocacheStore = { geocacheGet(endereco: string): Coord | null; geoca
 const UA = "betinhos-whatsapp-inbox-vigilancia/1.0";
 const INTERVALO_NOMINATIM_MS = 1100;
 const REPETIR_FALHA_MS = 60 * 60_000;
+const REPETIR_ERRO_MS = 5 * 60_000;
 const dormir = (ms: number) => new Promise<void>((r) => setTimeout(r, ms).unref());
 
-/** Nominatim (1 req/s) com cache permanente dos acertos e memória de 60 min das falhas. */
+/** Nominatim (1 req/s) com cache permanente dos acertos e memória das falhas (60 min sem resultado, 5 min em erro). */
 export class Geocodificador {
+  /** Chave do endereço -> instante (ms) até o qual não deve ser consultado de novo. */
   private readonly falhas = new Map<string, number>();
   private ultimaConsultaAt = -Infinity;
+  private fila: Promise<unknown> = Promise.resolve();
   private readonly cache: GeocacheStore;
   private readonly fetchFn: typeof fetch;
   private readonly esperar: (ms: number) => Promise<void>;
@@ -28,20 +31,39 @@ export class Geocodificador {
     if (!chave) return null;
     const guardado = this.cache.geocacheGet(chave);
     if (guardado) return guardado;
-    const falhouEm = this.falhas.get(chave);
-    if (falhouEm !== undefined && this.agora() - falhouEm < REPETIR_FALHA_MS) return null;
+    const ate = this.falhas.get(chave);
+    if (ate !== undefined && this.agora() < ate) return null;
+    const trabalho = this.fila.then(() => this.consultar(chave));
+    this.fila = trabalho.catch(() => undefined);
+    return trabalho;
+  }
+
+  /** Executa uma consulta por vez: a espera de 1,1 s vale entre todas as chamadas concorrentes. */
+  private async consultar(chave: string): Promise<Coord | null> {
+    const guardado = this.cache.geocacheGet(chave);
+    if (guardado) return guardado;
+    const ate = this.falhas.get(chave);
+    if (ate !== undefined && this.agora() < ate) return null;
     const desdeUltima = this.agora() - this.ultimaConsultaAt;
     if (desdeUltima < INTERVALO_NOMINATIM_MS) await this.esperar(INTERVALO_NOMINATIM_MS);
     this.ultimaConsultaAt = this.agora();
     const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(chave)}`;
-    const res = await this.fetchFn(url, { headers: { "User-Agent": UA } });
-    if (!res.ok) throw new Error(`Nominatim HTTP ${res.status}`);
-    const [hit] = (await res.json()) as { lat: string; lon: string }[];
-    if (!hit) {
-      this.falhas.set(chave, this.agora());
+    let hit: { lat: string; lon: string } | undefined;
+    try {
+      const res = await this.fetchFn(url, { headers: { "User-Agent": UA } });
+      if (!res.ok) throw new Error(`Nominatim HTTP ${res.status}`);
+      const json = (await res.json()) as unknown;
+      if (!Array.isArray(json)) throw new Error("Nominatim JSON inesperado");
+      hit = json[0] as { lat: string; lon: string } | undefined;
+    } catch {
+      this.falhas.set(chave, this.agora() + REPETIR_ERRO_MS);
       return null;
     }
-    const coord = { lat: Number(hit.lat), lon: Number(hit.lon) };
+    const coord = hit ? { lat: Number(hit.lat), lon: Number(hit.lon) } : null;
+    if (!coord || !Number.isFinite(coord.lat) || !Number.isFinite(coord.lon)) {
+      this.falhas.set(chave, this.agora() + REPETIR_FALHA_MS);
+      return null;
+    }
     this.cache.geocacheSet(chave, coord, this.agora());
     return coord;
   }
