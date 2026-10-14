@@ -10,6 +10,7 @@ import { linkPreview } from "./link-preview.ts";
 import { EXT_BY_TYPE, TYPE_BY_EXT } from "./mime.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
 import { voucherSchema, type Voucher } from "./voucher.ts";
+import type { PatchVigilancia, ResultadoCiclo, StatusVigilancia } from "./vigilancia/index.ts";
 
 /** Nome do arquivo baixado: o original, ou "arquivo" + extensão do tipo; sem extensão o Windows não sabe abrir. */
 export function downloadName(mimetype: string, fileName: string | null): string {
@@ -134,6 +135,9 @@ export type Api = {
   backup: () => Promise<string>;
   /** Log de envios: arquivo e últimas linhas (mais recente primeiro). */
   sendLog: () => { file: string; lines: string[] };
+  vigilanciaStatus: () => StatusVigilancia;
+  vigilanciaSalvar: (patch: PatchVigilancia) => StatusVigilancia;
+  vigilanciaCiclo: () => Promise<ResultadoCiclo>;
   subscribe: (res: ServerResponse) => void;
   onChatChanged: (jid: string) => void;
 };
@@ -251,6 +255,22 @@ const settingsSchema = z.object({
   autoSummarize: z.boolean().optional(),
   autoClassify: z.boolean().optional(),
   classifyProvider: z.enum(["jev", "deepseek"]).optional(),
+});
+
+const segredo = z.string().trim().min(3).max(500).nullable().optional();
+const vigilanciaSchema = z.object({
+  ativa: z.boolean().optional(),
+  grupoJid: z.string().trim().regex(/@g\.us$/, "Escolha um grupo.").nullable().optional(),
+  margemMin: z.number().int().min(1).max(120).optional(),
+  janelaMin: z.number().int().min(30).max(360).optional(),
+  cadenciaMin: z.number().int().min(1).max(30).optional(),
+  ensaio: z.boolean().optional(),
+  dvEnvironmentUrl: z.string().trim().url().nullable().optional(),
+  dvTenantId: segredo,
+  dvClientId: segredo,
+  dvClientSecret: segredo,
+  infleetToken: segredo,
+  tomtomKey: segredo,
 });
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -810,6 +830,9 @@ export function createHandler(api: Api) {
       api.saveSettings(parse(settingsSchema, await readJson(req)));
       return json(res, 200, api.state());
     }
+    if (path === "/api/vigilancia" && method === "GET") return json(res, 200, api.vigilanciaStatus());
+    if (path === "/api/vigilancia" && method === "PUT") return json(res, 200, api.vigilanciaSalvar(parse(vigilanciaSchema, await readJson(req))));
+    if (path === "/api/vigilancia/ciclo" && method === "POST") return json(res, 200, await api.vigilanciaCiclo());
     if (path === "/api/logout" && method === "POST") {
       await api.logout();
       return json(res, 200, api.state());
