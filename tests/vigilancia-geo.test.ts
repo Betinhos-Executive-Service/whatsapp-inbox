@@ -34,6 +34,22 @@ test("geocodificador: endereço não encontrado devolve null e não repete por 6
   assert.equal(n, 2);
 });
 
+test("geocodificador: sem resultado com ' - ' tenta só o texto antes do último ' - ' e guarda com a chave original", async () => {
+  const urls: string[] = [];
+  const esperas: number[] = [];
+  const f = (async (u: string) => (urls.push(u), resposta(urls.length === 1 ? [] : [{ lat: "-23.43", lon: "-46.47" }]))) as typeof fetch;
+  const cache = cacheMemoria();
+  const g = new Geocodificador(cache, f, async (ms) => void esperas.push(ms), () => 0);
+  assert.deepEqual(await g.localizar("Aeroporto de Guarulhos - Terminal 3 - Voo LA 8127"), { lat: -23.43, lon: -46.47 });
+  assert.equal(urls.length, 2);
+  assert.match(urls[0], /q=Aeroporto%20de%20Guarulhos%20-%20Terminal%203%20-%20Voo%20LA%208127$/);
+  assert.match(urls[1], /q=Aeroporto%20de%20Guarulhos%20-%20Terminal%203$/);
+  assert.deepEqual(esperas, [1100]);
+  assert.deepEqual([...cache.m.keys()], ["Aeroporto de Guarulhos - Terminal 3 - Voo LA 8127"]);
+  assert.deepEqual(await g.localizar("Aeroporto de Guarulhos - Terminal 3 - Voo LA 8127"), { lat: -23.43, lon: -46.47 });
+  assert.equal(urls.length, 2);
+});
+
 test("geocodificador: espera 1,1 s entre consultas de rede", async () => {
   const esperas: number[] = [];
   const f = (async () => resposta([{ lat: "1", lon: "2" }])) as typeof fetch;

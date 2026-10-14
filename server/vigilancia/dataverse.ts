@@ -4,6 +4,7 @@ export type DataverseConfig = { url: string; tenantId: string; clientId: string;
 
 const STATUS_FORA = [202410002, 202410010, 202410008]; // Cancelado, Cancelado com Ressalvas, Concluído
 const SELECT_OS = "cr40f_reservadeveculosid,cr40f_id,cr40f_dataehorriodesada,cr40f_endereodesada,cr40f_passageirosetelefonedecontato,cr40f_status,_cr40f_veiculo_value";
+const TIMEOUT_MS = 15_000;
 const EXPAND_OS = "cr40f_Motorista($select=cr40f_nomecompleto,new_apelido),cr40f_Cliente($select=cr40f_nomedocliente)";
 
 type LinhaOs = {
@@ -72,6 +73,7 @@ export class DataverseCliente {
     const token = await this.token();
     const res = await this.fetchFn(`${this.cfg.url}/api/data/v9.2/${consulta}`, {
       headers: { authorization: `Bearer ${token}`, accept: "application/json", "odata-maxversion": "4.0", "odata-version": "4.0" },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`Dataverse HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
     return ((await res.json()) as { value: T[] }).value;
@@ -80,7 +82,7 @@ export class DataverseCliente {
   private async token(): Promise<string> {
     if (this.tokenCache && this.tokenCache.expiraAt > this.agora()) return this.tokenCache.valor;
     const body = new URLSearchParams({ grant_type: "client_credentials", client_id: this.cfg.clientId, client_secret: this.cfg.clientSecret, scope: `${this.cfg.url}/.default` });
-    const res = await this.fetchFn(`https://login.microsoftonline.com/${this.cfg.tenantId}/oauth2/v2.0/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: body.toString() });
+    const res = await this.fetchFn(`https://login.microsoftonline.com/${this.cfg.tenantId}/oauth2/v2.0/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: body.toString(), signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (!res.ok) throw new Error(`Entra ID HTTP ${res.status}: token do Dataverse recusado`);
     const j = (await res.json()) as { access_token: string; expires_in: number };
     this.tokenCache = { valor: j.access_token, expiraAt: this.agora() + (j.expires_in - 60) * 1000 };
