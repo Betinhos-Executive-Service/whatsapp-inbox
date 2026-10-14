@@ -2,6 +2,7 @@ import type { ContactCard } from "./contacts.ts";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { CLAUDE_API_RATES, claudePlanEquivalentUsd, type Provider, type TokenUsage, type UsageKind } from "./pricing.ts";
 import type { Extra } from "./text.ts";
+import type { Coord, Nivel } from "./vigilancia/tipos.ts";
 
 export const STATUSES = ["aberta", "aguardando", "resolvida"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -279,7 +280,7 @@ create table if not exists ai_usage (
   id integer primary key,
   at integer not null,
   provider text not null check (provider in ('jev','deepseek','local','claude')),
-  kind text not null check (kind in ('classificar','rascunho','resumo')),
+  kind text not null check (kind in ('classificar','rascunho','resumo','vigilancia')),
   chat_jid text,
   model text not null,
   input_tokens integer not null default 0,
@@ -294,6 +295,18 @@ create table if not exists ai_usage (
 );
 create index if not exists ai_usage_at on ai_usage(at desc);
 create index if not exists ai_usage_chat on ai_usage(chat_jid);
+create table if not exists vigilancia_alertas (
+  os_id text primary key,
+  nivel text not null,
+  saida_at integer not null,
+  enviado_em integer not null
+);
+create table if not exists vigilancia_geocache (
+  endereco text primary key,
+  lat real not null,
+  lon real not null,
+  criado_em integer not null
+);
 create table if not exists reactions (
   chat_jid text not null references chats(jid) on delete cascade on update cascade,
   message_id text not null,
@@ -543,10 +556,10 @@ export class Store {
     if (Number(count.n) === 0) this.saveLabels(DEFAULT_LABELS);
   }
 
-  /** Bancos antigos têm o check de provider sem 'claude': recria a tabela mantendo os dados. */
+  /** Bancos antigos têm os checks de provider/kind sem 'claude' ou 'vigilancia': recria a tabela mantendo os dados. */
   private migrateUsageProviders() {
     const row = this.db.prepare("select sql from sqlite_master where type = 'table' and name = 'ai_usage'").get() as Row | undefined;
-    if (!row || String(row.sql).includes("'claude'")) return;
+    if (!row || (String(row.sql).includes("'claude'") && String(row.sql).includes("'vigilancia'"))) return;
     this.db.exec(`begin;
       alter table ai_usage rename to ai_usage_old;
       ${SCHEMA.slice(SCHEMA.indexOf("create table if not exists ai_usage"), SCHEMA.indexOf("create index if not exists ai_usage_at"))}
@@ -1527,5 +1540,33 @@ export class Store {
   setSetting(key: string, value: string | null): void {
     if (value === null) this.q("delete from settings where key = ?").run(key);
     else this.q("insert into settings (key, value) values (?, ?) on conflict(key) do update set value = excluded.value").run(key, value);
+  }
+
+  // ---- vigilância da operação
+
+  vigilanciaNivel(osId: string): Nivel | null {
+    const row = this.q("select nivel from vigilancia_alertas where os_id = ?").get(osId) as Row | undefined;
+    return row ? (String(row.nivel) as Nivel) : null;
+  }
+
+  vigilanciaRegistrar(osId: string, nivel: Nivel, saidaAt: number, at: number): void {
+    this.q(
+      `insert into vigilancia_alertas (os_id, nivel, saida_at, enviado_em) values (?, ?, ?, ?)
+       on conflict(os_id) do update set nivel = excluded.nivel, saida_at = excluded.saida_at, enviado_em = excluded.enviado_em`,
+    ).run(osId, nivel, saidaAt, at);
+  }
+
+  /** Apaga o estado das OS cuja saída já passou; devolve quantas saíram. */
+  vigilanciaLimpar(saidaAntesDe: number): number {
+    return Number(this.q("delete from vigilancia_alertas where saida_at < ?").run(saidaAntesDe).changes);
+  }
+
+  geocacheGet(endereco: string): Coord | null {
+    const row = this.q("select lat, lon from vigilancia_geocache where endereco = ?").get(endereco) as Row | undefined;
+    return row ? { lat: Number(row.lat), lon: Number(row.lon) } : null;
+  }
+
+  geocacheSet(endereco: string, coord: Coord, at: number): void {
+    this.q("insert or replace into vigilancia_geocache (endereco, lat, lon, criado_em) values (?, ?, ?, ?)").run(endereco, coord.lat, coord.lon, at);
   }
 }

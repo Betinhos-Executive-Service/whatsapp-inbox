@@ -17,7 +17,7 @@ const AI_FILTERS: { id: UsageProvider | null; label: string }[] = [
   { id: "deepseek", label: "DeepSeek" },
   { id: "jev", label: "Jev" },
 ];
-const KIND_LABEL = { classificar: "Classificação (Jev)", rascunho: "Rascunho de resposta", resumo: "Resumo da conversa" } as const;
+const KIND_LABEL = { classificar: "Classificação (Jev)", rascunho: "Rascunho de resposta", resumo: "Resumo da conversa", vigilancia: "Vigilância da operação" } as const;
 const PROVIDER_LABEL = { jev: "Jev (TypeSafe)", deepseek: "DeepSeek", local: "IA local (removida)", claude: "Claude" } as const;
 
 const dayShort = new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit" });
