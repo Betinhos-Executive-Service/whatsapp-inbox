@@ -48,6 +48,14 @@ O botão com a marca do Claude, no topo da conversa, prepara o agendamento com o
 
 Nada é enviado ao cliente sem você clicar em **Enviar**. Cada etapa leva de 1 a 3 minutos e continua se você trocar de conversa. O app registra o MCP no Claude Code sozinho, se ainda não estiver registrado. O PDF é impresso pelo Edge (ou Chrome) em modo headless; contatos do suporte e política de cancelamento usam o padrão da Tela Voucher.
 
+## Vigilância da operação
+
+Em **Configurações › Vigilância**, o Inbox cruza, a cada 5 minutos, as OS das próximas 2 horas (Dataverse PROD) com a posição dos carros (Infleet) e o tempo de trajeto com trânsito (TomTom; sem chave, OSRM sem trânsito) e avisa um grupo interno do WhatsApp **só quando uma OS entra em risco ou muda de situação**: risco de atraso, atenção (folga menor que a margem), carro parado ou sem sinal perto da hora, OS sem motorista ou veículo, e "normalizou" quando volta ao normal. A redação do aviso usa a API da Anthropic (chave na aba IA); sem chave ou com erro, sai um texto fixo com os mesmos dados.
+
+Precisa de: um grupo do WhatsApp, um app registration no Entra ID com *application user* só de leitura no Dataverse PROD (URL, Tenant ID, Client ID e Client Secret), o token da Infleet e, opcionalmente, uma chave da TomTom (plano grátis: 2.500 rotas/dia). Os acessos ficam no `inbox.db` deste PC, ou em `.env.local` (`DV_ENVIRONMENT_URL`, `DV_TENANT_ID`, `DV_CLIENT_ID`, `DV_CLIENT_SECRET`, `INFLEET_TOKEN`, `TOMTOM_KEY`).
+
+**Modo ensaio** mostra na tela o que seria enviado sem mandar nada: use antes de apontar para o grupo da operação. Roda enquanto o app estiver aberto ou na bandeja. Falhas de fonte por 3 ciclos seguidos geram um aviso no grupo (no máximo um por hora) e outro quando normaliza. As chamadas à API aparecem em **Gastos com IA** como "Vigilância da operação".
+
 ## Dados
 
 No app instalado, tudo fica em `%APPDATA%\WhatsApp Inbox\data` (no modo de desenvolvimento, em `data/` do projeto):
