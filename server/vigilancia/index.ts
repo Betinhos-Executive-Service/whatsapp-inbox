@@ -89,6 +89,7 @@ export function criarVigilancia(args: {
   env: NodeJS.ProcessEnv;
   anthropicKey: () => string | null | undefined;
   enviar: DepsVigilancia["enviar"];
+  conectado: DepsVigilancia["conectado"];
   registrarUso: DepsVigilancia["registrarUso"];
   log: DepsVigilancia["log"];
 }): Vigilancia | null {
@@ -103,6 +104,7 @@ export function criarVigilancia(args: {
       redator: new Redator(args.anthropicKey),
       estado: args.store,
       enviar: args.enviar,
+      conectado: args.conectado,
       registrarUso: args.registrarUso,
       log: args.log,
     },

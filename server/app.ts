@@ -262,6 +262,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         env: process.env,
         anthropicKey,
         enviar: enviarVigilancia,
+        conectado: () => wa?.state.status === "conectado",
         registrarUso: registrarUsoVigilancia,
         log: (m) => console.warn(m),
       });

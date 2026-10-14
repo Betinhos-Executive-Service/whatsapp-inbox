@@ -10,6 +10,8 @@ const MIN = 60_000;
 const LIMPAR_APOS_MIN = 30;
 const FALHAS_PARA_AVISAR = 3;
 const REPETIR_AVISO_FONTE_MS = 60 * MIN;
+/** Teto de espera do ciclo em andamento no `parar()`: o `close()` do servidor nunca fica preso. */
+const PARAR_TIMEOUT_MS = 10_000;
 
 export type ConfigVigilancia = { grupoJid: string; janelaMin: number; cadenciaMin: number; ensaio: boolean; regras: ConfigRegras };
 
@@ -22,6 +24,8 @@ export type DepsVigilancia = {
   estado: Pick<Store, "vigilanciaNivel" | "vigilanciaRegistrar" | "vigilanciaLimpar">;
   /** Devolve o id da mensagem, ou null quando o WhatsApp não está conectado. */
   enviar: (jid: string, texto: string) => Promise<string | null>;
+  /** WhatsApp conectado agora: sem conexão, o aviso nem chega a chamar a API (que é paga). */
+  conectado: () => boolean;
   registrarUso?: (usage: TokenUsage | null, ok: boolean) => void;
   log: (msg: string) => void;
   agora?: () => number;
@@ -29,7 +33,7 @@ export type DepsVigilancia = {
 
 export type ResultadoCiclo = {
   em: number;
-  avaliadas: { osId: string; os: string; nivel: Nivel; anterior: Nivel | null; folgaMin: number | null }[];
+  avaliadas: { osId: string; os: string; nivel: Nivel; anterior: Nivel | null; folgaMin: number | null; embarqueLocalizado: boolean; posicaoConhecida: boolean }[];
   enviadas: { osId: string; nivel: Nivel; texto: string; reserva: boolean }[];
   erros: string[];
   ensaio: boolean;
@@ -47,6 +51,8 @@ export class Vigilancia {
   private readonly paradas = new Map<string, Parada>();
   private readonly falhas = new Map<Fonte, number>();
   private readonly avisadoAt = new Map<Fonte, number>();
+  /** OS cujo embarque não foi localizado já registradas no log (uma vez por processo). */
+  private readonly embarqueNaoLocalizadoLogado = new Set<string>();
   private readonly agora: () => number;
   private readonly deps: DepsVigilancia;
   private readonly config: ConfigVigilancia;
@@ -73,11 +79,18 @@ export class Vigilancia {
     tick();
   }
 
-  /** Cancela o timer e resolve quando o ciclo em andamento (se houver) terminar. */
+  /** Cancela o timer e resolve quando o ciclo em andamento (se houver) terminar, esperando no máximo 10 s. */
   async parar(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    await this.rodando?.catch(() => undefined);
+    if (!this.rodando) return;
+    let limite: NodeJS.Timeout | undefined;
+    const estourou = await Promise.race([
+      this.rodando.then(() => false, () => false),
+      new Promise<boolean>((r) => (limite = setTimeout(() => r(true), PARAR_TIMEOUT_MS))),
+    ]);
+    clearTimeout(limite);
+    if (estourou) this.deps.log(`Vigilância: parada sem esperar o ciclo em andamento (passou de ${PARAR_TIMEOUT_MS / 1000} s).`);
   }
 
   /** Um ciclo por vez: chamada concorrente recebe o ciclo em andamento. */
@@ -96,7 +109,7 @@ export class Vigilancia {
     const frota = await this.fonte("Infleet", () => this.deps.infleet.frota(), r);
     if (!lista || !frota) return this.concluir(r);
 
-    let rotaFalhou = false, rotaPedida = false;
+    let rotasPedidas = 0, rotasFalhas = 0;
     for (const os of lista) {
       try {
         const posicao = os.placa ? (frota.get(normalizarPlaca(os.placa)) ?? null) : null;
@@ -106,31 +119,43 @@ export class Vigilancia {
         if (os.endereco) {
           try {
             embarque = await this.deps.geocodificador.localizar(os.endereco);
+            if (!embarque && !this.embarqueNaoLocalizadoLogado.has(os.id)) {
+              this.embarqueNaoLocalizadoLogado.add(os.id);
+              this.deps.log(`Vigilância: ${os.numero ?? os.id}: embarque não localizável.`);
+            }
           } catch (e) {
             r.erros.push(`Geocodificação da ${os.numero ?? os.id}: ${mensagemErro(e)}`);
           }
         }
         let rota: Rota | null = null;
         if (posicao && embarque && os.saidaAt - agora <= this.config.regras.rotaAteMin * MIN) {
-          rotaPedida = true;
+          rotasPedidas++;
           rota = await this.deps.roteador.rota(posicao, embarque);
-          if (!rota) rotaFalhou = true;
+          if (!rota) {
+            rotasFalhas++;
+            r.erros.push(`${os.numero ?? os.id}: rota indisponível`);
+          }
         }
         const av = avaliar({ os, posicao, rota, embarque, parada, agora, cfg: this.config.regras });
         const anterior = this.deps.estado.vigilanciaNivel(os.id);
-        r.avaliadas.push({ osId: os.id, os: av.fatos.os, nivel: av.nivel, anterior, folgaMin: av.fatos.folgaMin });
+        r.avaliadas.push({ osId: os.id, os: av.fatos.os, nivel: av.nivel, anterior, folgaMin: av.fatos.folgaMin, embarqueLocalizado: embarque !== null, posicaoConhecida: posicao !== null });
         if (deveEnviar(anterior, av.nivel)) await this.avisar(av, os, r);
       } catch (e) {
         r.erros.push(`${os.numero ?? os.id}: ${mensagemErro(e)}`);
       }
     }
-    if (rotaPedida) await this.contarFonte("rota", rotaFalhou, r);
+    // A fonte "rota" só conta como fora quando todas as rotas pedidas no ciclo falharam.
+    if (rotasPedidas) await this.contarFonte("rota", rotasFalhas === rotasPedidas, r);
     return this.concluir(r);
   }
 
   private async avisar(av: Avaliacao, os: OsVigiada, r: ResultadoCiclo): Promise<void> {
     if (this.config.ensaio) {
       r.enviadas.push({ osId: os.id, nivel: av.nivel, texto: templateReserva(av), reserva: true });
+      return;
+    }
+    if (!this.deps.conectado()) {
+      r.erros.push(`WhatsApp desconectado: aviso da ${av.fatos.os} fica para o próximo ciclo.`);
       return;
     }
     const red = await this.deps.redator.redigir(av);

@@ -25,6 +25,7 @@ function montar(over: Partial<DepsVigilancia> & { rota?: Rota | null; lista?: Os
     redator: { redigir: async (av) => ({ texto: `aviso ${av.nivel} ${av.fatos.os}`, usage: { inputTokens: 1, outputTokens: 1, cachedTokens: 0 }, reserva: false, erro: null }) },
     estado: store,
     enviar: async (jid, texto) => (enviados.push({ jid, texto }), "id-1"),
+    conectado: () => true,
     registrarUso: (_u, ok) => void usos.push(ok),
     log: (m) => void logs.push(m),
     agora: () => agora,
@@ -38,9 +39,23 @@ test("ciclo: OS ok não envia nada nem grava estado", async () => {
   const r = await new Vigilancia(m.deps, CFG).ciclo();
   assert.equal(r.avaliadas.length, 1);
   assert.equal(r.avaliadas[0].nivel, "ok");
+  assert.equal(r.avaliadas[0].embarqueLocalizado, true);
+  assert.equal(r.avaliadas[0].posicaoConhecida, true);
   assert.equal(r.enviadas.length, 0);
   assert.equal(m.enviados.length, 0);
   assert.equal(m.store.vigilanciaNivel("os-1"), null);
+});
+
+test("ciclo: embarque não localizado e carro sem posição ficam visíveis; o log do embarque sai uma vez por OS", async () => {
+  const m = montar({ geocodificador: { localizar: async () => null }, frota: new Map() });
+  const v = new Vigilancia(m.deps, CFG);
+  const r = await v.ciclo();
+  assert.equal(r.avaliadas[0].embarqueLocalizado, false);
+  assert.equal(r.avaliadas[0].posicaoConhecida, false);
+  await v.ciclo();
+  const logsEmbarque = m.logs.filter((l) => /embarque não localizável/.test(l));
+  assert.deepEqual(logsEmbarque, ["Vigilância: OS-1: embarque não localizável."]);
+  assert.equal(m.logs.some((l) => l.includes("Paulista")), false);
 });
 
 test("ciclo: entra em atraso → envia uma vez e grava; repete o nível → não reenvia; volta a ok → avisa normalizou", async () => {
@@ -65,6 +80,23 @@ test("ciclo: envio que não devolve id (WhatsApp fora) não grava o estado e ten
   const r = await v.ciclo();
   assert.equal(r.enviadas.length, 0);
   assert.match(r.erros.join(" "), /WhatsApp/);
+  assert.equal(m.store.vigilanciaNivel("os-1"), null);
+});
+
+test("ciclo: WhatsApp desconectado não chama a API, não registra uso e não grava o estado", async () => {
+  let redigiu = false;
+  const m = montar({
+    rota: { minutos: 55, km: 40, semTransito: false },
+    conectado: () => false,
+    redator: { redigir: async () => (redigiu = true, { texto: "x", usage: { inputTokens: 1, outputTokens: 1, cachedTokens: 0 }, reserva: false, erro: null }) },
+  });
+  const r = await new Vigilancia(m.deps, CFG).ciclo();
+  assert.equal(r.avaliadas[0].nivel, "atraso");
+  assert.equal(redigiu, false);
+  assert.deepEqual(m.usos, []);
+  assert.equal(r.erros.length, 1);
+  assert.match(r.erros[0], /WhatsApp desconectado: aviso da OS-1/);
+  assert.equal(m.enviados.length, 0);
   assert.equal(m.store.vigilanciaNivel("os-1"), null);
 });
 
@@ -132,10 +164,23 @@ test("ciclo: rota indisponível só gera aviso de fonte depois de 3 ciclos e a O
   const r = await v.ciclo();
   assert.equal(r.avaliadas[0].nivel, "ok");
   assert.equal(r.avaliadas[0].folgaMin, null);
+  assert.deepEqual(r.erros, ["OS-1: rota indisponível"]);
   await v.ciclo();
   await v.ciclo();
   assert.equal(m.enviados.length, 1);
   assert.match(m.enviados[0].texto, /rota/i);
+});
+
+test("ciclo: rota que falha só para uma de duas OS não conta a fonte como fora", async () => {
+  const m = montar({ lista: [os({ id: "os-1", numero: "OS-1", saidaAt: AGORA + 30 * MIN }), os({ id: "os-2", numero: "OS-2", saidaAt: AGORA + 30 * MIN })] });
+  let n = 0;
+  m.deps.roteador = { rota: async () => (n++ % 2 === 0 ? null : { minutos: 10, km: 5, semTransito: false }) };
+  const v = new Vigilancia(m.deps, CFG);
+  const r = await v.ciclo();
+  assert.deepEqual(r.erros, ["OS-1: rota indisponível"]);
+  await v.ciclo();
+  await v.ciclo();
+  assert.equal(m.enviados.some((e) => /sem dados: rota/i.test(e.texto)), false);
 });
 
 test("ciclo: estado de OS cuja saída passou há mais de 30 min é apagado", async () => {
@@ -169,6 +214,23 @@ test("parar: só resolve depois que o ciclo em andamento termina", async () => {
   await v.parar();
   assert.equal(terminou, true);
   assert.equal(v.emExecucao(), false);
+});
+
+test("parar: com o ciclo preso, desiste depois de 10 s e registra no log", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const m = montar({ dataverse: { osNaJanela: () => new Promise<OsVigiada[]>(() => undefined) } });
+  const v = new Vigilancia(m.deps, CFG);
+  void v.ciclo();
+  let parou = false;
+  const p = v.parar().then(() => (parou = true));
+  await Promise.resolve();
+  t.mock.timers.tick(9_999);
+  await Promise.resolve();
+  assert.equal(parou, false);
+  t.mock.timers.tick(1);
+  await p;
+  assert.equal(parou, true);
+  assert.match(m.logs.join("\n"), /parada sem esperar o ciclo em andamento/);
 });
 
 test("ciclo: falha ao enviar uma OS não derruba as demais nem grava o estado dela", async () => {

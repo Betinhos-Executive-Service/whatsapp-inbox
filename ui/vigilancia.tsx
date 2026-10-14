@@ -127,7 +127,7 @@ export function VigilanciaPanel({ notify }: { notify: (kind: "error" | "success"
           </p>
           {ciclo.avaliadas.map((a) => (
             <p key={a.osId} className="hint">
-              {a.os}: {NIVEL[a.nivel]}{a.anterior && a.anterior !== a.nivel ? ` (antes: ${NIVEL[a.anterior]})` : ""}{a.folgaMin !== null ? ` · folga ${a.folgaMin} min` : ""}
+              {a.os}: {NIVEL[a.nivel]}{a.anterior && a.anterior !== a.nivel ? ` (antes: ${NIVEL[a.anterior]})` : ""}{a.folgaMin !== null ? ` · folga ${a.folgaMin} min` : ""}{a.embarqueLocalizado ? "" : " · embarque não localizado"}{a.posicaoConhecida ? "" : " · sem posição"}
             </p>
           ))}
           {ciclo.enviadas.map((e, i) => (

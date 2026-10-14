@@ -110,7 +110,7 @@ export type McpStatus = { claudeFound: boolean; registered: boolean; command: st
 export type NivelVigilancia = "ok" | "sem_programacao" | "sem_sinal" | "parado" | "atraso" | "atencao";
 export type ResultadoCiclo = {
   em: number;
-  avaliadas: { osId: string; os: string; nivel: NivelVigilancia; anterior: NivelVigilancia | null; folgaMin: number | null }[];
+  avaliadas: { osId: string; os: string; nivel: NivelVigilancia; anterior: NivelVigilancia | null; folgaMin: number | null; embarqueLocalizado: boolean; posicaoConhecida: boolean }[];
   enviadas: { osId: string; nivel: NivelVigilancia; texto: string; reserva: boolean }[];
   erros: string[];
   ensaio: boolean;
