@@ -252,17 +252,22 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       label: null, confidence: null, needsReply: null, urgent: null, ok,
     });
   };
-  async function montarVigilancia() {
-    await vigilancia?.parar();
-    vigilancia = criarVigilancia({
-      store,
-      env: process.env,
-      anthropicKey,
-      enviar: enviarVigilancia,
-      registrarUso: registrarUsoVigilancia,
-      log: (m) => console.warn(m),
+  /** Remontagens em sequência: duas chamadas próximas não deixam instância órfã com timer ativo. */
+  let remontagem: Promise<void> = Promise.resolve();
+  function montarVigilancia(): Promise<void> {
+    remontagem = remontagem.catch(() => undefined).then(async () => {
+      await vigilancia?.parar();
+      vigilancia = criarVigilancia({
+        store,
+        env: process.env,
+        anthropicKey,
+        enviar: enviarVigilancia,
+        registrarUso: registrarUsoVigilancia,
+        log: (m) => console.warn(m),
+      });
+      if (vigilancia && store.getSetting("vigilancia_ativa") === "1") vigilancia.iniciar();
     });
-    if (vigilancia && store.getSetting("vigilancia_ativa") === "1") vigilancia.iniciar();
+    return remontagem;
   }
   const vigilanciaStatus = (): StatusVigilancia => {
     const c = lerConfig((k) => store.getSetting(k), process.env);
@@ -289,7 +294,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     if (!vigilancia) throw new Error(`Vigilância sem configuração: ${lerConfig((k) => store.getSetting(k), process.env).faltando.join(", ")}.`);
     return vigilancia.ciclo();
   }
-  void montarVigilancia();
+  montarVigilancia().catch((e: unknown) => console.warn(`Vigilância: falha ao montar: ${e instanceof Error ? e.message : String(e)}`));
 
   const requireDeepseekKey = () => {
     const key = deepseekKey();
