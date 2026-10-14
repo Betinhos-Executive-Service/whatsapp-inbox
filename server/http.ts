@@ -272,14 +272,14 @@ const sendMediaSchema = z.object({
 
 /** Resposta proposta por uma IA (MCP); mesmos limites do envio de texto e de anexo. */
 const pendingDraftSchema = z.object({
-  text: z.string().max(4096).default(""),
+  text: z.string().max(65536).default(""),
   quotedId: z.string().min(1).max(200).optional(),
   source: z.string().trim().min(1).max(40).default("claude"),
   media: z.object({ fileName: z.string().trim().min(1).max(255), mimetype: z.string().trim().min(1).max(128), data: z.string().min(1) }).optional(),
 });
 
 const sendSchema = z.object({
-  text: z.string().trim().min(1).max(4096),
+  text: z.string().trim().min(1).max(65536),
   quotedId: z.string().min(1).max(200).optional(),
   quotedChat: z.string().min(1).max(200).optional(),
   mentions: z.array(z.string().regex(/^[\w.:-]+@(s\.whatsapp\.net|lid)$/, "Menção inválida.")).max(256).optional(),
@@ -575,7 +575,7 @@ export function createHandler(api: Api) {
       }
       if (action === "/participants" && method === "GET") return json(res, 200, await api.participants(jid));
       if (action === "/edit" && method === "POST") {
-        const { id, text } = parse(z.object({ id: z.string().min(1).max(200), text: z.string().trim().min(1).max(4096) }), await readJson(req));
+        const { id, text } = parse(z.object({ id: z.string().min(1).max(200), text: z.string().trim().min(1).max(65536) }), await readJson(req));
         await api.editMessage(jid, id, text);
         return json(res, 200, store.getMessage(jid, id));
       }

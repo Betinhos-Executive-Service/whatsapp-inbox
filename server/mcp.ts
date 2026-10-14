@@ -199,7 +199,7 @@ export function createMcpServer(client: InboxClient): McpServer {
       description: "Cria um rascunho de resposta na conversa. NÃO envia: a pessoa vê o rascunho no WhatsApp Inbox e decide enviar, editar ou descartar. Um rascunho novo substitui o anterior.",
       inputSchema: {
         jid: z.string(),
-        texto: z.string().min(1).max(4096).describe("Texto pronto para o cliente, em pt-BR."),
+        texto: z.string().min(1).max(65536).describe("Texto pronto para o cliente, em pt-BR."),
         citarId: z.string().optional().describe("id da mensagem a responder (citação), opcional."),
       },
     },
