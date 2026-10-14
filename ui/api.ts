@@ -107,6 +107,31 @@ export type AiUsageSummary = {
 
 /** Registro do servidor MCP deste app no Claude Code do PC. */
 export type McpStatus = { claudeFound: boolean; registered: boolean; command: string | null; file: string };
+export type NivelVigilancia = "ok" | "sem_programacao" | "sem_sinal" | "parado" | "atraso" | "atencao";
+export type ResultadoCiclo = {
+  em: number;
+  avaliadas: { osId: string; os: string; nivel: NivelVigilancia; anterior: NivelVigilancia | null; folgaMin: number | null }[];
+  enviadas: { osId: string; nivel: NivelVigilancia; texto: string; reserva: boolean }[];
+  erros: string[];
+  ensaio: boolean;
+};
+export type VigilanciaStatus = {
+  ativa: boolean;
+  emExecucao: boolean;
+  faltando: string[];
+  grupoJid: string | null;
+  grupos: { jid: string; name: string }[];
+  margemMin: number;
+  janelaMin: number;
+  cadenciaMin: number;
+  ensaio: boolean;
+  segredos: { anthropic: boolean; dataverse: boolean; infleet: boolean; tomtom: boolean };
+  ultimo: ResultadoCiclo | null;
+};
+export type VigilanciaPatch = Partial<{
+  ativa: boolean; grupoJid: string | null; margemMin: number; janelaMin: number; cadenciaMin: number; ensaio: boolean;
+  dvEnvironmentUrl: string | null; dvTenantId: string | null; dvClientId: string | null; dvClientSecret: string | null; infleetToken: string | null; tomtomKey: string | null;
+}>;
 
 export type AiStatus = {
   instructions: string;
@@ -308,6 +333,9 @@ export const api = {
   doneReminder: (id: number) => request<Chat>("POST", `/api/reminders/${id}/done`, {}),
   deleteReminder: (id: number) => request<Chat>("DELETE", `/api/reminders/${id}`, {}),
   ai: () => request<AiStatus>("GET", "/api/ai"),
+  vigilancia: () => request<VigilanciaStatus>("GET", "/api/vigilancia"),
+  saveVigilancia: (p: VigilanciaPatch) => request<VigilanciaStatus>("PUT", "/api/vigilancia", p),
+  vigilanciaCiclo: () => request<ResultadoCiclo>("POST", "/api/vigilancia/ciclo", {}),
   mcpStatus: () => request<McpStatus>("GET", "/api/mcp/status"),
   mcpRegister: () => request<McpStatus>("POST", "/api/mcp/register", {}),
   mcpUnregister: () => request<McpStatus>("POST", "/api/mcp/unregister", {}),
