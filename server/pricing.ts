@@ -2,7 +2,7 @@
 // de cada provedor. É estimativa: a fatura real vem da conta na DeepSeek / TypeSafe.
 
 export type Provider = "jev" | "deepseek" | "local" | "claude";
-export type UsageKind = "classificar" | "rascunho" | "resumo";
+export type UsageKind = "classificar" | "rascunho" | "resumo" | "vigilancia";
 
 export type TokenUsage = {
   inputTokens: number;

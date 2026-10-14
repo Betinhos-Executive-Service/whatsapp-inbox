@@ -21,6 +21,9 @@ import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import { DEFAULT_USD_BRL, estimateCostUsd, type Provider as UsageProvider, type TokenUsage, type UsageKind } from "./pricing.ts";
 import { JEV_MODEL, type Jev } from "./jev.ts";
 import type { ConnectionState, OutgoingFile, WhatsApp } from "./whatsapp.ts";
+import { aplicarPatch, criarVigilancia, lerConfig, type PatchVigilancia, type StatusVigilancia } from "./vigilancia/index.ts";
+import { MODELO as MODELO_VIGILANCIA } from "./vigilancia/mensagem.ts";
+import type { Vigilancia } from "./vigilancia/job.ts";
 
 // A libsignal (dependência do Baileys) escreve no console o conteúdo das sessões
 // criptográficas ("Closing session: SessionEntry {...}"). Isso não pode ir para log.
@@ -232,6 +235,67 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       throw error;
     }
   }
+
+  // ---- vigilância da operação: a cada N min cruza OS, frota e rota e avisa o grupo só em risco
+
+  let vigilancia: Vigilancia | null = null;
+  const enviarVigilancia = async (jid: string, texto: string): Promise<string | null> => {
+    if (!wa || wa.state.status !== "conectado") return null;
+    return wa.send(jid, texto);
+  };
+  /** Grava direto (sem `recordUsage`): o modelo já é o ID da API e não passa por `claudeUsageModel`. */
+  const registrarUsoVigilancia = (usage: TokenUsage | null, ok: boolean) => {
+    store.recordAiUsage({
+      at: Date.now(), provider: "claude", kind: "vigilancia", chatJid: store.getSetting("vigilancia_grupo_jid"), model: MODELO_VIGILANCIA,
+      usage: usage ?? { inputTokens: 0, outputTokens: 0, cachedTokens: 0 },
+      costUsd: usage ? estimateCostUsd("claude", usage, new Date(), MODELO_VIGILANCIA) : 0,
+      label: null, confidence: null, needsReply: null, urgent: null, ok,
+    });
+  };
+  /** Remontagens em sequência: duas chamadas próximas não deixam instância órfã com timer ativo. */
+  let remontagem: Promise<void> = Promise.resolve();
+  function montarVigilancia(): Promise<void> {
+    remontagem = remontagem.catch(() => undefined).then(async () => {
+      await vigilancia?.parar();
+      vigilancia = criarVigilancia({
+        store,
+        env: process.env,
+        anthropicKey,
+        enviar: enviarVigilancia,
+        conectado: () => wa?.state.status === "conectado",
+        registrarUso: registrarUsoVigilancia,
+        log: (m) => console.warn(m),
+      });
+      if (vigilancia && store.getSetting("vigilancia_ativa") === "1") vigilancia.iniciar();
+    });
+    return remontagem;
+  }
+  const vigilanciaStatus = (): StatusVigilancia => {
+    const c = lerConfig((k) => store.getSetting(k), process.env);
+    return {
+      ativa: c.ativa,
+      emExecucao: !!vigilancia?.emExecucao(),
+      faltando: c.faltando,
+      grupoJid: c.valores.grupoJid,
+      grupos: store.listChats().filter((ch) => ch.isGroup).map((ch) => ({ jid: ch.jid, name: ch.name })),
+      margemMin: c.valores.margemMin,
+      janelaMin: c.valores.janelaMin,
+      cadenciaMin: c.valores.cadenciaMin,
+      ensaio: c.valores.ensaio,
+      segredos: { anthropic: !!anthropicKey(), dataverse: !!c.dataverse, infleet: !!c.infleetToken, tomtom: !!c.tomtomKey },
+      ultimo: vigilancia?.ultimo() ?? null,
+    };
+  };
+  async function vigilanciaSalvar(patch: PatchVigilancia): Promise<StatusVigilancia> {
+    aplicarPatch((k, v) => store.setSetting(k, v), patch);
+    await montarVigilancia();
+    return vigilanciaStatus();
+  }
+  async function vigilanciaCiclo() {
+    if (!vigilancia) throw new Error(`Vigilância sem configuração: ${lerConfig((k) => store.getSetting(k), process.env).faltando.join(", ")}.`);
+    return vigilancia.ciclo();
+  }
+  montarVigilancia().catch((e: unknown) => console.warn(`Vigilância: falha ao montar: ${e instanceof Error ? e.message : String(e)}`));
 
   const requireDeepseekKey = () => {
     const key = deepseekKey();
@@ -838,6 +902,9 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       return chat;
     },
     sendLog: () => ({ file: deliveryLog.file, lines: deliveryLog.tail(200) }),
+    vigilanciaStatus,
+    vigilanciaSalvar,
+    vigilanciaCiclo,
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
       store.db.prepare("vacuum into ?").run(file);
@@ -896,6 +963,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       clearInterval(heartbeat);
       clearInterval(reminderTimer);
       for (const timer of pending.values()) clearTimeout(timer);
+      await vigilancia?.parar();
       await wa?.stop();
       for (const res of clients) res.end();
       // A janela mantém o SSE aberto: sem derrubar as conexões, close() nunca termina

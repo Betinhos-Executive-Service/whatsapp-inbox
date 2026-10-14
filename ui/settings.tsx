@@ -1,4 +1,4 @@
-import { Bell, Briefcase, ChartColumn, Copy, Download, Monitor, Moon, Sun, Zap, KeyRound, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
+import { Bell, Briefcase, ChartColumn, Copy, Download, Monitor, Moon, Radar, Sun, Zap, KeyRound, Plus, RefreshCw, Settings2, Smartphone, Tags, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type AiStatus, type AppState, type Classifier, type Label, type McpStatus, type Prefs, type QuickReply, type Theme } from "./api.ts";
 import { desktop, useAccount, type ReleaseInfo, type UpdateState } from "./desktop.ts";
@@ -7,6 +7,7 @@ import { ClaudeOptionsPanel, DeepSeekOptionsPanel, JevContextField } from "./ai-
 import { applyTheme } from "./theme.ts";
 import { Button, buttonClassName, Checkbox, Field, Input, Radio, SegmentedControl, Textarea } from "./ds/index.ts";
 import { AiUsagePanel } from "./ai-usage.tsx";
+import { VigilanciaPanel } from "./vigilancia.tsx";
 import { releaseChanges } from "./update.tsx";
 
 type Props = {
@@ -19,12 +20,13 @@ type Props = {
   notify: (kind: "error" | "success", text: string) => void;
 };
 
-export type Tab = "geral" | "notificacoes" | "ia" | "gastos" | "etiquetas" | "respostas" | "conta";
+export type Tab = "geral" | "notificacoes" | "ia" | "gastos" | "vigilancia" | "etiquetas" | "respostas" | "conta";
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: "geral", label: "Geral", icon: <Settings2 size={16} aria-hidden /> },
   { id: "notificacoes", label: "Notificações", icon: <Bell size={16} aria-hidden /> },
   { id: "ia", label: "IA", icon: <KeyRound size={16} aria-hidden /> },
   { id: "gastos", label: "Gastos com IA", icon: <ChartColumn size={16} aria-hidden /> },
+  { id: "vigilancia", label: "Vigilância", icon: <Radar size={16} aria-hidden /> },
   { id: "etiquetas", label: "Etiquetas", icon: <Tags size={16} aria-hidden /> },
   { id: "respostas", label: "Respostas rápidas", icon: <Zap size={16} aria-hidden /> },
   { id: "conta", label: "Conta e dados", icon: <Smartphone size={16} aria-hidden /> },
@@ -957,6 +959,13 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
             <section className="surface stack">
               <h3 className="eyebrow">Gastos com IA</h3>
               <AiUsagePanel notify={notify} />
+            </section>
+          )}
+
+          {tab === "vigilancia" && (
+            <section className="surface stack">
+              <h3 className="eyebrow">Vigilância da operação</h3>
+              <VigilanciaPanel notify={notify} />
             </section>
           )}
 
