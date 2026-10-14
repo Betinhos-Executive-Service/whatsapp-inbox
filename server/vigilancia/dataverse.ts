@@ -22,7 +22,9 @@ type LinhaVeiculo = { cr40f_veiculosid: string; cr40f_placa: string | null };
 export function extrairEmbarque(texto: string | null): string | null {
   const linha = (texto ?? "").split(/\r?\n/).map((l) => l.trim()).find(Boolean);
   if (!linha) return null;
-  const semNumero = linha.replace(/^\d+\.\s*/, "");
+  const prefixo = /^\d+\.\s*/.exec(linha);
+  if (!prefixo) return linha;
+  const semNumero = linha.slice(prefixo[0].length);
   const sep = semNumero.indexOf(" - ");
   return (sep >= 0 ? semNumero.slice(sep + 3) : semNumero).trim() || null;
 }

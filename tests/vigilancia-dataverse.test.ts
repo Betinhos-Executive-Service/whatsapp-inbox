@@ -10,6 +10,7 @@ test("extrairEmbarque: primeira linha sem o número e o nome do passageiro", () 
   assert.equal(extrairEmbarque("1. Gabriela - Hotel Radisson Vila Olímpia\n2. João - Rua X, 10"), "Hotel Radisson Vila Olímpia");
   assert.equal(extrairEmbarque("1. Alvadi - Aeroporto de Guarulhos - Voo LA 8127"), "Aeroporto de Guarulhos - Voo LA 8127");
   assert.equal(extrairEmbarque("Av. Paulista, 1000"), "Av. Paulista, 1000");
+  assert.equal(extrairEmbarque("Av. Paulista - Bela Vista, 1000"), "Av. Paulista - Bela Vista, 1000");
   assert.equal(extrairEmbarque("  "), null);
   assert.equal(extrairEmbarque(null), null);
 });
