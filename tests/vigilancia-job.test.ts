@@ -153,12 +153,22 @@ test("iniciar/parar: ciclos não se sobrepõem e parar cancela o timer", async (
   const v = new Vigilancia(m.deps, { ...CFG, cadenciaMin: 0.0002 }); // ~12 ms
   v.iniciar();
   await new Promise((r) => setTimeout(r, 80));
-  v.parar();
+  await v.parar();
   assert.equal(max, 1);
   assert.ok(v.ultimo());
   const n = v.ultimo()!.em;
   await new Promise((r) => setTimeout(r, 40));
   assert.equal(v.ultimo()!.em, n);
+});
+
+test("parar: só resolve depois que o ciclo em andamento termina", async () => {
+  let terminou = false;
+  const m = montar({ dataverse: { osNaJanela: async () => { await new Promise((r) => setTimeout(r, 30)); terminou = true; return []; } } });
+  const v = new Vigilancia(m.deps, CFG);
+  v.iniciar();
+  await v.parar();
+  assert.equal(terminou, true);
+  assert.equal(v.emExecucao(), false);
 });
 
 test("ciclo: falha ao enviar uma OS não derruba as demais nem grava o estado dela", async () => {

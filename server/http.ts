@@ -136,7 +136,7 @@ export type Api = {
   /** Log de envios: arquivo e últimas linhas (mais recente primeiro). */
   sendLog: () => { file: string; lines: string[] };
   vigilanciaStatus: () => StatusVigilancia;
-  vigilanciaSalvar: (patch: PatchVigilancia) => StatusVigilancia;
+  vigilanciaSalvar: (patch: PatchVigilancia) => Promise<StatusVigilancia>;
   vigilanciaCiclo: () => Promise<ResultadoCiclo>;
   subscribe: (res: ServerResponse) => void;
   onChatChanged: (jid: string) => void;
@@ -260,12 +260,12 @@ const settingsSchema = z.object({
 const segredo = z.string().trim().min(3).max(500).nullable().optional();
 const vigilanciaSchema = z.object({
   ativa: z.boolean().optional(),
-  grupoJid: z.string().trim().regex(/@g\.us$/, "Escolha um grupo.").nullable().optional(),
+  grupoJid: z.string().trim().regex(/^[^@\s]+@g\.us$/, "Escolha um grupo.").nullable().optional(),
   margemMin: z.number().int().min(1).max(120).optional(),
   janelaMin: z.number().int().min(30).max(360).optional(),
   cadenciaMin: z.number().int().min(1).max(30).optional(),
   ensaio: z.boolean().optional(),
-  dvEnvironmentUrl: z.string().trim().url().nullable().optional(),
+  dvEnvironmentUrl: z.string().trim().url().regex(/^https:\/\//, "Use https.").nullable().optional(),
   dvTenantId: segredo,
   dvClientId: segredo,
   dvClientSecret: segredo,
@@ -831,8 +831,12 @@ export function createHandler(api: Api) {
       return json(res, 200, api.state());
     }
     if (path === "/api/vigilancia" && method === "GET") return json(res, 200, api.vigilanciaStatus());
-    if (path === "/api/vigilancia" && method === "PUT") return json(res, 200, api.vigilanciaSalvar(parse(vigilanciaSchema, await readJson(req))));
-    if (path === "/api/vigilancia/ciclo" && method === "POST") return json(res, 200, await api.vigilanciaCiclo());
+    if (path === "/api/vigilancia" && method === "PUT") return json(res, 200, await api.vigilanciaSalvar(parse(vigilanciaSchema, await readJson(req))));
+    if (path === "/api/vigilancia/ciclo" && method === "POST") {
+      const faltando = api.vigilanciaStatus().faltando;
+      if (faltando.length) throw new HttpError(409, `Vigilância sem configuração: ${faltando.join(", ")}.`);
+      return json(res, 200, await api.vigilanciaCiclo());
+    }
     if (path === "/api/logout" && method === "POST") {
       await api.logout();
       return json(res, 200, api.state());

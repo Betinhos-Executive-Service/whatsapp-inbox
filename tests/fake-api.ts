@@ -59,7 +59,7 @@ export function fakeApi(store: Store, over: Partial<Api> = {}): Api {
     mcp: { status: async () => ({ claudeFound: false, registered: false, command: null, file: "" }), register: async () => undefined, unregister: async () => undefined },
     ai: { status: () => ({}), draft: async () => "", summarize: async () => ({}), persona: async () => null, setInstructions: () => undefined, setProvider: () => undefined, setDeepseekModel: () => undefined, setClaudeModel: () => undefined, setSummaryModel: () => undefined, setDeepseekOptions: () => undefined, setClaudeOptions: () => undefined, setJevContext: () => undefined, usage: () => ({}), setUsdBrl: () => undefined },
     vigilanciaStatus: () => ({ ativa: false, emExecucao: false, faltando: [], grupoJid: null, grupos: [], margemMin: 10, janelaMin: 120, cadenciaMin: 5, ensaio: false, segredos: { anthropic: false, dataverse: false, infleet: false, tomtom: false }, ultimo: null }),
-    vigilanciaSalvar: () => ({ ativa: false, emExecucao: false, faltando: [], grupoJid: null, grupos: [], margemMin: 10, janelaMin: 120, cadenciaMin: 5, ensaio: false, segredos: { anthropic: false, dataverse: false, infleet: false, tomtom: false }, ultimo: null }),
+    vigilanciaSalvar: async () => ({ ativa: false, emExecucao: false, faltando: [], grupoJid: null, grupos: [], margemMin: 10, janelaMin: 120, cadenciaMin: 5, ensaio: false, segredos: { anthropic: false, dataverse: false, infleet: false, tomtom: false }, ultimo: null }),
     vigilanciaCiclo: async () => ({ em: 0, avaliadas: [], enviadas: [], erros: [], ensaio: true }),
     subscribe: (res) => res.end(),
     onChatChanged: () => undefined,

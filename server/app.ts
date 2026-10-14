@@ -252,8 +252,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       label: null, confidence: null, needsReply: null, urgent: null, ok,
     });
   };
-  function montarVigilancia() {
-    vigilancia?.parar();
+  async function montarVigilancia() {
+    await vigilancia?.parar();
     vigilancia = criarVigilancia({
       store,
       env: process.env,
@@ -280,16 +280,16 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       ultimo: vigilancia?.ultimo() ?? null,
     };
   };
-  function vigilanciaSalvar(patch: PatchVigilancia): StatusVigilancia {
+  async function vigilanciaSalvar(patch: PatchVigilancia): Promise<StatusVigilancia> {
     aplicarPatch((k, v) => store.setSetting(k, v), patch);
-    montarVigilancia();
+    await montarVigilancia();
     return vigilanciaStatus();
   }
   async function vigilanciaCiclo() {
     if (!vigilancia) throw new Error(`Vigilância sem configuração: ${lerConfig((k) => store.getSetting(k), process.env).faltando.join(", ")}.`);
     return vigilancia.ciclo();
   }
-  montarVigilancia();
+  void montarVigilancia();
 
   const requireDeepseekKey = () => {
     const key = deepseekKey();
@@ -957,7 +957,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       clearInterval(heartbeat);
       clearInterval(reminderTimer);
       for (const timer of pending.values()) clearTimeout(timer);
-      vigilancia?.parar();
+      await vigilancia?.parar();
       await wa?.stop();
       for (const res of clients) res.end();
       // A janela mantém o SSE aberto: sem derrubar as conexões, close() nunca termina

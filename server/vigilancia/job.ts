@@ -73,9 +73,11 @@ export class Vigilancia {
     tick();
   }
 
-  parar(): void {
+  /** Cancela o timer e resolve quando o ciclo em andamento (se houver) terminar. */
+  async parar(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    await this.rodando?.catch(() => undefined);
   }
 
   /** Um ciclo por vez: chamada concorrente recebe o ciclo em andamento. */
