@@ -60,8 +60,11 @@ function nivel(f: Fatos, cfg: EntradaAvaliacao["cfg"]): Nivel {
   const pertoDaHora = f.faltamMin <= cfg.paradoAteMin;
   const longe = f.distanciaKm !== null && f.distanciaKm > cfg.paradoDistKm;
   if (pertoDaHora && longe && f.posicao) {
-    if (f.posicao.minutosSemAtualizar > cfg.semSinalMin) return "sem_sinal";
+    // `parado` antes de `sem_sinal`: com a ignição desligada o rastreador para de renovar o `fixTime`,
+    // então um carro parado (último fix com velocidade 0 e ignição off) pareceria sem sinal.
+    // `paradoHaMin` só existe quando o último fix tem velocidade 0 e ignição desligada.
     if (f.paradoHaMin !== null && f.paradoHaMin > cfg.paradoMin) return "parado";
+    if (f.posicao.minutosSemAtualizar > cfg.semSinalMin) return "sem_sinal";
   }
   if (f.folgaMin !== null) {
     if (f.folgaMin < 0) return "atraso";

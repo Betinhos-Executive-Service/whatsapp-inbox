@@ -47,8 +47,8 @@ Entradas: `os`, `posicao` (ou nula), `rota` (ou nula), `agora`, `config { margem
 Ordem de avaliação (a primeira que casar vence):
 
 1. `sem_programacao`: OS sem motorista ou sem veículo.
-2. `sem_sinal`: faltam ≤ `paradoAteMin` para o embarque, carro a mais de `paradoDistKm` do embarque e `fixTime` há mais de `semSinalMin`.
-3. `parado`: faltam ≤ `paradoAteMin`, carro a mais de `paradoDistKm` do embarque, velocidade 0 e ignição desligada há mais de `paradoMin` (comparado com a posição do ciclo anterior guardada em memória; sem histórico, não dispara).
+2. `parado`: faltam ≤ `paradoAteMin`, carro a mais de `paradoDistKm` do embarque, velocidade 0 e ignição desligada há mais de `paradoMin` (comparado com a posição do ciclo anterior guardada em memória; sem histórico, não dispara). Vem antes de `sem_sinal` porque, com a ignição desligada, o rastreador para de renovar o `fixTime`: um carro parado pareceria sem sinal.
+3. `sem_sinal`: faltam ≤ `paradoAteMin` para o embarque, carro a mais de `paradoDistKm` do embarque e `fixTime` há mais de `semSinalMin` (último fix em movimento ou com ignição ligada, ou parado há menos de `paradoMin`).
 4. `atraso`: `agora + rota.duracaoMin > horarioSaida`.
 5. `atencao`: `agora + rota.duracaoMin > horarioSaida − margemMin`.
 6. `ok`.

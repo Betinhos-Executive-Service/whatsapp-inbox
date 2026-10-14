@@ -53,6 +53,16 @@ test("regras: parado há mais de 10 min longe do embarque perto da hora", () => 
   assert.equal(a.fatos.paradoHaMin, 12);
 });
 
+test("regras: ignição desligada sem fix novo é parado, não sem_sinal", () => {
+  const a = avaliar({ ...base, os: os({ saidaAt: AGORA + 25 * MIN }), posicao: pos({ fixAt: AGORA - 15 * MIN, velocidadeKmh: 0, ignicao: false }), parada: { lat: -23.6, lon: -46.7, desdeAt: AGORA - 12 * MIN }, rota: null });
+  assert.equal(a.nivel, "parado");
+});
+
+test("regras: último fix em movimento e sem atualizar há 15 min é sem_sinal", () => {
+  const a = avaliar({ ...base, os: os({ saidaAt: AGORA + 25 * MIN }), posicao: pos({ fixAt: AGORA - 15 * MIN, velocidadeKmh: 60, ignicao: true }), parada: { lat: -23.6, lon: -46.7, desdeAt: AGORA - 15 * MIN }, rota: null });
+  assert.equal(a.nivel, "sem_sinal");
+});
+
 test("regras: parado sem histórico não dispara; longe da hora também não", () => {
   assert.equal(avaliar({ ...base, os: os({ saidaAt: AGORA + 25 * MIN }), posicao: pos({ velocidadeKmh: 0, ignicao: false }), parada: null, rota: null }).nivel, "ok");
   assert.equal(avaliar({ ...base, os: os({ saidaAt: AGORA + 50 * MIN }), posicao: pos({ velocidadeKmh: 0, ignicao: false }), parada: { lat: -23.6, lon: -46.7, desdeAt: AGORA - 30 * MIN }, rota: null }).nivel, "ok");
