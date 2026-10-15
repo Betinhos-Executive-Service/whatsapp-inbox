@@ -848,7 +848,7 @@ ul, ol { margin: 0; padding: 0; }
 .composer__mic { padding-inline: var(--bt-space-3); }
 .chat-pane { position: relative; }
 .drop-hint { position: absolute; inset: var(--bt-space-2); z-index: var(--bt-z-index-floating-action); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--bt-space-2); border: 2px dashed var(--bt-color-action); border-radius: var(--bt-radius-lg); background-color: rgba(252, 252, 251, .92); color: var(--bt-color-action); font-weight: var(--bt-font-weight-extrabold); pointer-events: none; }
-.list-pane__filters { display: grid; grid-template-columns: 1fr 1fr; gap: var(--bt-space-2); }
+.list-pane__filters { display: grid; grid-template-columns: 1fr 1fr auto; gap: var(--bt-space-2); }
 /* Lista estreita (janela pequena ou painel arrastado): abas em 2×2 em vez de rolar escondidas. */
 .list-pane { container-type: inline-size; container-name: list-pane; }
 @container list-pane (max-width: 500px) {
@@ -1593,3 +1593,5 @@ kbd {
 :root[data-no-labels] .classify .field--label {
   display: none;
 }
+
+.unread-toggle[aria-pressed='true'] { color: var(--bt-color-action); border-color: var(--bt-color-action); background-color: var(--bt-color-action-soft); }
