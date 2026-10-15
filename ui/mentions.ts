@@ -43,3 +43,13 @@ export function applyMentions(text: string, picks: MentionPick[]): { text: strin
   return { text: out, mentions, mentionAll };
 }
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Regex de menção: nomes conhecidos (com espaço, "@Ana Paula") antes da palavra solta. Nome mais longo primeiro. */
+export function mentionPattern(names: readonly string[] = []): RegExp {
+  const known = [...new Set(names.map((n) => n.trim()).filter((n) => /\s/.test(n)))]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRe);
+  const named = known.length ? `(?:${known.join("|")})(?![\\p{L}\\p{N}_])|` : "";
+  return new RegExp(`(^|[\\s(])(@(?:${named}[\\p{L}\\p{N}_.-]*[\\p{L}\\p{N}_]))`, "gu");
+}

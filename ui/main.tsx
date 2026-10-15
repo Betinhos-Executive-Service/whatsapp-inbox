@@ -790,7 +790,9 @@ function UnreadDivider({ count }: { count: number }) {
   );
 }
 
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText, rich, unreadMark }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText, rich, unreadMark, mentionNames }: {
+  /** Nomes conhecidos (participantes do grupo), para "@Nome Sobrenome" destacar inteiro. */
+  mentionNames?: readonly string[];
   /** Faixa "N mensagens não lidas" antes desta mensagem (fica até sair da conversa). */
   unreadMark: { id: string; count: number } | null;
   /** Enquete, evento e convite: votar e entrar no grupo. */
@@ -827,6 +829,9 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   onCopyText: (text: string) => void;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
+  // Autores das mensagens também valem, para o destaque funcionar antes de os participantes carregarem.
+  const authorKey = parts.map((p) => p.author ?? "").join("\n");
+  const names = useMemo(() => [...(mentionNames ?? []), ...authorKey.split("\n").filter(Boolean)], [mentionNames, authorKey]);
   return (
     <>
       {hasMore && (
@@ -945,7 +950,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                     {m.contacts?.length ? (
                       <ContactCards contacts={m.contacts} onOpen={onOpenContact} onCopy={onCopyText} />
                     ) : (
-                      (!m.media || caption) && <p className="bubble__text"><WaText text={caption} /></p>
+                      (!m.media || caption) && <p className="bubble__text"><WaText text={caption} mentions={names} /></p>
                     )}
                   </>
                 )}
@@ -1529,8 +1534,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
 
   // "@" abre a lista de quem mencionar: participantes do grupo ou o próprio contato.
   const mention = showQuick ? null : mentionQuery(draft, caret);
+  // Em grupo carrega já ao abrir: os nomes também destacam "@Nome Sobrenome" nos balões.
   useEffect(() => {
-    if (mention === null || participants !== null) return;
+    if (participants !== null || (mention === null && !chat.isGroup)) return;
     if (!chat.isGroup) {
       setParticipants([{ jid: chat.jid, name: chat.name, phone: chat.phone, admin: false, me: false }]);
       return;
@@ -1549,6 +1555,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       alive = false;
     };
   }, [mention !== null, participants, chat, connected, notify]);
+  const mentionNames = useMemo(() => participants?.filter((p) => !p.me).map(mentionLabel), [participants]);
   const mentionItems = mention !== null && participants && !mentionClosed ? filterParticipants(participants, mention, chat.isGroup) : [];
   const showMention = mentionItems.length > 0;
   useEffect(() => {
@@ -2132,6 +2139,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             onOpenContact={openContact}
             onCopyText={copyText}
             unreadMark={unreadMark}
+            mentionNames={mentionNames}
           />
         )}
         {messages && awayFromBottom && (
