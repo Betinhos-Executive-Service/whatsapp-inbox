@@ -1595,3 +1595,8 @@ kbd {
 }
 
 .unread-toggle[aria-pressed='true'] { color: var(--bt-color-action); border-color: var(--bt-color-action); background-color: var(--bt-color-action-soft); }
+
+/* Sem os botões de status, a linha de detalhes só ocupa espaço quando tem algo a mostrar. */
+:root[data-no-status] .chat-item__meta { min-height: 0; padding-right: 0; }
+:root[data-no-status] .chat-item__meta:empty,
+:root[data-no-status][data-no-labels] .chat-item__meta:not(:has(> :not(.chat-item__labels))) { display: none; }
