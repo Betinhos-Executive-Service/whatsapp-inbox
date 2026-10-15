@@ -95,6 +95,15 @@ export function extractAction(content: Content): Action | null {
   return null;
 }
 
+/**
+ * Edição que o Baileys entrega por `messages.update` (`update.message.editedMessage.message`),
+ * nem sempre acompanhada do protocolMessage no upsert. Devolve o texto novo ou null.
+ */
+export function editedText(update: { message?: Content | null } | null | undefined): string | null {
+  const edited = update?.message?.editedMessage?.message;
+  return edited ? (extractText(edited)?.text ?? null) : null;
+}
+
 /** Prazos do WhatsApp para mudar uma mensagem já enviada. */
 export const EDIT_WINDOW_MS = 15 * 60_000;
 export const REVOKE_WINDOW_MS = 60 * 3600_000;

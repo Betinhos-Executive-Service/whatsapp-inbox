@@ -27,6 +27,7 @@ import {
   callText,
   ephemeralChange,
   ephemeralLabel,
+  editedText,
   extractAction,
   extractContext,
   extractExtra,
@@ -782,12 +783,17 @@ export class WhatsApp extends EventEmitter<{
       const state = states.includes("recording") ? "recording" : states.includes("composing") ? "composing" : null;
       this.emit("presence", { jid: this.canonical(id), state });
     });
-    // Recibos das minhas mensagens (entregue, lida, ouvida) e estrela dada no celular.
+    // Recibos das minhas mensagens (entregue, lida, ouvida), estrela dada no celular e edição.
     sock.ev.on("messages.update", (list) => {
       for (const { key, update } of list) {
         if (!key.id || !isConversation(key.remoteJid)) continue;
         const chatJid = this.canonical(key.remoteJid, key.remoteJidAlt);
         let message: Message | null = null;
+        const edited = editedText(update);
+        if (edited !== null) {
+          const at = Number(update.messageTimestamp ?? 0) * 1000 || Date.now();
+          message = this.store.editMessage(chatJid, key.id, edited, at)?.message ?? null;
+        }
         if (key.fromMe && typeof update.status === "number") message = this.store.setAck(chatJid, key.id, update.status);
         if (typeof update.starred === "boolean") message = this.store.setStarred(chatJid, key.id, update.starred) ?? message;
         if (message) this.emit("update", { message, chat: this.store.getChat(chatJid)! });
