@@ -567,7 +567,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
 
   async function sendMedia(jid: string, file: OutgoingFile, quotedId?: string) {
     const id = await connected().sendMedia(jid, file, { quoted: quotedId ? store.messageKey(jid, quotedId) : null });
-    if (id) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
+    // Visualização única não fica no histórico; não guarda cópia local.
+    if (id && !file.viewOnce) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
   }
 
   const photos = new PhotoCache(join(options.dataDir, "photos"), store, {

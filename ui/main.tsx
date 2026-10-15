@@ -79,7 +79,7 @@ import { NotesPanel, reminderLabel } from "./notes.tsx";
 import { ResizeHandle } from "./resize.tsx";
 import { ImageEditor } from "./image-editor/ImageEditor.tsx";
 import { canEditImage } from "./image-editor/model.ts";
-import { AttachmentTray, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
+import { AttachmentTray, canViewOnce, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
@@ -1079,6 +1079,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const mirror = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  /** Visualização única nos anexos elegíveis (foto, vídeo, voz); volta a desligado após o envio. */
+  const [viewOnce, setViewOnce] = useState(false);
+  useEffect(() => {
+    if (!attachments.length) setViewOnce(false);
+  }, [attachments.length]);
   // Imagem aberta no editor: da bandeja (substitui o anexo) ou de uma mensagem (entra na bandeja).
   const [imageEditing, setImageEditing] = useState<{ file: File; attachmentId: number | null; seq: number } | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -1435,10 +1440,12 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       // A legenda vai no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
       // A resposta (citação) vai só no primeiro.
       for (const [i, a] of attachments.entries()) {
-        const file = a.voice ?? (await fileToOutgoing(a.file, i === 0 && text ? text : undefined));
+        const base = a.voice ?? (await fileToOutgoing(a.file, i === 0 && text ? text : undefined));
+        const file = viewOnce && canViewOnce(a) ? { ...base, viewOnce: true } : base;
         onChat(await api.sendMedia(chat.jid, i === 0 && mediaQuotedId ? { ...file, quotedId: mediaQuotedId } : file));
         removeAttachment(a.id);
       }
+      setViewOnce(false);
       setDraft("");
       setReplyTo(null);
       setReplyFrom(null);
@@ -2257,7 +2264,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           />
         )}
         {replyTo && replyFrom && <p className="hint reply-origin">Resposta em particular a uma mensagem de {replyFrom.name}</p>}
-        {attachments.length > 0 && <AttachmentTray items={attachments} onRemove={removeAttachment} onEdit={(a) => setImageEditing({ file: a.file, attachmentId: a.id, seq: Date.now() })} disabled={sending} />}
+        {attachments.length > 0 && (
+          <AttachmentTray items={attachments} onRemove={removeAttachment} onEdit={(a) => setImageEditing({ file: a.file, attachmentId: a.id, seq: Date.now() })} disabled={sending} viewOnce={viewOnce} onViewOnce={setViewOnce} />
+        )}
         <input
           ref={fileInput}
           type="file"

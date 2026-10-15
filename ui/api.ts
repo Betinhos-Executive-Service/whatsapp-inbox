@@ -211,7 +211,7 @@ export type ContactCard = { name: string; phones: { number: string; wa: string |
 export type LinkPreview = { url: string; title: string; description: string | null; image: string | null; site: string };
 
 /** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
-export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number; quotedId?: string };
+export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number; viewOnce?: boolean; quotedId?: string };
 
 export type Participant = { jid: string; name: string; phone: string | null; admin: boolean; me: boolean };
 export type Profile = {

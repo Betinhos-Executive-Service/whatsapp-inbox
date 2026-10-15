@@ -290,6 +290,7 @@ const sendMediaSchema = z.object({
   caption: z.string().max(4096).optional(),
   ptt: z.boolean().optional(),
   seconds: z.number().positive().max(24 * 3600).optional(),
+  viewOnce: z.boolean().optional(),
   quotedId: z.string().min(1).max(200).optional(),
 });
 
