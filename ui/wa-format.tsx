@@ -1,14 +1,17 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactNode } from "react";
+import { mentionPattern } from "./mentions.ts";
 import { parseWa, splitLinks, type WaNode } from "./wa-text.ts";
+
+const MENTION = mentionPattern();
 
 const TAG = { b: "strong", i: "em", s: "s", code: "code", mono: "code" } as const;
 
-function inline(nodes: WaNode[], live: boolean, key = ""): ReactNode[] {
+function inline(nodes: WaNode[], live: boolean, key = "", pattern = MENTION): ReactNode[] {
   return nodes.map((n, idx) => {
     const k = `${key}${idx}`;
-    if (typeof n === "string") return <Fragment key={k}>{live ? n : linked(n, k)}</Fragment>;
+    if (typeof n === "string") return <Fragment key={k}>{live ? n : linked(n, k, pattern)}</Fragment>;
     const Tag = live ? "span" : TAG[n.kind];
-    const body = inline(n.children, live, `${k}.`);
+    const body = inline(n.children, live, `${k}.`, pattern);
     if (!live) return <Tag key={k} className={`wa wa--${n.kind}`}>{body}</Tag>;
     // No composer os marcadores continuam visíveis (esmaecidos), como no WhatsApp.
     return (
@@ -22,12 +25,12 @@ function inline(nodes: WaNode[], live: boolean, key = ""): ReactNode[] {
 }
 
 /** Links clicáveis; abrem fora do app (navegador padrão). */
-function linked(text: string, key: string): ReactNode {
+function linked(text: string, key: string, pattern: RegExp): ReactNode {
   const parts = splitLinks(text);
-  if (parts.length === 1 && typeof parts[0] === "string") return mentioned(text, key);
+  if (parts.length === 1 && typeof parts[0] === "string") return mentioned(text, key, pattern);
   return parts.map((p, idx) =>
     typeof p === "string" ? (
-      <Fragment key={`${key}-${idx}`}>{mentioned(p, `${key}-${idx}`)}</Fragment>
+      <Fragment key={`${key}-${idx}`}>{mentioned(p, `${key}-${idx}`, pattern)}</Fragment>
     ) : (
       <a key={`${key}-${idx}`} className="wa-link" href={p.href} target="_blank" rel="noopener noreferrer" title={p.href}>
         {p.url}
@@ -36,14 +39,12 @@ function linked(text: string, key: string): ReactNode {
   );
 }
 
-const MENTION = /(^|[\s(])(@[\p{L}\p{N}_.-]*[\p{L}\p{N}_])/gu;
-
 /** "@nome" e "@5511…" viram chip destacado, como no WhatsApp. */
-function mentioned(text: string, key: string): ReactNode {
+function mentioned(text: string, key: string, pattern: RegExp): ReactNode {
   if (!text.includes("@")) return text;
   const out: ReactNode[] = [];
   let last = 0;
-  for (const m of text.matchAll(MENTION)) {
+  for (const m of text.matchAll(pattern)) {
     const at = m.index! + m[1].length;
     out.push(text.slice(last, at));
     out.push(<span key={`${key}@${at}`} className="wa-mention">{m[2]}</span>);
@@ -56,9 +57,10 @@ function mentioned(text: string, key: string): ReactNode {
 
 const LIST = /^(\s*)([-*•]|\d{1,3}\.)\s+(.*)$/;
 
-/** Texto de mensagem com formatação do WhatsApp (negrito, itálico, tachado, código, citação e listas). */
-export function WaText({ text }: { text: string }) {
-  if (text.includes("```")) return <>{inline(parseWa(text), false)}</>;
+/** Texto de mensagem com formatação do WhatsApp (negrito, itálico, tachado, código, citação e listas). `mentions`: nomes conhecidos, para "@Nome Sobrenome" destacar inteiro. */
+export function WaText({ text, mentions }: { text: string; mentions?: readonly string[] }) {
+  const pattern = useMemo(() => mentionPattern(mentions), [mentions]);
+  if (text.includes("```")) return <>{inline(parseWa(text), false, "", pattern)}</>;
   const lines = text.split("\n");
   return (
     <>
@@ -67,7 +69,7 @@ export function WaText({ text }: { text: string }) {
         if (line.startsWith("> ")) {
           return (
             <span key={idx} className="wa-quote">
-              {inline(parseWa(line.slice(2)), false)}
+              {inline(parseWa(line.slice(2)), false, "", pattern)}
             </span>
           );
         }
@@ -77,13 +79,13 @@ export function WaText({ text }: { text: string }) {
           return (
             <span key={idx} className="wa-list">
               <span className="wa-list__mark">{bullet}</span>
-              <span>{inline(parseWa(list[3]), false)}</span>
+              <span>{inline(parseWa(list[3]), false, "", pattern)}</span>
             </span>
           );
         }
         return (
           <Fragment key={idx}>
-            {inline(parseWa(line), false)}
+            {inline(parseWa(line), false, "", pattern)}
             {end}
           </Fragment>
         );

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyMentions, insertMention, MENTION_ALL, mentionQuery } from "../ui/mentions.ts";
+import { applyMentions, insertMention, MENTION_ALL, mentionPattern, mentionQuery } from "../ui/mentions.ts";
 
 test("menção: detecta @ antes do cursor, insere o nome e troca pelo número ao enviar", () => {
   assert.equal(mentionQuery("Oi @an", 6), "an");
@@ -23,4 +23,13 @@ test("menção: detecta @ antes do cursor, insere o nome e troca pelo número ao
   assert.equal(sent.mentionAll, false);
   assert.deepEqual(applyMentions("sem menção", [{ label: "Ana", jid: "1@lid" }]), { text: "sem menção", mentions: [], mentionAll: false });
   assert.deepEqual(applyMentions("@todos reunião às 9h", [{ label: "todos", jid: MENTION_ALL }]), { text: "@todos reunião às 9h", mentions: [], mentionAll: true });
+});
+
+test("menção: destaca o nome inteiro quando tem espaço", () => {
+  const found = (text: string, names: string[] = []) => [...text.matchAll(mentionPattern(names))].map((m) => m[2]);
+  assert.deepEqual(found("@Financeiro Betinhos teste", ["Financeiro Betinhos"]), ["@Financeiro Betinhos"]);
+  assert.deepEqual(found("@Ana Paula e @Ana", ["Ana", "Ana Paula"]), ["@Ana Paula", "@Ana"]);
+  assert.deepEqual(found("@Ana Paulada", ["Ana Paula"]), ["@Ana"], "nome conhecido só vale até o fim da palavra");
+  assert.deepEqual(found("oi @5511999990000 e @joao.silva"), ["@5511999990000", "@joao.silva"]);
+  assert.deepEqual(found("email@empresa.com"), [], "@ no meio da palavra não é menção");
 });
