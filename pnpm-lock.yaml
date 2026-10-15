@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: false
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@whiskeysockets/baileys@7.0.0-rc14':
+    hash: usohr2c5fm2pp36yq35l3hr64m
+    path: patches/@whiskeysockets__baileys@7.0.0-rc14.patch
+
 importers:
 
   .:
@@ -16,7 +21,7 @@ importers:
         version: 0.6.0
       '@whiskeysockets/baileys':
         specifier: 7.0.0-rc14
-        version: 7.0.0-rc14
+        version: 7.0.0-rc14(patch_hash=usohr2c5fm2pp36yq35l3hr64m)
       electron-updater:
         specifier: 6.8.9
         version: 6.8.9
@@ -2216,7 +2221,7 @@ snapshots:
 
   '@typesafe-ai/sdk@0.6.0': {}
 
-  '@whiskeysockets/baileys@7.0.0-rc14':
+  '@whiskeysockets/baileys@7.0.0-rc14(patch_hash=usohr2c5fm2pp36yq35l3hr64m)':
     dependencies:
       '@cacheable/node-cache': 1.7.6
       '@hapi/boom': 9.1.4
