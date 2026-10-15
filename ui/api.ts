@@ -304,6 +304,9 @@ export const api = {
   pin: (jid: string, id: string, seconds: number | null) => request<Chat>("POST", `${chatPath(jid)}/pin`, { id, seconds }),
   setEphemeral: (jid: string, seconds: number) => request<Chat>("POST", `${chatPath(jid)}/ephemeral`, { seconds }),
   setBlocked: (jid: string, blocked: boolean) => request<{ blocked: boolean }>("POST", `${chatPath(jid)}/block`, { blocked }),
+  leaveGroup: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/leave`, {}),
+  /** synced=false: apagou só neste computador. */
+  deleteChat: (jid: string) => request<{ synced: boolean }>("DELETE", chatPath(jid), {}),
   /** Conversa com um número (conferido no WhatsApp) ou com um contato/participante conhecido. */
   openChat: (target: { phone: string } | { jid: string }) => request<Chat>("POST", "/api/open-chat", target),
   createGroup: (subject: string, participants: string[]) => request<Chat>("POST", "/api/groups", { subject, participants }),

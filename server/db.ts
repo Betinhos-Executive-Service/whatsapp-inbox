@@ -1010,6 +1010,11 @@ export class Store {
     });
   }
 
+  /** Apaga a conversa inteira deste computador (mensagens, lembretes, rascunhos etc. vão junto pelo cascade). */
+  deleteChat(jid: string): boolean {
+    return this.q("delete from chats where jid = ?").run(jid).changes > 0;
+  }
+
   /** Apagada para mim: sai deste computador. */
   deleteMessage(jid: string, id: string): boolean {
     return this.tx(() => {

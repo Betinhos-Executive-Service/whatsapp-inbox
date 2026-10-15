@@ -1,4 +1,4 @@
-import { ArrowLeft, Ban, Check, Copy, LoaderCircle, MoreVertical, Pencil, Shield, ShieldOff, Timer, UserMinus, UserRoundPlus, Users, X } from "lucide-react";
+import { ArrowLeft, Ban, Check, Copy, LoaderCircle, LogOut, MoreVertical, Pencil, Shield, ShieldOff, Timer, Trash2, UserMinus, UserRoundPlus, Users, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Chat, type Participant, type ParticipantAction, type ParticipantResult, type Profile } from "./api.ts";
 import { Avatar } from "./avatar.tsx";
@@ -133,6 +133,30 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
         await api.setBlocked(current.jid, blocked);
         setProfile((p) => (p ? { ...p, blocked } : p));
         notify("success", blocked ? `${current.name} bloqueado.` : `${current.name} desbloqueado.`);
+      },
+    });
+
+  const leaveGroup = () =>
+    setConfirm({
+      title: `Sair do grupo ${chat.name}?`,
+      text: "Você deixa de receber as mensagens do grupo e os participantes veem o aviso de saída. A conversa continua aqui.",
+      action: "Sair do grupo",
+      run: async () => {
+        onChat(await api.leaveGroup(chat.jid));
+        reload();
+        notify("success", `Você saiu do grupo ${chat.name}.`);
+      },
+    });
+
+  const deleteChat = () =>
+    setConfirm({
+      title: `Apagar a conversa com ${chat.name}?`,
+      text: "Todas as mensagens, notas e lembretes desta conversa saem deste computador. Não dá para desfazer.",
+      action: "Apagar conversa",
+      run: async () => {
+        const { synced } = await api.deleteChat(chat.jid);
+        onClose();
+        notify("success", synced ? "Conversa apagada." : "Conversa apagada neste computador. No celular ela continua.");
       },
     });
 
@@ -303,6 +327,18 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
           <section className="stack profile__section">
             <Button variant={profile.blocked ? "secondary" : "danger"} icon={<Ban size={16} aria-hidden />} onClick={() => block(!profile.blocked)}>
               {profile.blocked ? "Desbloquear contato" : "Bloquear contato"}
+            </Button>
+          </section>
+        )}
+        {stack.length === 1 && (
+          <section className="stack profile__section">
+            {current.isGroup && connected && (
+              <Button variant="danger" icon={<LogOut size={16} aria-hidden />} onClick={leaveGroup}>
+                Sair do grupo
+              </Button>
+            )}
+            <Button variant="danger" icon={<Trash2 size={16} aria-hidden />} onClick={deleteChat}>
+              Apagar conversa
             </Button>
           </section>
         )}

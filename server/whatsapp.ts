@@ -1147,6 +1147,25 @@ export class WhatsApp extends EventEmitter<{
     this.groupCache.delete(jid);
   }
 
+  /** Sai do grupo: os participantes veem o aviso de saída. A conversa continua aqui, só leitura. */
+  async leaveGroup(jid: string): Promise<void> {
+    if (!isJidGroup(jid)) throw new Error("Só dá para sair de grupos.");
+    await this.ready().groupLeave(jid);
+    this.groupCache.delete(jid);
+  }
+
+  /** Apaga a conversa também no celular. Cortesia: sem a chave de sincronização, vale só aqui. */
+  async syncDeleteChat(jid: string): Promise<void> {
+    const last = this.lastMessages(jid);
+    if (!this.sock || !last) return;
+    try {
+      await this.sock.chatModify({ delete: true, lastMessages: last.lastMessages }, last.rawJid);
+    } catch (error) {
+      if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(this.sock).catch(() => undefined);
+      throw error;
+    }
+  }
+
   /** Aceita o convite de grupo recebido numa mensagem. Devolve o JID do grupo. */
   async acceptInvite(jid: string, id: string): Promise<string> {
     const extra = this.store.messageExtra(jid, id);
