@@ -21,6 +21,7 @@ import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
 import type { DeliveryEntry } from "./delivery-log.ts";
 import { buildVcard, extractContacts } from "./contacts.ts";
+import { chronological } from "./history.ts";
 import { sendPreview } from "./link-preview.ts";
 import { decryptVote, encryptVote, optionsFromHashes } from "./poll.ts";
 import {
@@ -716,7 +717,8 @@ export class WhatsApp extends EventEmitter<{
           if (c.markedAsUnread) this.store.updateChat(jid, { markedUnread: true });
         }
         for (const contact of contacts) this.applyContact(contact);
-        for (const m of messages) this.ingest(m, false, true);
+        // Cronológico: o lote vem da mais nova para a mais antiga e o rowid desempata o mesmo segundo.
+        for (const m of chronological(messages)) this.ingest(m, false, true);
       });
       this.emit("reload");
     });

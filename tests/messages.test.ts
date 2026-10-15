@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DELETED_TEXT, Store, type IncomingMessage } from "../server/db.ts";
+import { chronological } from "../server/history.ts";
 import { PhotoCache } from "../server/photos.ts";
 import { extractContext, revokedId } from "../server/text.ts";
 
@@ -86,4 +87,19 @@ test("mensagens no mesmo segundo saem na ordem de chegada, inclusive ao paginar"
   // A página anterior inclui o segundo da mais antiga na tela, para não pular as que empatam.
   assert.deepEqual(s.listMessages(PN, 5000).map((m) => m.id), ["z1", "p1", "p2", "p3"]);
   assert.equal(s.lastMessageKey(PN)?.id, "z2");
+});
+
+test("histórico do WhatsApp (mais nova primeiro) é gravado em ordem cronológica, inclusive no mesmo segundo", () => {
+  const batch = [
+    { key: { id: "b2" }, messageTimestamp: 9 },
+    { key: { id: "p3" }, messageTimestamp: 5 },
+    { key: { id: "p2" }, messageTimestamp: 5 },
+    { key: { id: "p1" }, messageTimestamp: 5 },
+    { key: { id: "a1" }, messageTimestamp: 1 },
+  ];
+  assert.deepEqual(chronological(batch).map((m) => m.key.id), ["a1", "p1", "p2", "p3", "b2"]);
+  // Gravadas nessa ordem, o rowid desempata como o WhatsApp mostra.
+  const s = new Store(":memory:");
+  for (const m of chronological(batch)) s.insertMessage(msg({ id: m.key.id, text: m.key.id, at: m.messageTimestamp * 1000 }), false);
+  assert.deepEqual(s.listMessages(PN, null).map((m) => m.id), ["a1", "p1", "p2", "p3", "b2"]);
 });
