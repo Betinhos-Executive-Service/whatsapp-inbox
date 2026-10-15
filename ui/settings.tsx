@@ -789,6 +789,21 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 />
               </section>
               <section className="surface stack">
+                <h3 className="eyebrow">Funções</h3>
+                <Toggle
+                  checked={prefs.useStatus}
+                  onChange={(v) => setPref("useStatus", v)}
+                  label="Status das conversas"
+                  hint="Abas e botões Aberta, Aguardando e Resolvida. Desligado, a lista mostra todas as conversas."
+                />
+                <Toggle
+                  checked={prefs.useLabels}
+                  onChange={(v) => setPref("useLabels", v)}
+                  label="Etiquetas"
+                  hint="Filtro, seletor e etiquetas na lista. Desligado, nada é apagado: as etiquetas voltam ao religar."
+                />
+              </section>
+              <section className="surface stack">
                 <h3 className="eyebrow">Privacidade</h3>
                 <Toggle
                   checked={prefs.sendTyping}

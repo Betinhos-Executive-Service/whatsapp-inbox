@@ -1582,3 +1582,14 @@ kbd {
 .send-log__line { padding: var(--bt-space-1) var(--bt-space-2); font-family: var(--bt-font-family-mono); font-size: var(--bt-font-size-12); color: var(--bt-color-text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); }
 .send-log__line:last-child { border-bottom: 0; }
 .send-log__line--error { color: var(--bt-color-danger); background-color: var(--bt-color-danger-soft); }
+
+/* Funções desligadas em Configurações › Geral › Funções. */
+:root[data-no-status] .list-pane__status-tabs,
+:root[data-no-status] .chat-status,
+:root[data-no-status] .classify .segmented--status,
+:root[data-no-status] .classify .segmented--status + .chat-pane__divider,
+:root[data-no-labels] .list-pane__label-filter,
+:root[data-no-labels] .chat-item__labels,
+:root[data-no-labels] .classify .field--label {
+  display: none;
+}
