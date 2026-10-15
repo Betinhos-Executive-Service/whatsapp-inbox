@@ -255,6 +255,8 @@ export type Prefs = {
   startMinimized: boolean;
   theme: Theme;
   sendTyping: boolean;
+  useStatus: boolean;
+  useLabels: boolean;
 };
 export type AppState = {
   prefs: Prefs;

@@ -16,6 +16,10 @@ export const prefsSchema = z.object({
   sendTyping: z.boolean(),
   /** Aparência: segue o Windows, claro ou escuro. */
   theme: z.enum(["system", "light", "dark"]),
+  /** Status Aberta/Aguardando/Resolvida: desligado esconde abas e botões de status. */
+  useStatus: z.boolean(),
+  /** Etiquetas: desligado esconde o filtro, o seletor e as etiquetas na lista. */
+  useLabels: z.boolean(),
 });
 
 export type Prefs = z.infer<typeof prefsSchema>;
@@ -30,6 +34,8 @@ export const DEFAULT_PREFS: Prefs = {
   startMinimized: true,
   sendTyping: false,
   theme: "system",
+  useStatus: true,
+  useLabels: true,
 };
 
 export function readPrefs(store: Store): Prefs {

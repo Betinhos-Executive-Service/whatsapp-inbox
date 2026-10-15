@@ -358,6 +358,8 @@ function ChatList(props: {
   /** Ordem que está na tela, para os atalhos de próxima/anterior. */
   onVisible: (jids: string[]) => void;
   connection: Connection;
+  useStatus: boolean;
+  useLabels: boolean;
   online: boolean;
   onSettings: () => void;
   loaded: boolean;
@@ -367,7 +369,9 @@ function ChatList(props: {
   onStarred: () => void;
 }) {
   const account = useAccount();
-  const [tab, setTab] = useState<Tab>("todas");
+  const [tabChoice, setTab] = useState<Tab>("todas");
+  // Com status ou etiquetas desligados nas configurações, o filtro correspondente fica neutro.
+  const tab: Tab = props.useStatus ? tabChoice : "todas";
   const [menu, setMenu] = useState<{ jid: string; x: number; y: number } | null>(null);
   const openMenu = useCallback((jid: string, x: number, y: number) => setMenu({ jid, x, y }), []);
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -384,7 +388,8 @@ function ChatList(props: {
   useEffect(() => () => window.clearTimeout(peekTimer.current), []);
   const peekChat = peek && peek.jid !== props.selected && !menu ? props.byJid.get(peek.jid) : undefined;
   const [showArchived, setShowArchived] = useState(false);
-  const [label, setLabel] = useState("");
+  const [labelChoice, setLabel] = useState("");
+  const label = props.useLabels ? labelChoice : "";
   const [query, setQuery] = useState("");
   // A digitação responde na hora; o filtro de milhares de conversas vem logo depois.
   const deferredQuery = useDeferredValue(query);
@@ -506,7 +511,7 @@ function ChatList(props: {
           value={query}
           onChange={setQuery}
         />
-        <div className="segmented" role="tablist" aria-label="Status da conversa">
+        <div className="segmented list-pane__status-tabs" role="tablist" aria-label="Status da conversa">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -528,6 +533,7 @@ function ChatList(props: {
         <div className="list-pane__filters">
         <Select
           aria-label="Filtrar por etiqueta"
+          className="list-pane__label-filter"
           size="compact"
           clearable={false}
           searchable={props.labels.length > 8}
@@ -2627,6 +2633,16 @@ function App() {
     refreshAvatars();
   }, [connection.status]);
 
+  const useStatus = state?.prefs.useStatus ?? true;
+  const useLabels = state?.prefs.useLabels ?? true;
+  useEffect(() => {
+    const d = document.documentElement.dataset;
+    if (useStatus) delete d.noStatus;
+    else d.noStatus = "";
+    if (useLabels) delete d.noLabels;
+    else d.noLabels = "";
+  }, [useStatus, useLabels]);
+
   const theme = state?.prefs.theme;
   useEffect(() => {
     if (theme) applyTheme(theme);
@@ -2747,6 +2763,8 @@ function App() {
       ) : (
         <>
           <ChatList
+            useStatus={state?.prefs.useStatus ?? true}
+            useLabels={state?.prefs.useLabels ?? true}
             chats={sorted}
             byJid={chats}
             labels={labels}
