@@ -1371,7 +1371,9 @@ export class WhatsApp extends EventEmitter<{
     (inner[type] as { viewOnce?: boolean | null }).viewOnce = true;
     const wrapped = type === "audioMessage" ? { viewOnceMessageV2Extension: { message: inner } } : { viewOnceMessageV2: { message: inner } };
     const full = generateWAMessageFromContent(jid, wrapped, { userJid, ...this.sendOptions(jid, opts.quoted) });
-    await sock.relayMessage(jid, full.message!, { messageId: full.key.id! });
+    // Como o WhatsApp Web: o stanza leva <meta view_once="true"/> (PR WhiskeySockets/Baileys#2837); o mediatype no
+    // <enc> vem do patch em patches/@whiskeysockets__baileys@7.0.0-rc14.patch.
+    await sock.relayMessage(jid, full.message!, { messageId: full.key.id!, additionalNodes: [{ tag: "meta", attrs: { view_once: "true" } }] });
     const sent = await this.confirm(full);
     return sent.key.id ?? null;
   }

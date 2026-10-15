@@ -1,0 +1,15 @@
+diff --git a/lib/Socket/messages-send.js b/lib/Socket/messages-send.js
+index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..6749c3cd188c57563af306ff3d50bca140206a63 100644
+--- a/lib/Socket/messages-send.js
++++ b/lib/Socket/messages-send.js
+@@ -466,7 +466,9 @@ export const makeMessagesSocket = (config) => {
+             });
+         }
+         await authState.keys.transaction(async () => {
+-            const mediaType = getMediaType(message);
++            // Visualização única: a mídia fica dentro de viewOnceMessageV2; sem desembrulhar, o <enc> sai sem mediatype
++            // e os aparelhos descartam a mensagem (fica com um tique). Igual ao PR WhiskeySockets/Baileys#2847.
++            const mediaType = getMediaType(normalizeMessageContent(message) || message);
+             if (mediaType) {
+                 extraAttrs['mediatype'] = mediaType;
+             }

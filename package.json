@@ -102,5 +102,10 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Betinhos-Executive-Service/whatsapp-inbox.git"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@whiskeysockets/baileys@7.0.0-rc14": "patches/@whiskeysockets__baileys@7.0.0-rc14.patch"
+    }
   }
 }
