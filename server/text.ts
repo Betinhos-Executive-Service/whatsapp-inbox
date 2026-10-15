@@ -129,10 +129,19 @@ function withCaption(label: string, caption: unknown): string {
 
 /** Visualização única: o WhatsApp não entrega a mídia a aparelhos conectados; só o celular abre. */
 export const VIEW_ONCE_KIND = "view_once";
-const VIEW_ONCE_LABEL: Record<string, string> = { imageMessage: "Foto", videoMessage: "Vídeo", audioMessage: "Áudio" };
+export const VIEW_ONCE_LABEL: Record<string, string> = { imageMessage: "Foto", videoMessage: "Vídeo", audioMessage: "Áudio" };
 
-export function viewOnceText(what = "Mídia"): Extracted {
-  return { text: `[${what} de visualização única] Abra no celular para ver.`, kind: VIEW_ONCE_KIND };
+/** `fromMe`: a enviada por este número não tem o que abrir; só registra que foi. */
+export function viewOnceText(what = "Mídia", fromMe = false): Extracted {
+  return { text: fromMe ? `[${what} de visualização única]` : `[${what} de visualização única] Abra no celular para ver.`, kind: VIEW_ONCE_KIND };
+}
+
+/** Tipo da mídia dentro do embrulho de visualização única (`imageMessage`…), ou null se não for. */
+export function viewOnceWrapper(message: Content): string | null {
+  const inner = message?.viewOnceMessage?.message ?? message?.viewOnceMessageV2?.message ?? message?.viewOnceMessageV2Extension?.message;
+  if (!inner) return null;
+  const type = Object.keys(inner).find((k) => !IGNORED.has(k) && inner[k] != null);
+  return type && VIEW_ONCE_LABEL[type] ? type : null;
 }
 
 /** Converte a mensagem em texto exibível. Devolve null para o que não deve aparecer. */

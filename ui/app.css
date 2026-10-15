@@ -818,6 +818,8 @@ ul, ol { margin: 0; padding: 0; }
 
 /* anexos e gravação no composer */
 .attachments { order: -1; flex-basis: 100%; list-style: none; display: flex; gap: var(--bt-space-2); overflow-x: auto; padding-bottom: var(--bt-space-1); }
+.attachments__tools { display: flex; align-items: center; flex: 0 0 auto; }
+.view-once-toggle[aria-pressed='true'] { color: var(--bt-color-action); border-color: var(--bt-color-action); background-color: var(--bt-color-action-soft); }
 .attachment { display: flex; align-items: center; gap: var(--bt-space-2); flex: 0 0 auto; max-width: 260px; padding: var(--bt-space-1-5); padding-right: var(--bt-space-1); border-radius: var(--bt-radius-md); background-color: var(--bt-color-surface-neutral); border: var(--bt-border-width-default) solid var(--bt-color-border); }
 .attachment__thumb { width: 40px; height: 40px; flex: 0 0 auto; border-radius: var(--bt-radius-sm); object-fit: cover; }
 .attachment__thumb--file { display: grid; place-items: center; background-color: var(--bt-color-action-soft); color: var(--bt-color-action); }

@@ -37,7 +37,9 @@ import {
   extractText,
   revokedId,
   sentChangeError,
+  VIEW_ONCE_LABEL,
   viewOnceText,
+  viewOnceWrapper,
   type Action,
   type CallInfo,
   type Extra,
@@ -96,7 +98,8 @@ function isConversation(jid: string | null | undefined): jid is string {
   return !!jid && (isPnUser(jid) || isLidUser(jid) || isJidGroup(jid)) === true;
 }
 
-export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number; sticker?: boolean };
+/** `viewOnce`: visualização única (só foto, vídeo e voz); o destinatário abre uma vez e a mídia some. */
+export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number; sticker?: boolean; viewOnce?: boolean };
 /** Resposta a uma mensagem (citação) e menções com @. */
 export type SendOptions = { quoted?: MessageKeyRef | null; mentions?: string[]; mentionAll?: boolean };
 
@@ -252,7 +255,9 @@ export class WhatsApp extends EventEmitter<{
   private ingest(m: WAMessage, live: boolean, quiet = false) {
     const raw = m.key.remoteJid;
     // Visualização única chega sem conteúdo em aparelho conectado; só marca que existe.
-    const viewOnce = !!m.key.isViewOnce && !m.message;
+    // A que este número enviou volta com o conteúdo embrulhado: guarda só o aviso, sem a mídia.
+    const wrapped = viewOnceWrapper(m.message);
+    const viewOnce = (!!m.key.isViewOnce && !m.message) || !!wrapped;
     if (!isConversation(raw) || !m.key.id) return;
     const chatJid = this.canonical(raw, m.key.remoteJidAlt);
     if (!m.message && !viewOnce) {
@@ -274,7 +279,7 @@ export class WhatsApp extends EventEmitter<{
     if (content?.pollUpdateMessage) return this.applyVote(chatJid, content.pollUpdateMessage, m, quiet);
     const ephemeral = ephemeralChange(content);
     if (ephemeral !== null) return this.applyEphemeral(chatJid, ephemeral, m, live, quiet);
-    const extracted = viewOnce ? viewOnceText() : extractText(content);
+    const extracted = viewOnce ? viewOnceText(wrapped ? VIEW_ONCE_LABEL[wrapped] : undefined, !!m.key.fromMe) : extractText(content);
     const media = viewOnce ? null : extractMedia(content);
     if (!extracted) return;
     const at = timestamp(m);
@@ -1339,7 +1344,10 @@ export class WhatsApp extends EventEmitter<{
           : base.startsWith("audio/")
             ? { audio: body, mimetype: base }
             : { document: body, mimetype: base || "application/octet-stream", fileName, caption };
-    const sent = await this.confirm(await sock.sendMessage(jid, content, this.sendOptions(jid, opts.quoted)));
+    if (file.viewOnce && !("image" in content || "video" in content || ("audio" in content && file.ptt))) {
+      throw new Error("Visualização única só vale para foto, vídeo e mensagem de voz.");
+    }
+    const sent = await this.confirm(await sock.sendMessage(jid, { ...content, ...(file.viewOnce ? { viewOnce: true } : {}) }, this.sendOptions(jid, opts.quoted)));
     return sent.key.id ?? null;
   }
 

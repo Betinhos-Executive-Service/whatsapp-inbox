@@ -668,9 +668,47 @@ export async function fileToOutgoing(file: File, caption?: string): Promise<Outg
 
 export const MAX_ATTACHMENT = 32 * 1024 * 1024;
 
-export function AttachmentTray({ items, onRemove, onEdit, disabled }: { items: Attachment[]; onRemove: (id: number) => void; onEdit: (a: Attachment) => void; disabled: boolean }) {
+/** Visualização única vale para foto, vídeo e voz; documento, GIF e SVG vão como arquivo comum. */
+export function canViewOnce(a: Attachment): boolean {
+  if (a.voice) return !!a.voice.ptt;
+  const type = a.file.type.split(";")[0];
+  return (type.startsWith("image/") && type !== "image/gif" && type !== "image/svg+xml") || type === "video/mp4";
+}
+
+export function AttachmentTray({
+  items,
+  onRemove,
+  onEdit,
+  disabled,
+  viewOnce,
+  onViewOnce,
+}: {
+  items: Attachment[];
+  onRemove: (id: number) => void;
+  onEdit: (a: Attachment) => void;
+  disabled: boolean;
+  viewOnce: boolean;
+  onViewOnce: (on: boolean) => void;
+}) {
+  const eligible = items.some(canViewOnce);
   return (
     <ul className="attachments" aria-label="Anexos a enviar">
+      {eligible && (
+        <li className="attachments__tools">
+          <Button
+            variant="secondary"
+            size="compact"
+            className="view-once-toggle"
+            icon={<Eye size={14} aria-hidden />}
+            aria-pressed={viewOnce}
+            disabled={disabled}
+            title={viewOnce ? "Enviar como mídia comum" : "O destinatário abre uma vez e a mídia some"}
+            onClick={() => onViewOnce(!viewOnce)}
+          >
+            Visualização única
+          </Button>
+        </li>
+      )}
       {items.map((a) => (
         <li key={a.id} className="attachment">
           {a.preview ? (
