@@ -4,6 +4,7 @@ import { api, mediaUrl, type AudioSummary, type Message, type OutgoingMedia } fr
 import { desktop } from "./desktop.ts";
 import { canEditImage } from "./image-editor/model.ts";
 import { webmToOgg } from "./ogg.ts";
+import { ChatGallery } from "./gallery.tsx";
 import { Button, Select } from "./ds/index.ts";
 
 /** "1:05" a partir de segundos. */
@@ -201,7 +202,7 @@ function TextPreview({ src }: { src: string }) {
 }
 
 /** Botão de copiar com confirmação no próprio botão (o modal cobre os toasts). */
-function CopyMediaButton({ m, onError }: { m: Message; onError: (text: string | null) => void }) {
+export function CopyMediaButton({ m, onError }: { m: Message; onError: (text: string | null) => void }) {
   const [state, setState] = useState<"idle" | "busy" | "done">("idle");
   const timer = useRef(0);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -228,7 +229,7 @@ function CopyMediaButton({ m, onError }: { m: Message; onError: (text: string | 
 }
 
 /** Foco preso no diálogo e devolvido a quem abriu; Esc fecha. */
-function useDialog(panel: React.RefObject<HTMLElement | null>, first: React.RefObject<HTMLElement | null>, onClose: () => void) {
+export function useDialog(panel: React.RefObject<HTMLElement | null>, first: React.RefObject<HTMLElement | null>, onClose: () => void) {
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     first.current?.focus();
@@ -606,7 +607,9 @@ export function MediaView({ m, caption }: { m: Message; caption: string }) {
   const openZoom = useCallback(() => setZoom(true), []);
   const media = m.media!;
   const image = media.type === "image" || media.type === "sticker";
-  useViewRequest(m, image && !failed ? openZoom : noop);
+  /** Foto e vídeo abrem a galeria da conversa; figurinha abre sozinha. */
+  const gallery = media.type === "image" || media.type === "video";
+  useViewRequest(m, (image || gallery) && !failed ? openZoom : noop);
   const src = mediaUrl(m);
   if (failed) {
     return (
@@ -629,11 +632,17 @@ export function MediaView({ m, caption }: { m: Message; caption: string }) {
             className={sticker ? "media-sticker" : undefined}
           />
         </button>
-        {zoom && <Lightbox m={m} src={src} download={mediaUrl(m, true)} onClose={closeZoom} />}
+        {zoom && (gallery ? <ChatGallery m={m} onClose={closeZoom} /> : <Lightbox m={m} src={src} download={mediaUrl(m, true)} onClose={closeZoom} />)}
       </>
     );
   }
-  if (media.type === "video") return <video className="media-video" src={src} controls preload="metadata" onError={() => setFailed(true)} />;
+  if (media.type === "video")
+    return (
+      <>
+        <video className="media-video" src={src} controls preload="metadata" onError={() => setFailed(true)} />
+        {zoom && <ChatGallery m={m} onClose={closeZoom} />}
+      </>
+    );
   if (media.type === "audio")
     return (
       <>
