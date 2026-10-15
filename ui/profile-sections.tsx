@@ -2,7 +2,8 @@ import { BriefcaseBusiness, FileText, HandCoins, Images, MessageCircle, Play, Sm
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api, mediaUrl, type Message, type Persona } from "./api.ts";
 import { aiName, isAiReady, useAiStatus } from "./ai-state.ts";
-import { FileViewer, Lightbox, fileSize } from "./media.tsx";
+import { FileViewer, fileSize } from "./media.tsx";
+import { MediaGallery } from "./gallery.tsx";
 import { Button } from "./ds/index.ts";
 
 const PAGE = 60;
@@ -109,8 +110,8 @@ export function MediaSection({ jid }: { jid: string }) {
           Ver mais antigos
         </Button>
       )}
-      {open && open.media?.type === "image" && <Lightbox m={open} src={mediaUrl(open)} download={mediaUrl(open, true)} onClose={close} />}
-      {open && open.media?.type !== "image" && <FileViewer m={open} onClose={close} />}
+      {open && type === "visual" && items && <MediaGallery items={items} startId={open.id} onClose={close} loadOlder={more ? loadMore : null} />}
+      {open && type === "docs" && <FileViewer m={open} onClose={close} />}
     </section>
   );
 }
