@@ -652,6 +652,21 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       return showChat(wa ? wa.conversationOf(target.jid!) : target.jid!);
     },
     setBlocked: (jid, blocked) => connected().setBlocked(jid, blocked),
+    leaveGroup: async (jid) => {
+      await connected().leaveGroup(jid);
+      broadcast("chat", store.getChat(jid));
+    },
+    deleteChat: async (jid) => {
+      // Celular primeiro: depois de apagar aqui, some a última mensagem que o WhatsApp exige.
+      let synced = !!wa;
+      if (wa) await wa.syncDeleteChat(jid).catch((e: Error) => {
+        synced = false;
+        console.warn(`Apagar a conversa no celular falhou: ${e.message}`);
+      });
+      store.deleteChat(jid);
+      broadcast("reload", null);
+      return { synced };
+    },
     setEphemeral: (jid, seconds) => connected().setEphemeral(jid, seconds),
     syncUnread: (jid, unread) => {
       wa?.syncUnread(jid, unread).catch((e: Error) => console.warn(`Marcar como ${unread ? "não lida" : "lida"} no celular falhou: ${e.message}`));

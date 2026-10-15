@@ -61,6 +61,9 @@ export type Api = {
   /** Abre (ou começa) a conversa com um número ou JID; o número é conferido no WhatsApp. */
   openChat: (target: { phone?: string; jid?: string }) => Promise<unknown>;
   setBlocked: (jid: string, blocked: boolean) => Promise<void>;
+  leaveGroup: (jid: string) => Promise<void>;
+  /** Apaga daqui e tenta apagar no celular; synced=false quando ficou só aqui. */
+  deleteChat: (jid: string) => Promise<{ synced: boolean }>;
   setEphemeral: (jid: string, seconds: number) => Promise<void>;
   /** Marcar como lida/não lida também no celular (sem bloquear a tela). */
   syncUnread: (jid: string, unread: boolean) => void;
@@ -572,6 +575,13 @@ export function createHandler(api: Api) {
         await api.setBlocked(jid, blocked);
         return json(res, 200, { blocked });
       }
+      if (action === "/leave" && method === "POST") {
+        await readJson(req);
+        if (!jid.endsWith("@g.us")) throw new HttpError(400, "Só dá para sair de grupos.");
+        await api.leaveGroup(jid);
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "" && method === "DELETE") return json(res, 200, await api.deleteChat(jid));
       if (action === "/participants" && method === "POST") {
         const body = parse(z.object({ action: z.enum(["add", "remove", "promote", "demote"]), participants: participantJids }), await readJson(req));
         if (!jid.endsWith("@g.us")) throw new HttpError(400, "Só grupos têm participantes.");
