@@ -4,6 +4,9 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  generateWAMessageContent,
+  generateWAMessageFromContent,
+  getContentType,
   isJidGroup,
   isLidUser,
   isPnUser,
@@ -1344,10 +1347,32 @@ export class WhatsApp extends EventEmitter<{
           : base.startsWith("audio/")
             ? { audio: body, mimetype: base }
             : { document: body, mimetype: base || "application/octet-stream", fileName, caption };
-    if (file.viewOnce && !("image" in content || "video" in content || ("audio" in content && file.ptt))) {
-      throw new Error("Visualização única só vale para foto, vídeo e mensagem de voz.");
+    if (file.viewOnce) {
+      if (!("image" in content || "video" in content || ("audio" in content && file.ptt))) {
+        throw new Error("Visualização única só vale para foto, vídeo e mensagem de voz.");
+      }
+      return this.sendViewOnce(sock, jid, content, opts);
     }
-    const sent = await this.confirm(await sock.sendMessage(jid, { ...content, ...(file.viewOnce ? { viewOnce: true } : {}) }, this.sendOptions(jid, opts.quoted)));
+    const sent = await this.confirm(await sock.sendMessage(jid, content, this.sendOptions(jid, opts.quoted)));
+    return sent.key.id ?? null;
+  }
+
+  /**
+   * Visualização única como o WhatsApp Web monta: `viewOnceMessageV2` (voz: `V2Extension`) com `viewOnce` na
+   * própria mídia. O embrulho antigo (`viewOnceMessage`) que o `sendMessage` do Baileys usa passa pelo servidor,
+   * mas os aparelhos atuais descartam a mensagem (fica com um tique só).
+   */
+  private async sendViewOnce(sock: WASocket, jid: string, content: Parameters<WASocket["sendMessage"]>[1], opts: SendOptions): Promise<string | null> {
+    const userJid = sock.user?.id;
+    if (!userJid) throw new Error("Conta do WhatsApp ainda não identificada.");
+    const inner = await generateWAMessageContent(content, { upload: sock.waUploadToServer, logger, jid });
+    const type = getContentType(inner);
+    if (!type) throw new Error("Não foi possível montar a mídia.");
+    (inner[type] as { viewOnce?: boolean | null }).viewOnce = true;
+    const wrapped = type === "audioMessage" ? { viewOnceMessageV2Extension: { message: inner } } : { viewOnceMessageV2: { message: inner } };
+    const full = generateWAMessageFromContent(jid, wrapped, { userJid, ...this.sendOptions(jid, opts.quoted) });
+    await sock.relayMessage(jid, full.message!, { messageId: full.key.id! });
+    const sent = await this.confirm(full);
     return sent.key.id ?? null;
   }
 
