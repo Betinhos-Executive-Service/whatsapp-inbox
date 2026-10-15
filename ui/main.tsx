@@ -388,6 +388,7 @@ function ChatList(props: {
   useEffect(() => () => window.clearTimeout(peekTimer.current), []);
   const peekChat = peek && peek.jid !== props.selected && !menu ? props.byJid.get(peek.jid) : undefined;
   const [showArchived, setShowArchived] = useState(false);
+  const [onlyUnread, setOnlyUnread] = useState(false);
   const [labelChoice, setLabel] = useState("");
   const label = props.useLabels ? labelChoice : "";
   const [query, setQuery] = useState("");
@@ -430,6 +431,7 @@ function ChatList(props: {
     const now = Date.now();
     const list = props.chats.filter(
       (c) =>
+        (!onlyUnread || c.unread > 0 || c.markedUnread) &&
         (showArchived
           ? c.archived
           : !c.archived && (tab === "todas" || (c.status === tab && (tab === "resolvida" || !isSnoozed(c, now))))) &&
@@ -446,7 +448,7 @@ function ChatList(props: {
     // Fixadas no topo, na ordem em que foram fixadas (a mais recente primeiro).
     const pinned = ordered.filter((c) => c.pinnedAt).sort((a, b) => b.pinnedAt! - a.pinnedAt!);
     return pinned.length ? [...pinned, ...ordered.filter((c) => !c.pinnedAt)] : ordered;
-  }, [props.chats, tab, label, deferredQuery, order, showArchived]);
+  }, [props.chats, tab, label, deferredQuery, order, showArchived, onlyUnread]);
 
   const { onVisible } = props;
   useEffect(() => onVisible(filtered.map((c) => c.jid)), [filtered, onVisible]);
@@ -475,7 +477,7 @@ function ChatList(props: {
     };
   }, [messageQuery]);
 
-  useEffect(() => setLimit(PAGE), [tab, label, query, showArchived]);
+  useEffect(() => setLimit(PAGE), [tab, label, query, showArchived, onlyUnread]);
 
   const searchInput = useRef<HTMLInputElement>(null);
   const searching = query.trim() !== "";
@@ -558,6 +560,16 @@ function ChatList(props: {
             { value: "prioridade", label: "Responder primeiro" },
           ]}
         />
+        <Button
+          variant="secondary"
+          size="compact"
+          className="unread-toggle"
+          aria-pressed={onlyUnread}
+          title={onlyUnread ? "Mostrar todas as conversas" : "Ver só as não lidas"}
+          onClick={() => setOnlyUnread((v) => !v)}
+        >
+          Não lidas
+        </Button>
         </div>
         {searching && props.loaded && (
           <div className="search-status" role="status">
