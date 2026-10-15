@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Store, type IncomingMessage } from "../server/db.ts";
-import { EDIT_WINDOW_MS, extractAction, REVOKE_WINDOW_MS, sentChangeError } from "../server/text.ts";
+import { EDIT_WINDOW_MS, editedText, extractAction, REVOKE_WINDOW_MS, sentChangeError } from "../server/text.ts";
 
 const PN = "5511999990000@s.whatsapp.net";
 const GROUP = "120363000000000000@g.us";
@@ -27,6 +27,13 @@ test("extractAction reconhece editar e reagir (apagar fica com revokedId)", () =
   // Outros protocolos (ex.: sincronização de chaves) continuam ignorados.
   assert.equal(extractAction({ protocolMessage: { type: 6, key: { id: "A" } } }), null);
   assert.equal(extractAction({ conversation: "oi" }), null);
+});
+
+test("editedText lê a edição que chega por messages.update", () => {
+  assert.equal(editedText({ message: { editedMessage: { message: { conversation: "novo" } } } }), "novo");
+  assert.equal(editedText({ message: { editedMessage: { message: { extendedTextMessage: { text: "com link" } } } } }), "com link");
+  assert.equal(editedText({ status: 3 } as never), null);
+  assert.equal(editedText(undefined), null);
 });
 
 test("status de entrega só avança e só vale para as minhas", () => {

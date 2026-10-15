@@ -964,7 +964,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                 ) : (
                   <span className="bubble__meta">
                     {m.starred && !m.deleted && <Star className="bubble__star" size={11} aria-label="Favorita" />}
-                    {m.editedAt !== null && !m.deleted && <span className="bubble__edited">Editada</span>}
+                    {m.editedAt !== null && !m.deleted && <span className="bubble__edited" title={`Editada em ${new Date(m.editedAt).toLocaleString("pt-BR")}`}>Editada</span>}
                     <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
                       {formatTime(m.at)}
                     </time>
