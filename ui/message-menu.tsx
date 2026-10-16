@@ -1,6 +1,7 @@
-import { Brush, CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, MessageCircleReply, Pencil, Pin, PinOff, Reply, Star, StarOff, Trash2, UserRound } from "lucide-react";
+import { Brush, CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, MessageCircleReply, Pencil, Pin, PinOff, Plus, Reply, Star, StarOff, Trash2, UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { mediaUrl, type Message } from "./api.ts";
+import { EmojiPicker, rememberEmoji } from "./emoji.tsx";
 import { canEdit, REACTIONS } from "./message-extras.tsx";
 import { canCopyMedia } from "./media.tsx";
 
@@ -62,6 +63,8 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
   const panel = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: at.x, top: at.y });
   const [view, setView] = useState<"main" | "pin">("main");
+  /** Painel completo de emojis no lugar das 6 reações. */
+  const [more, setMore] = useState(false);
   const call = m.kind === "call";
 
   const items: Item[] = m.deleted
@@ -104,8 +107,8 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
       left: Math.max(gap, Math.min(at.x, window.innerWidth - width - gap)),
       top: Math.max(gap, at.y + height + gap > window.innerHeight ? at.y - height : at.y),
     });
-    el.querySelector<HTMLElement>("[role=menuitem]:not(:disabled)")?.focus();
-  }, [at, view]);
+    if (!more) el.querySelector<HTMLElement>("[role=menuitem]:not(:disabled)")?.focus();
+  }, [at, view, more]);
 
   useEffect(() => {
     const onDown = (e: PointerEvent) => !panel.current?.contains(e.target as Node) && onClose();
@@ -123,6 +126,11 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
   }, [onClose]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Com o painel de emojis aberto, as teclas são dele (busca, Esc).
+    if (more) {
+      if (e.key === "Escape" && !e.defaultPrevented) onClose();
+      return;
+    }
     const list = [...(panel.current?.querySelectorAll<HTMLElement>("[role=menuitem]:not(:disabled)") ?? [])];
     const i = list.indexOf(document.activeElement as HTMLElement);
     const go = (n: number) => list[(n + list.length) % list.length]?.focus();
@@ -153,8 +161,17 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
   };
 
   return (
-    <div ref={panel} className="bt-menu__panel ctx-menu" role="menu" aria-label="Opções da mensagem" style={pos} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}>
-      {!m.deleted && !call && view === "main" && (
+    <div ref={panel} className={`bt-menu__panel ctx-menu${more ? " ctx-menu--emoji" : ""}`} role="menu" aria-label="Opções da mensagem" style={pos} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}>
+      {more && (
+        <EmojiPicker
+          onPick={(emoji) => {
+            rememberEmoji(emoji);
+            pick(() => actions.onReact(m, mine === emoji ? "" : emoji));
+          }}
+          onClose={onClose}
+        />
+      )}
+      {!more && !m.deleted && !call && view === "main" && (
         <div className="ctx-menu__reactions" role="group" aria-label="Reagir">
           {REACTIONS.map((emoji) => (
             <button
@@ -171,9 +188,12 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
               {emoji}
             </button>
           ))}
+          <button type="button" role="menuitem" data-emoji className="ctx-menu__emoji" aria-label="Mais emojis" title="Mais emojis" disabled={!canAct} onClick={() => setMore(true)}>
+            <Plus size={16} aria-hidden />
+          </button>
         </div>
       )}
-      {items.map((item) =>
+      {!more && items.map((item) =>
         item.href ? (
           <a key={item.id} role="menuitem" className="bt-menu__item" href={item.href} download onClick={() => setTimeout(onClose)}>
             <span className="bt-menu__icon">{item.icon}</span>

@@ -1,3 +1,4 @@
+import type { ExportRow } from "./export.ts";
 import type { ContactCard } from "./contacts.ts";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { CLAUDE_API_RATES, claudePlanEquivalentUsd, type Provider, type TokenUsage, type UsageKind } from "./pricing.ts";
@@ -161,6 +162,8 @@ export type Message = {
   poll: PollResult | null;
   /** Favoritada (estrela). */
   starred: boolean;
+  /** 0 = normal, 1 = "Encaminhada", 2 = "Encaminhada muitas vezes". */
+  forwarded: 0 | 1 | 2;
 };
 
 export type PollResult = { options: { name: string; count: number; mine: boolean; voters: string[] }[]; voters: number };
@@ -175,8 +178,9 @@ export type LabelExample = { label: string; snippet: string };
 
 export type Label = { name: string; description: string };
 
-export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "sender" | "ack" | "editedAt" | "reactions" | "contacts" | "extra" | "poll" | "starred"> & {
+export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "sender" | "ack" | "editedAt" | "reactions" | "contacts" | "extra" | "poll" | "starred" | "forwarded"> & {
   rawJid: string;
+  forwarded?: 0 | 1 | 2;
   participant?: string | null;
   media?: string | null;
   /** QuotedRef em JSON. */
@@ -375,6 +379,7 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
   ["messages", "starred", "integer not null default 0"],
   ["chats", "marked_unread", "integer not null default 0"],
   ["chats", "ephemeral", "integer"],
+  ["messages", "forwarded", "integer not null default 0"],
 ];
 
 const CHAT_SELECT = `select c.*,
@@ -530,13 +535,14 @@ function toMessage(r: Row, reactions: Message["reactions"] = [], poll: PollResul
     extra: deleted ? null : parseExtra(r.extra),
     poll: deleted ? null : poll,
     starred: r.starred === 1,
+    forwarded: deleted ? 0 : r.forwarded === 2 ? 2 : r.forwarded === 1 ? 1 : 0,
   };
 }
 
 export const DELETED_TEXT = "Mensagem apagada";
 
 /** Colunas da mensagem para a tela (sem `raw`, que só serve ao retry). */
-const MESSAGE_COLUMNS = "chat_jid, id, participant, from_me, at, text, kind, media, quoted, deleted_at, ack, edited_at, contacts, extra, starred";
+const MESSAGE_COLUMNS = "chat_jid, id, participant, from_me, at, text, kind, media, quoted, deleted_at, ack, edited_at, contacts, extra, starred, forwarded";
 
 export class Store {
   readonly db: DatabaseSync;
@@ -758,12 +764,12 @@ export class Store {
       this.ensureChat(m.chatJid, { status: live ? "aberta" : "resolvida" });
       const inserted = this
         .q(
-          `insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media, quoted, ack, raw, unread, contacts, extra)
-           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `insert or ignore into messages (chat_jid, id, raw_jid, participant, from_me, at, text, kind, media, quoted, ack, raw, unread, contacts, extra, forwarded)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           m.chatJid, m.id, m.rawJid, m.participant ?? null, m.fromMe ? 1 : 0, m.at, m.text, m.kind, m.media ?? null, m.quoted ?? null,
-          m.fromMe ? (m.ack ?? null) : null, m.raw ?? null, live && !m.fromMe && !m.silent ? 1 : 0, m.contacts ?? null, m.extra ?? null,
+          m.fromMe ? (m.ack ?? null) : null, m.raw ?? null, live && !m.fromMe && !m.silent ? 1 : 0, m.contacts ?? null, m.extra ?? null, m.forwarded ?? 0,
         );
       if (inserted.changes === 0) return false;
       this
@@ -1078,6 +1084,35 @@ export class Store {
     const text = String(r.text);
     const i = text.indexOf(": ");
     return r.participant && r.from_me !== 1 && i > 0 && i <= 60 ? text.slice(i + 2) : text;
+  }
+
+  /** Conversa inteira em ordem cronológica, já com o autor do grupo separado, para exportar. */
+  exportRows(jid: string): ExportRow[] {
+    const rows = this.q("select id, at, from_me, participant, text, kind, media, deleted_at from messages where chat_jid = ? order by at asc, rowid asc").all(jid) as Row[];
+    return rows.map((r) => {
+      const text = String(r.text);
+      const i = text.indexOf(": ");
+      const hasAuthor = !!r.participant && r.from_me !== 1 && i > 0 && i <= 60;
+      let media: ExportRow["media"] = null;
+      if (typeof r.media === "string") {
+        try {
+          const m = JSON.parse(r.media);
+          media = { type: String(m.type), mimetype: String(m.mimetype ?? ""), fileName: m.fileName ?? null };
+        } catch {
+          media = null;
+        }
+      }
+      return {
+        id: String(r.id),
+        at: Number(r.at),
+        fromMe: r.from_me === 1,
+        author: hasAuthor ? text.slice(0, i) : null,
+        text: hasAuthor ? text.slice(i + 2) : text,
+        kind: String(r.kind),
+        media,
+        deleted: r.deleted_at != null,
+      };
+    });
   }
 
   /** Texto da mensagem como o WhatsApp mostra (sem o autor do grupo), para encaminhar. */

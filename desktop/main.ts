@@ -4,7 +4,7 @@
 // configurações próprios); a troca de conta só alterna qual área aparece.
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell, Tray, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { spawn } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startApp, type RunningApp } from "../server/app.ts";
 import { removeMcpFile, writeMcpFile } from "../server/mcp-file.ts";
@@ -13,7 +13,7 @@ import { inQuietHours, type Prefs } from "../server/prefs.ts";
 import type { ConnectionState } from "../server/whatsapp.ts";
 import { addAccount, isRemovableDir, loadAccounts, MAX_ACCOUNTS, removeAccount, renameAccount, saveAccounts, setActive, type Account, type Registry } from "./accounts.ts";
 import { roundAvatar } from "./avatar.ts";
-import { mediaToTemp } from "./files.ts";
+import { mediaToTemp, safeFileName } from "./files.ts";
 import { isUrgent, notificationBody, notificationTitle, UnreadCounter } from "./notifications.ts";
 import type { RailAccount } from "./rail/rail.ts";
 import { setupUpdates } from "./updates.ts";
@@ -503,6 +503,27 @@ function setupIpc() {
   ipcMain.handle("media:open", async (event, chatJid: unknown, id: unknown) => {
     const failure = await shell.openPath(await mediaFile(event, chatJid, id));
     if (failure) throw new Error(`Nenhum app abriu este arquivo. ${failure}`);
+  });
+  ipcMain.handle("chat:export", async (event, chatJid: unknown, withMedia: unknown, defaultName: unknown) => {
+    const inst = senderInstance(event);
+    if (!inst?.origin) throw new Error("Origem não autorizada.");
+    if (typeof chatJid !== "string" || !chatJid) throw new Error("Conversa inválida.");
+    const zip = withMedia === true;
+    const name = safeFileName(typeof defaultName === "string" && defaultName ? defaultName : `conversa.${zip ? "zip" : "txt"}`);
+    const options = {
+      title: "Exportar conversa",
+      defaultPath: join(app.getPath("downloads"), name),
+      filters: zip ? [{ name: "Arquivo zip", extensions: ["zip"] }] : [{ name: "Texto", extensions: ["txt"] }],
+    };
+    const { canceled, filePath } = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options);
+    if (canceled || !filePath) return null;
+    const res = await fetch(`${inst.origin}/api/chats/${encodeURIComponent(chatJid)}/export?media=${zip ? 1 : 0}`);
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(body?.error ?? `Não foi possível exportar (HTTP ${res.status}).`);
+    }
+    await writeFile(filePath, Buffer.from(await res.arrayBuffer()));
+    return filePath;
   });
   ipcMain.handle("account:info", (event) => {
     const inst = senderInstance(event);

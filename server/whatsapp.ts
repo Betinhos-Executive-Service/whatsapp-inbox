@@ -14,6 +14,7 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
   proto,
+  S_WHATSAPP_NET,
   useMultiFileAuthState,
   type WACallEvent,
   type WAMessage,
@@ -103,8 +104,13 @@ function isConversation(jid: string | null | undefined): jid is string {
 
 /** `viewOnce`: visualização única (só foto, vídeo e voz); o destinatário abre uma vez e a mídia some. */
 export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number; sticker?: boolean; viewOnce?: boolean };
-/** Resposta a uma mensagem (citação) e menções com @. */
-export type SendOptions = { quoted?: MessageKeyRef | null; mentions?: string[]; mentionAll?: boolean };
+/** Resposta a uma mensagem (citação), menções com @ e, ao encaminhar, o score para o selo "Encaminhada". */
+export type SendOptions = { quoted?: MessageKeyRef | null; mentions?: string[]; mentionAll?: boolean; forwardingScore?: number };
+
+/** `contextInfo` do selo "Encaminhada" (o Baileys mescla no conteúdo da mensagem). */
+function forwardedContext(opts: SendOptions) {
+  return opts.forwardingScore ? { contextInfo: { isForwarded: true, forwardingScore: opts.forwardingScore } } : {};
+}
 
 export type Participant = { jid: string; name: string; phone: string | null; admin: boolean; me: boolean };
 export type Profile = {
@@ -315,6 +321,7 @@ export class WhatsApp extends EventEmitter<{
       quoted: ctx.quoted ? JSON.stringify(this.quoteRef(chatJid, ctx.quoted, group)) : null,
       extra: extra ? JSON.stringify(extra) : null,
       ack: m.key.fromMe ? (m.status ?? null) : null,
+      forwarded: ctx.forwarded,
     };
     const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
     // Enviada agora: guarda o proto para reenviar se o WhatsApp do contato pedir retry.
@@ -467,6 +474,8 @@ export class WhatsApp extends EventEmitter<{
       if (chat && !quiet) this.emit("chat", chat);
     }
     if (type >= STUB.ADD && type <= STUB.LEAVE) this.groupCache.delete(m.key.remoteJid!);
+    // Outro admin trocou a foto: a cópia local fica velha; a próxima abertura busca de novo.
+    if (type === STUB.ICON) this.store.forgetPhoto(chatJid);
     const text = (() => {
       switch (type) {
         case STUB.CREATE:
@@ -983,7 +992,7 @@ export class WhatsApp extends EventEmitter<{
     const mentions = list.length || all ? { ...(list.length ? { mentions: list } : {}), ...(all ? { mentionAll: true } : {}) } : {};
     // Prévia do primeiro link (título, descrição e miniatura), como o WhatsApp faz ao digitar.
     const preview = await sendPreview(text).catch(() => null);
-    const sent = await sock.sendMessage(jid, { text, ...mentions, ...(preview ? { linkPreview: preview } : {}) }, this.sendOptions(jid, opts.quoted));
+    const sent = await sock.sendMessage(jid, { text, ...mentions, ...(preview ? { linkPreview: preview } : {}), ...forwardedContext(opts) }, this.sendOptions(jid, opts.quoted));
     return (await this.confirm(sent)).key.id ?? null;
   }
 
@@ -1160,6 +1169,22 @@ export class WhatsApp extends EventEmitter<{
       this.setGroupName(jid, info.subject);
     }
     if (info.description !== undefined) await sock.groupUpdateDescription(jid, info.description || undefined);
+    this.groupCache.delete(jid);
+  }
+
+  /**
+   * Troca (JPEG já redimensionado pela tela) ou remove (null) a foto do grupo. Só admin consegue; o WhatsApp recusa o resto.
+   * O `updateProfilePicture` do Baileys exige jimp/sharp para redimensionar, que não estão instalados, então o IQ vai direto.
+   */
+  async setGroupPhoto(jid: string, jpeg: Buffer | null): Promise<void> {
+    if (!isJidGroup(jid)) throw new Error("Só grupos têm foto editável aqui.");
+    const sock = this.ready();
+    await sock.query({
+      tag: "iq",
+      attrs: { to: S_WHATSAPP_NET, type: "set", xmlns: "w:profile:picture", target: jid },
+      ...(jpeg ? { content: [{ tag: "picture", attrs: { type: "image" }, content: jpeg }] } : {}),
+    });
+    this.store.forgetPhoto(jid);
     this.groupCache.delete(jid);
   }
 
@@ -1353,7 +1378,7 @@ export class WhatsApp extends EventEmitter<{
       }
       return this.sendViewOnce(sock, jid, content, opts);
     }
-    const sent = await this.confirm(await sock.sendMessage(jid, content, this.sendOptions(jid, opts.quoted)));
+    const sent = await this.confirm(await sock.sendMessage(jid, { ...content, ...forwardedContext(opts) }, this.sendOptions(jid, opts.quoted)));
     return sent.key.id ?? null;
   }
 

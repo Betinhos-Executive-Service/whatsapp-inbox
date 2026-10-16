@@ -474,6 +474,7 @@ ul, ol { margin: 0; padding: 0; }
 .bubble__time { font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); font-variant-numeric: tabular-nums; }
 .bubble__meta { position: relative; display: flex; justify-content: flex-end; align-items: center; gap: var(--bt-space-1); margin-top: 2px; font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); }
 .bubble__edited { font-style: italic; }
+.bubble__forwarded { display: inline-flex; align-items: center; gap: var(--bt-space-1); font-size: var(--bt-font-size-11); font-style: italic; color: var(--bt-color-text-secondary); margin-bottom: 2px; }
 .bubble__ack { display: inline-flex; color: var(--bt-color-text-secondary); }
 .bubble__ack--read { color: var(--bt-color-action); }
 
@@ -512,6 +513,12 @@ ul, ol { margin: 0; padding: 0; }
 .message-row--reacted .reaction--mine { animation: reaction-pop var(--bt-duration-slow) var(--bt-ease-out); }
 @keyframes reaction-pop { 0% { opacity: 0; transform: scale(.95); } 60% { opacity: 1; transform: scale(1.08); } }
 .reaction-picker__item:focus-visible { outline: 0; box-shadow: var(--bt-focus-ring); }
+.reaction-picker__more { display: inline-flex; align-items: center; justify-content: center; color: var(--bt-color-text-secondary); }
+/* Painel completo de emojis ancorado no botão de reagir e dentro do menu da mensagem. */
+.react-button .emoji-picker { left: 0; width: 340px; max-width: calc(100vw - 2 * var(--bt-space-4)); }
+.message-row--me .react-button .emoji-picker { left: auto; right: 0; transform-origin: bottom right; }
+.ctx-menu--emoji { width: 340px; }
+.ctx-menu--emoji .emoji-picker { position: static; width: 100%; height: min(380px, 60vh); border: 0; box-shadow: none; padding: 0; animation: none; }
 
 .chat-pane__presence { color: var(--bt-color-success); font-weight: var(--bt-font-weight-semibold); }
 
@@ -1201,6 +1208,8 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 .profile__hero { display: flex; align-items: center; gap: var(--bt-space-3); }
 .profile__hero .avatar--xl { width: 56px; height: 56px; font-size: var(--bt-font-size-17); }
 .profile__id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.profile__photo { position: relative; display: inline-flex; flex-shrink: 0; }
+.profile__photo-button { position: absolute; right: -4px; bottom: -4px; border-radius: var(--bt-radius-full); box-shadow: var(--bt-shadow-popover); }
 .profile__phone .icon-button--plain { width: 24px; height: 24px; }
 .profile__name { overflow-wrap: anywhere; }
 .profile__phone { display: inline-flex; align-items: center; gap: var(--bt-space-1); font-variant-numeric: tabular-nums; color: var(--bt-color-slate-700); font-weight: var(--bt-font-weight-semibold); }

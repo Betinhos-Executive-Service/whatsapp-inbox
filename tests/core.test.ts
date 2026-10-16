@@ -154,7 +154,7 @@ test("Jev: perguntas, estado e resposta validados", () => {
   assert.throws(() => buildQuestions(labels.slice(0, 1)));
   const q = buildQuestions(labels);
   assert.deepEqual(Object.keys(q), ["etiqueta", "responder", "urgente", "prioridade"]);
-  const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null, contacts: null, quoted: null, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false }]));
+  const state = JSON.parse(buildState("Ana", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "x".repeat(2000), kind: "text", media: null, contacts: null, quoted: null, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false, forwarded: 0 }]));
   assert.equal(state.mensagens[0].de, "contato");
   assert.equal(state.mensagens[0].texto.length, 1000);
   assert.ok(!JSON.stringify(state).includes("whatsapp.net"));
@@ -162,7 +162,7 @@ test("Jev: perguntas, estado e resposta validados", () => {
   assert.equal(state.eu_respondi_por_ultimo, false);
   assert.match(state.agora, /horário de Brasília/);
   // Em grupo, quem fala é "participante"; datas vão no horário de Brasília (00:00 UTC = 21:00 do dia anterior).
-  const group = JSON.parse(buildState("Turma", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "oi", kind: "text", media: null, contacts: null, quoted: null, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false }], new Date(0), [], { messages: 30, chars: 1000 }, true));
+  const group = JSON.parse(buildState("Turma", [{ chatJid: PN, id: "1", fromMe: false, at: 0, text: "oi", kind: "text", media: null, contacts: null, quoted: null, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false, forwarded: 0 }], new Date(0), [], { messages: 30, chars: 1000 }, true));
   assert.equal(group.tipo, "grupo");
   assert.equal(group.mensagens[0].de, "participante");
   assert.match(group.mensagens[0].em, /31\/12\/1969 21:00/);

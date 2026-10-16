@@ -1,5 +1,6 @@
-import { Check, CheckCheck, Clock, Copy, Pencil, SmilePlus, X } from "lucide-react";
+import { Check, CheckCheck, Clock, Copy, Pencil, Plus, SmilePlus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { EmojiPicker, rememberEmoji } from "./emoji.tsx";
 import type { Message } from "./api.ts";
 import { Button } from "./ds/index.ts";
 
@@ -78,15 +79,27 @@ export function CopyButton({ m, onCopy }: { m: Message; onCopy: (m: Message, qui
   );
 }
 
-/** Botão de reagir com o seletor das 6 reações. Esc ou foco fora fecha. */
+/** Botão de reagir com o seletor das 6 reações; o "+" abre o painel completo de emojis. Esc ou foco fora fecha. */
 export function ReactButton({ m, onReact, disabled }: { m: Message; onReact: (m: Message, emoji: string) => void; disabled: boolean }) {
   const [open, setOpen] = useState(false);
+  const [more, setMore] = useState(false);
   const mine = m.reactions.find((r) => r.fromMe)?.emoji ?? null;
+  const close = () => {
+    setOpen(false);
+    setMore(false);
+  };
+  const react = (emoji: string) => {
+    close();
+    onReact(m, mine === emoji ? "" : emoji);
+  };
   return (
     <span
       className="react-button"
-      onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}
-      onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+      onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && close()}
+      onKeyDown={(e) => {
+        // Esc com texto na busca de emojis só limpa (a busca já tratou a tecla).
+        if (e.key === "Escape" && !e.defaultPrevented) close();
+      }}
     >
       <button
         type="button"
@@ -95,11 +108,11 @@ export function ReactButton({ m, onReact, disabled }: { m: Message; onReact: (m:
         title="Reagir"
         aria-expanded={open}
         disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (open ? close() : setOpen(true))}
       >
         <SmilePlus size={16} aria-hidden />
       </button>
-      {open && (
+      {open && !more && (
         <span className="reaction-picker" role="menu" aria-label="Escolher reação">
           {REACTIONS.map((emoji, i) => (
             <button
@@ -109,15 +122,24 @@ export function ReactButton({ m, onReact, disabled }: { m: Message; onReact: (m:
               className={`reaction-picker__item${mine === emoji ? " is-selected" : ""}`}
               aria-label={mine === emoji ? `Tirar reação ${emoji}` : `Reagir com ${emoji}`}
               autoFocus={i === 0}
-              onClick={() => {
-                setOpen(false);
-                onReact(m, mine === emoji ? "" : emoji);
-              }}
+              onClick={() => react(emoji)}
             >
               {emoji}
             </button>
           ))}
+          <button type="button" role="menuitem" className="reaction-picker__item reaction-picker__more" aria-label="Mais emojis" title="Mais emojis" onClick={() => setMore(true)}>
+            <Plus size={16} aria-hidden />
+          </button>
         </span>
+      )}
+      {open && more && (
+        <EmojiPicker
+          onPick={(emoji) => {
+            rememberEmoji(emoji);
+            react(emoji);
+          }}
+          onClose={close}
+        />
       )}
     </span>
   );

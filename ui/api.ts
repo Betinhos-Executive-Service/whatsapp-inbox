@@ -202,6 +202,8 @@ export type Message = {
   poll: PollResult | null;
   /** Favoritada (estrela). */
   starred: boolean;
+  /** 0 = normal, 1 = "Encaminhada", 2 = "Encaminhada muitas vezes". */
+  forwarded: 0 | 1 | 2;
   /** Só no cliente: envio otimista ainda sem confirmação do servidor. */
   pending?: "sending" | "failed";
 };
@@ -315,6 +317,11 @@ export const api = {
   updateParticipants: (jid: string, action: ParticipantAction, participants: string[]) =>
     request<ParticipantResult[]>("POST", `${chatPath(jid)}/participants`, { action, participants }),
   updateGroupInfo: (jid: string, info: { subject?: string; description?: string }) => request<Chat>("POST", `${chatPath(jid)}/group-info`, info),
+  /** Foto do grupo: JPEG em base64 (já redimensionado) ou remoção. */
+  setGroupPhoto: (jid: string, data: string) => request<{ ok: true }>("POST", `${chatPath(jid)}/photo`, { data }),
+  removeGroupPhoto: (jid: string) => request<{ ok: true }>("DELETE", `${chatPath(jid)}/photo`, {}),
+  /** Link do export da conversa (.txt ou .zip com mídia), para baixar fora do app desktop. */
+  exportUrl: (jid: string, withMedia: boolean) => `${chatPath(jid)}/export?media=${withMedia ? 1 : 0}`,
   acceptInvite: (jid: string, id: string) => request<Chat>("POST", `${chatPath(jid)}/accept-invite`, { id }),
   deleteMessage: (jid: string, id: string, mode: "everyone" | "me") =>
     request<{ chat: Chat; synced: boolean }>("POST", `${chatPath(jid)}/delete`, { id, mode }),

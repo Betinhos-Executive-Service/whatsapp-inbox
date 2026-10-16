@@ -931,6 +931,11 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   ) : (
                     <span className={`bubble__author tone-${authorTone(author)}`}>{author}</span>
                   ))}
+                {m.forwarded > 0 && !m.deleted && (
+                  <span className="bubble__forwarded">
+                    <Forward size={12} aria-hidden /> {m.forwarded === 2 ? "Encaminhada muitas vezes" : "Encaminhada"}
+                  </span>
+                )}
                 {m.quoted && (
                   <button type="button" className="quote" onClick={() => onJump(m.quoted!.id)} title="Ir para a mensagem respondida">
                     <span className="quote__author">{quoteAuthor(m.quoted, chatName)}</span>
@@ -1426,7 +1431,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       outbox.current.set(localId, { text: withMentions.text, quotedId, quotedChat, mentions: withMentions.mentions, mentionAll: mentionAll || undefined });
       setMessages((list) => [
         ...(list ?? []),
-        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, contacts: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false, pending: "sending" },
+        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, contacts: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false, forwarded: 0, pending: "sending" },
       ]);
       setDraft("");
       setReplyTo(null);

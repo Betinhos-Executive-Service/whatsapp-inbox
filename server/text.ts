@@ -211,15 +211,22 @@ export function extractText(content: Content): Extracted | null {
 export type MessageContext = {
   quoted: { id: string; participant: string | null; text: string } | null;
   mentions: string[];
+  /** 0 = não encaminhada, 1 = "Encaminhada", 2 = "Encaminhada muitas vezes" (score ≥ 5, como o WhatsApp). */
+  forwarded: 0 | 1 | 2;
 };
 
+/** A partir deste score o WhatsApp mostra "Encaminhada muitas vezes". */
+export const FORWARDED_MANY = 5;
+
 export function extractContext(content: Content): MessageContext {
-  const out: MessageContext = { quoted: null, mentions: [] };
+  const out: MessageContext = { quoted: null, mentions: [], forwarded: 0 };
   if (!content) return out;
   const type = Object.keys(content).find((k) => !IGNORED.has(k) && content[k] != null);
   const m = type ? content[type] : null;
   const info = m && typeof m === "object" ? m.contextInfo : null;
   if (!info) return out;
+  const score = Number(info.forwardingScore ?? 0) || 0;
+  if (info.isForwarded === true || score > 0) out.forwarded = score >= FORWARDED_MANY ? 2 : 1;
   if (Array.isArray(info.mentionedJid)) out.mentions = info.mentionedJid.filter((j: unknown): j is string => typeof j === "string");
   if (info.stanzaId && info.quotedMessage) {
     const quotedText = extractText(info.quotedMessage)?.text ?? "[Mensagem]";

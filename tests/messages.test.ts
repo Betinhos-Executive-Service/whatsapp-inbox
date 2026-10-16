@@ -29,7 +29,11 @@ test("citação e menções saem do contextInfo; revogação devolve o id apagad
   });
   assert.deepEqual(ctx.quoted, { id: "ABC", participant: PN, text: "Carro às 7h" });
   assert.deepEqual(ctx.mentions, ["5511888880000@s.whatsapp.net"]);
-  assert.deepEqual(extractContext({ conversation: "oi" }), { quoted: null, mentions: [] });
+  assert.deepEqual(extractContext({ conversation: "oi" }), { quoted: null, mentions: [], forwarded: 0 });
+  // Selo "Encaminhada": isForwarded ou score; a partir de 5 vira "muitas vezes".
+  assert.equal(extractContext({ extendedTextMessage: { text: "x", contextInfo: { isForwarded: true } } }).forwarded, 1);
+  assert.equal(extractContext({ imageMessage: { caption: "x", contextInfo: { forwardingScore: 3, isForwarded: true } } }).forwarded, 1);
+  assert.equal(extractContext({ extendedTextMessage: { text: "x", contextInfo: { forwardingScore: 7, isForwarded: true } } }).forwarded, 2);
   assert.equal(revokedId({ protocolMessage: { type: 0, key: { id: "XYZ" } } }), "XYZ");
   assert.equal(revokedId({ protocolMessage: { type: 14, key: { id: "XYZ" } } }), null);
 });
@@ -102,4 +106,16 @@ test("histórico do WhatsApp (mais nova primeiro) é gravado em ordem cronológi
   const s = new Store(":memory:");
   for (const m of chronological(batch)) s.insertMessage(msg({ id: m.key.id, text: m.key.id, at: m.messageTimestamp * 1000 }), false);
   assert.deepEqual(s.listMessages(PN, null).map((m) => m.id), ["a1", "p1", "p2", "p3", "b2"]);
+});
+
+test("selo 'Encaminhada' fica gravado na mensagem e some quando apagada", () => {
+  const store = new Store(":memory:");
+  store.addMessage(msg({ id: "f1", forwarded: 1 }), true);
+  store.addMessage(msg({ id: "f2", at: 2, forwarded: 2 }), true);
+  store.addMessage(msg({ id: "f3", at: 3 }), true);
+  assert.equal(store.getMessage(PN, "f1")?.forwarded, 1);
+  assert.equal(store.getMessage(PN, "f2")?.forwarded, 2);
+  assert.equal(store.getMessage(PN, "f3")?.forwarded, 0);
+  store.markRevoked(PN, "f2");
+  assert.equal(store.getMessage(PN, "f2")?.forwarded, 0);
 });

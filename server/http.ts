@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
@@ -70,6 +71,8 @@ export type Api = {
   createGroup: (subject: string, participants: string[]) => Promise<unknown>;
   updateParticipants: (jid: string, participants: string[], action: "add" | "remove" | "promote" | "demote") => Promise<unknown>;
   updateGroupInfo: (jid: string, info: { subject?: string; description?: string }) => Promise<void>;
+  /** Troca (JPEG) ou remove (null) a foto do grupo. */
+  setGroupPhoto: (jid: string, jpeg: Buffer | null) => Promise<void>;
   acceptInvite: (jid: string, id: string) => Promise<unknown>;
   /** everyone = apagar para todos; me = só deste lado. synced = o celular também apagou. */
   deleteMessage: (jid: string, id: string, mode: "everyone" | "me") => Promise<{ synced: boolean }>;
@@ -136,6 +139,8 @@ export type Api = {
   proposeVoucher: (jid: string, caption: string, voucher: Voucher) => Promise<unknown>;
   /** Caminho de uma cópia consistente do banco, para download. */
   backup: () => Promise<string>;
+  /** Exporta a conversa (.txt, ou .zip com mídia) num arquivo temporário; quem chama apaga depois. */
+  exportChat: (jid: string, withMedia: boolean) => Promise<{ file: string; fileName: string; mimetype: string }>;
   /** Log de envios: arquivo e últimas linhas (mais recente primeiro). */
   sendLog: () => { file: string; lines: string[] };
   vigilanciaStatus: () => StatusVigilancia;
@@ -594,6 +599,36 @@ export function createHandler(api: Api) {
         await api.updateGroupInfo(jid, info);
         return json(res, 200, store.getChat(jid));
       }
+      if (action === "/export" && method === "GET") {
+        const withMedia = url.searchParams.get("media") === "1";
+        const out = await api.exportChat(jid, withMedia);
+        try {
+          const size = (await stat(out.file)).size;
+          res.writeHead(200, {
+            "content-type": out.mimetype,
+            "content-length": size,
+            "content-disposition": `attachment; filename="${out.fileName.replace(/[^ -~]/g, "_").replace(/"/g, "'")}"; filename*=UTF-8''${encodeURIComponent(out.fileName)}`,
+            "cache-control": "no-store",
+          });
+          await new Promise<void>((resolve, reject) => createReadStream(out.file).on("error", reject).on("end", resolve).pipe(res));
+          return;
+        } finally {
+          await rm(out.file, { force: true });
+        }
+      }
+      if (action === "/photo" && (method === "POST" || method === "DELETE")) {
+        if (!jid.endsWith("@g.us")) throw new HttpError(400, "Só grupos têm foto editável aqui.");
+        if (method === "DELETE") {
+          await api.setGroupPhoto(jid, null);
+          return json(res, 200, { ok: true });
+        }
+        const { data } = parse(z.object({ data: z.string().min(1) }), await readJson(req, 2 * 1024 * 1024));
+        const jpeg = Buffer.from(data, "base64");
+        if (jpeg.length < 4 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) throw new HttpError(400, "A foto precisa ser um JPEG.");
+        if (jpeg.length > 1024 * 1024) throw new HttpError(400, "A foto precisa ter até 1 MB.");
+        await api.setGroupPhoto(jid, jpeg);
+        return json(res, 200, { ok: true });
+      }
       if (action === "/accept-invite" && method === "POST") {
         const { id } = parse(z.object({ id: z.string().min(1).max(200) }), await readJson(req));
         return json(res, 200, await api.acceptInvite(jid, id));
@@ -627,7 +662,7 @@ export function createHandler(api: Api) {
         return json(res, 200, { ok: true });
       }
       if (action === "/react" && method === "POST") {
-        const { id, emoji } = parse(z.object({ id: z.string().min(1).max(200), emoji: z.string().max(16) }), await readJson(req));
+        const { id, emoji } = parse(z.object({ id: z.string().min(1).max(200), emoji: z.string().max(32) }), await readJson(req));
         await api.react(jid, id, emoji);
         return json(res, 200, store.getMessage(jid, id));
       }
