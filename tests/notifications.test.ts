@@ -4,7 +4,7 @@ import { isUrgent, notificationBody, notificationTitle, UnreadCounter } from "..
 
 const msg = (text: string, media: { seconds: number | null } | null = null) => ({
   text,
-  media: media ? { type: "audio", mimetype: "audio/ogg", fileName: null, size: null, seconds: media.seconds, ptt: true } : null,
+  media: media ? { type: "audio", mimetype: "audio/ogg", fileName: null, size: null, seconds: media.seconds, ptt: true, waveform: null, album: null } : null,
 });
 
 test("corpo: texto simples, corte em 180 e preview desligado", () => {

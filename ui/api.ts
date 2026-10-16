@@ -184,7 +184,7 @@ export type Message = {
   at: number;
   text: string;
   kind: string;
-  media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
+  media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean; /** Voz: forma de onda (64 amostras 0..100) quando o aparelho mandou. */ waveform: number[] | null; /** Id da mensagem-cabeçalho do álbum, quando a foto/vídeo veio num álbum. */ album: string | null } | null;
   /** Mensagem respondida (citação). */
   quoted: { id: string; text: string; fromMe: boolean; author: string | null } | null;
   /** Cartões de contato (mensagem de contato). */
@@ -202,16 +202,24 @@ export type Message = {
   poll: PollResult | null;
   /** Favoritada (estrela). */
   starred: boolean;
+  /** 0 = normal, 1 = "Encaminhada", 2 = "Encaminhada muitas vezes". */
+  forwarded: 0 | 1 | 2;
   /** Só no cliente: envio otimista ainda sem confirmação do servidor. */
   pending?: "sending" | "failed";
 };
+
+export type Receipt = { participant: string; name: string; deliveredAt: number | null; readAt: number | null; playedAt: number | null };
+export type MessageInfo = { message: Message; receipts: Receipt[] };
+
+/** Presença do contato vinda do servidor (evento SSE "presence"). */
+export type Presence = { state: "composing" | "recording" | "available" | "unavailable" | null; lastSeen: number | null };
 
 export type ContactCard = { name: string; phones: { number: string; wa: string | null }[] };
 
 export type LinkPreview = { url: string; title: string; description: string | null; image: string | null; site: string };
 
 /** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
-export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number; viewOnce?: boolean; quotedId?: string };
+export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number; viewOnce?: boolean; quotedId?: string; /** Voz: 64 amostras 0..100. */ waveform?: number[]; /** Imagem já convertida em figurinha (WebP 512×512). */ sticker?: boolean };
 
 export type Participant = { jid: string; name: string; phone: string | null; admin: boolean; me: boolean };
 export type Profile = {
@@ -238,7 +246,8 @@ export const photoUrl = (jid: string, full = false, v = 0) =>
 
 export const mediaUrl = (m: Message, download = false) =>
   `/api/media/${encodeURIComponent(m.chatJid)}/${encodeURIComponent(m.id)}${download ? "?download=1" : ""}`;
-export type Label = { name: string; description: string };
+/** `waId`: ligada a uma etiqueta do WhatsApp Business (sincroniza com o celular). */
+export type Label = { name: string; description: string; waId?: string | null };
 export type Connection = {
   status: "iniciando" | "qr" | "conectado" | "reconectando" | "desconectado";
   qr: string | null;
@@ -315,6 +324,15 @@ export const api = {
   updateParticipants: (jid: string, action: ParticipantAction, participants: string[]) =>
     request<ParticipantResult[]>("POST", `${chatPath(jid)}/participants`, { action, participants }),
   updateGroupInfo: (jid: string, info: { subject?: string; description?: string }) => request<Chat>("POST", `${chatPath(jid)}/group-info`, info),
+  /** Foto do grupo: JPEG em base64 (já redimensionado) ou remoção. */
+  setGroupPhoto: (jid: string, data: string) => request<{ ok: true }>("POST", `${chatPath(jid)}/photo`, { data }),
+  removeGroupPhoto: (jid: string) => request<{ ok: true }>("DELETE", `${chatPath(jid)}/photo`, {}),
+  /** Busca na conversa pelo histórico inteiro (Ctrl+F): ids da mais recente para a mais antiga. */
+  searchInChat: (jid: string, q: string) => request<{ id: string; at: number }[]>("GET", `${chatPath(jid)}/search?q=${encodeURIComponent(q)}`),
+  /** Info da mensagem: entregue/lida/ouvida por quem (grupos). */
+  messageInfo: (jid: string, id: string) => request<MessageInfo>("GET", `${chatPath(jid)}/info?id=${encodeURIComponent(id)}`),
+  /** Link do export da conversa (.txt ou .zip com mídia), para baixar fora do app desktop. */
+  exportUrl: (jid: string, withMedia: boolean) => `${chatPath(jid)}/export?media=${withMedia ? 1 : 0}`,
   acceptInvite: (jid: string, id: string) => request<Chat>("POST", `${chatPath(jid)}/accept-invite`, { id }),
   deleteMessage: (jid: string, id: string, mode: "everyone" | "me") =>
     request<{ chat: Chat; synced: boolean }>("POST", `${chatPath(jid)}/delete`, { id, mode }),
@@ -379,6 +397,7 @@ export const api = {
     request<{ text: string }>("POST", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`, {}),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),
   saveLabels: (labels: Label[]) => request<Label[]>("PUT", "/api/labels", labels),
+  importLabels: () => request<{ labels: Label[]; found: number; created: number; skipped: number }>("POST", "/api/labels/import", {}),
   saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; anthropicApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: Classifier; prefs?: Partial<Prefs> }) =>
     request<AppState>("PUT", "/api/settings", s),
   logout: () => request<AppState>("POST", "/api/logout", {}),
