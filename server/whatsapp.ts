@@ -24,7 +24,7 @@ import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
 import type { DeliveryEntry } from "./delivery-log.ts";
 import { buildVcard, extractContacts } from "./contacts.ts";
-import { chronological } from "./history.ts";
+import { chronological, isLiveArrival } from "./history.ts";
 import { sendPreview } from "./link-preview.ts";
 import { decryptVote, encryptVote, optionsFromHashes } from "./poll.ts";
 import {
@@ -52,7 +52,7 @@ import {
 export type ConnectionStatus = "iniciando" | "qr" | "conectado" | "reconectando" | "desconectado";
 export type ConnectionState = { status: ConnectionStatus; qr: string | null; me: string | null; error: string | null };
 
-/** Mensagem com até 2 min de idade conta como "ao vivo": mexe em não lidas e status. */
+/** Mensagem com até 2 min de idade conta como "ao vivo" (ver `isLiveArrival`): mexe em não lidas e status. */
 const LIVE_WINDOW_MS = 2 * 60 * 1000;
 /** A agenda é pedida de novo a cada 6 h: nomes salvos no celular depois chegam sozinhos. */
 const CONTACTS_RESYNC_MS = 6 * 60 * 60 * 1000;
@@ -254,6 +254,11 @@ export class WhatsApp extends EventEmitter<{
     return { id: q.id, text: q.text, fromMe, author };
   }
 
+  /** Ao vivo: chegou agora ou é mais nova que a última da conversa (chegou atrasada com o Inbox fora do ar). */
+  private isLive(chatJid: string, at: number, live: boolean): boolean {
+    return isLiveArrival(live, at, this.store.getChat(chatJid)?.lastAt, LIVE_WINDOW_MS);
+  }
+
   /** `quiet`: lote do histórico; a tela recarrega uma vez no fim, sem um evento por mensagem. */
   private ingest(m: WAMessage, live: boolean, quiet = false) {
     const raw = m.key.remoteJid;
@@ -316,7 +321,7 @@ export class WhatsApp extends EventEmitter<{
       extra: extra ? JSON.stringify(extra) : null,
       ack: m.key.fromMe ? (m.status ?? null) : null,
     };
-    const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
+    const isLive = this.isLive(chatJid, at, live);
     // Enviada agora: guarda o proto para reenviar se o WhatsApp do contato pedir retry.
     if (isLive && m.key.fromMe && m.message) incoming.raw = proto.Message.encode(m.message).finish();
     if (quiet) {
@@ -346,7 +351,7 @@ export class WhatsApp extends EventEmitter<{
       // Ligação perdida conta como mensagem nova; os demais avisos não.
       silent: kind !== "call",
     };
-    const isLive = live && Date.now() - at < LIVE_WINDOW_MS;
+    const isLive = this.isLive(chatJid, at, live);
     if (quiet) return void this.store.insertMessage(incoming, isLive);
     const result = this.store.addMessage(incoming, isLive);
     if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive && kind === "call" });
