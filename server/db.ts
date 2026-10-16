@@ -176,7 +176,11 @@ export type MessageKeyRef = { id: string; rawJid: string; fromMe: boolean; parti
 /** Correção sua de etiqueta, usada como exemplo nas próximas classificações do Jev. */
 export type LabelExample = { label: string; snippet: string };
 
-export type Label = { name: string; description: string };
+/** `waId`: etiqueta ligada a uma etiqueta do WhatsApp Business (sincroniza com o celular). */
+export type Label = { name: string; description: string; waId?: string | null };
+
+/** Etiqueta como existe no WhatsApp Business do celular (espelho do app state). */
+export type WaLabel = { id: string; name: string; color: number | null; deleted: boolean; predefinedId: string | null };
 
 /** Recibo de um participante do grupo para uma mensagem minha (Info da mensagem). */
 export type Receipt = { participant: string; name: string; deliveredAt: number | null; readAt: number | null; playedAt: number | null };
@@ -207,6 +211,12 @@ const DEFAULT_LABELS: Label[] = [
   { name: "Pessoal", description: "Assunto pessoal, sem relação com trabalho." },
   { name: "Outros", description: "Assunto claramente fora das demais etiquetas." },
 ];
+
+/** "Cotacao" e "Cotação" são a mesma etiqueta ao ligar com o celular. */
+export function sameLabelName(a: string, b: string): boolean {
+  const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  return norm(a) === norm(b);
+}
 
 const SCHEMA = `
 pragma journal_mode = wal;
@@ -343,6 +353,14 @@ create table if not exists pins (
   at integer not null,
   primary key (chat_jid, message_id)
 );
+create table if not exists wa_labels (
+  id text primary key,
+  name text not null,
+  color integer,
+  deleted integer not null default 0,
+  predefined_id text,
+  updated_at integer not null
+);
 create table if not exists receipts (
   chat_jid text not null references chats(jid) on delete cascade on update cascade,
   message_id text not null,
@@ -392,6 +410,7 @@ const COLUMNS: [table: string, column: string, ddl: string][] = [
   ["chats", "marked_unread", "integer not null default 0"],
   ["chats", "ephemeral", "integer"],
   ["messages", "forwarded", "integer not null default 0"],
+  ["labels", "wa_id", "text"],
 ];
 
 const CHAT_SELECT = `select c.*,
@@ -817,10 +836,30 @@ export class Store {
   }
 
   /** Busca no histórico inteiro, mais recentes primeiro. Cada palavra vale como começo de palavra. */
-  search(query: string, limit = 50): SearchHit[] {
+  /** Termos da busca como prefixos do FTS (sem acento vem do índice). null sem termo. */
+  private ftsMatch(query: string): string | null {
     const terms = query.normalize("NFC").match(/[\p{L}\p{N}]+/gu) ?? [];
-    if (!terms.length) return [];
-    const match = terms.slice(0, 8).map((t) => `"${t}"*`).join(" ");
+    if (!terms.length) return null;
+    return terms.slice(0, 8).map((t) => `"${t}"*`).join(" ");
+  }
+
+  /** Ids das mensagens da conversa que casam com a busca, da mais recente para a mais antiga (Ctrl+F). */
+  searchInChat(jid: string, query: string, limit = 500): { id: string; at: number }[] {
+    const match = this.ftsMatch(query);
+    if (!match) return [];
+    const rows = this
+      .q(
+        `select f.id, m.at from messages_fts f join messages m on m.rowid = f.rowid
+         where messages_fts match ? and f.chat_jid = ? and m.deleted_at is null
+         order by m.at desc, m.rowid desc limit ?`,
+      )
+      .all(match, jid, limit) as Row[];
+    return rows.map((r) => ({ id: String(r.id), at: Number(r.at) }));
+  }
+
+  search(query: string, limit = 50): SearchHit[] {
+    const match = this.ftsMatch(query);
+    if (!match) return [];
     const rows = this
       .q(
         `select f.chat_jid, f.id, m.at, m.from_me, snippet(messages_fts, 0, char(2), char(3), '…', 12) as snippet
@@ -1508,17 +1547,20 @@ export class Store {
   // ---- etiquetas e configurações
 
   listLabels(): Label[] {
-    return (this.q("select name, description from labels order by position").all() as Row[]).map((r) => ({
+    return (this.q("select name, description, wa_id from labels order by position").all() as Row[]).map((r) => ({
       name: String(r.name),
       description: String(r.description),
+      waId: typeof r.wa_id === "string" && r.wa_id ? r.wa_id : null,
     }));
   }
 
   saveLabels(labels: Label[]): Label[] {
     this.tx(() => {
+      // Quem salva sem `waId` (editor antigo) não perde o elo com o celular: ele é reaproveitado pelo nome.
+      const previous = new Map((this.q("select name, wa_id from labels").all() as Row[]).map((r) => [String(r.name), r.wa_id as string | null]));
       this.db.exec("delete from labels");
-      const insert = this.q("insert into labels (name, description, position) values (?, ?, ?)");
-      labels.forEach((l, i) => insert.run(l.name, l.description, i));
+      const insert = this.q("insert into labels (name, description, position, wa_id) values (?, ?, ?, ?)");
+      labels.forEach((l, i) => insert.run(l.name, l.description, i, l.waId === undefined ? (previous.get(l.name) ?? null) : l.waId));
       // Etiqueta removida deixa de valer nas conversas.
       this
         .q(`update chats set label = null, label_source = null where label is not null and label not in (select name from labels)`)
@@ -1526,6 +1568,122 @@ export class Store {
       this.q("delete from chat_labels where label not in (select name from labels)").run();
     });
     return this.listLabels();
+  }
+
+  // ---- etiquetas do WhatsApp Business (sincronizadas com o celular)
+
+  listWaLabels(): WaLabel[] {
+    return (this.q("select id, name, color, deleted, predefined_id from wa_labels order by name").all() as Row[]).map((r) => ({
+      id: String(r.id),
+      name: String(r.name),
+      color: r.color == null ? null : Number(r.color),
+      deleted: r.deleted === 1,
+      predefinedId: (r.predefined_id as string) ?? null,
+    }));
+  }
+
+  /**
+   * Definição vinda do celular (criada, renomeada ou apagada). Renomear no celular renomeia a etiqueta local ligada,
+   * em cascata nas conversas; apagar só desliga (a local continua, sem sincronizar). Sem local ligada, liga pela
+   * igualdade do nome sem acento. Devolve true quando algo mudou na tela.
+   */
+  applyWaLabel(l: { id: string; name: string; color?: number | null; deleted?: boolean; predefinedId?: string | number | null }): boolean {
+    return this.tx(() => {
+      const name = l.name.trim();
+      this
+        .q(
+          `insert into wa_labels (id, name, color, deleted, predefined_id, updated_at) values (?, ?, ?, ?, ?, ?)
+           on conflict (id) do update set name = excluded.name, color = excluded.color, deleted = excluded.deleted, predefined_id = excluded.predefined_id, updated_at = excluded.updated_at`,
+        )
+        .run(l.id, name || l.id, l.color ?? null, l.deleted ? 1 : 0, l.predefinedId == null ? null : String(l.predefinedId), Date.now());
+      const linked = this.q("select name from labels where wa_id = ?").get(l.id) as Row | undefined;
+      if (l.deleted) {
+        if (!linked) return false;
+        this.q("update labels set wa_id = null where wa_id = ?").run(l.id);
+        return true;
+      }
+      if (!name) return false;
+      if (linked) {
+        const current = String(linked.name);
+        if (current === name) return false;
+        if (this.q("select 1 from labels where name = ?").get(name)) return false; // já existe outra com esse nome: não mistura
+        this.q("update labels set name = ? where name = ?").run(name, current);
+        this.q("update chats set label = ? where label = ?").run(name, current);
+        this.q("update chat_labels set label = ? where label = ?").run(name, current);
+        this.q("update label_examples set label = ? where label = ?").run(name, current);
+        return true;
+      }
+      const match = (this.q("select name from labels where wa_id is null").all() as Row[]).find((r) => sameLabelName(String(r.name), name));
+      if (!match) return false;
+      this.q("update labels set wa_id = ? where name = ?").run(l.id, String(match.name));
+      return true;
+    });
+  }
+
+  /** Conversa ganhou/perdeu uma etiqueta no celular. Idempotente; etiqueta não ligada a uma local é ignorada. */
+  applyWaAssociation(jid: string, labelId: string, add: boolean): Chat | null {
+    const linked = this.q("select name from labels where wa_id = ?").get(labelId) as Row | undefined;
+    if (!linked || !this.getChat(jid)) return null;
+    const name = String(linked.name);
+    const changed = this.tx(() => {
+      const chat = this.q("select label from chats where jid = ?").get(jid) as Row;
+      if (add) {
+        const has = chat.label === name || !!this.q("select 1 from chat_labels where chat_jid = ? and label = ?").get(jid, name);
+        if (has) return false;
+        if (chat.label == null) this.q("update chats set label = ?, label_source = 'manual' where jid = ?").run(name, jid);
+        else this.q("insert or ignore into chat_labels (chat_jid, label) values (?, ?)").run(jid, name);
+        return true;
+      }
+      const inExtras = this.q("delete from chat_labels where chat_jid = ? and label = ?").run(jid, name).changes > 0;
+      if (chat.label === name) {
+        // Principal saiu: promove a primeira extra (ou fica sem).
+        const next = this.q("select label from chat_labels where chat_jid = ? order by label limit 1").get(jid) as Row | undefined;
+        if (next) this.q("delete from chat_labels where chat_jid = ? and label = ?").run(jid, String(next.label));
+        this.q("update chats set label = ?, label_source = ? where jid = ?").run(next ? String(next.label) : null, next ? "manual" : null, jid);
+        return true;
+      }
+      return inExtras;
+    });
+    return changed ? this.getChat(jid) : null;
+  }
+
+  /** Ids do WhatsApp a associar/desassociar para o celular refletir a mudança de etiquetas de uma conversa. */
+  waLabelDiff(before: Chat, after: Chat): { add: string[]; remove: string[] } {
+    const ids = new Map((this.q("select name, wa_id from labels where wa_id is not null").all() as Row[]).map((r) => [String(r.name), String(r.wa_id)]));
+    const all = (c: Chat) => new Set([...(c.label ? [c.label] : []), ...c.extraLabels].flatMap((n) => (ids.has(n) ? [ids.get(n)!] : [])));
+    const a = all(before);
+    const b = all(after);
+    return { add: [...b].filter((id) => !a.has(id)), remove: [...a].filter((id) => !b.has(id)) };
+  }
+
+  /** Cria etiquetas locais para as do celular ainda sem elo (até o limite de 30). Devolve quantas criou e quantas ficaram de fora. */
+  importWaLabels(): { created: number; skipped: number } {
+    return this.tx(() => {
+      const labels = this.listLabels();
+      const linked = new Set(labels.map((l) => l.waId).filter(Boolean));
+      const names = new Set(labels.map((l) => l.name));
+      let created = 0;
+      let skipped = 0;
+      let position = labels.length;
+      const insert = this.q("insert into labels (name, description, position, wa_id) values (?, ?, ?, ?)");
+      for (const w of this.listWaLabels()) {
+        if (w.deleted || linked.has(w.id)) continue;
+        const same = labels.find((l) => !l.waId && sameLabelName(l.name, w.name));
+        if (same) {
+          this.q("update labels set wa_id = ? where name = ?").run(w.id, same.name);
+          linked.add(w.id);
+          continue;
+        }
+        if (names.has(w.name) || position >= 30) {
+          skipped++;
+          continue;
+        }
+        insert.run(w.name, "Etiqueta do WhatsApp Business.", position++, w.id);
+        names.add(w.name);
+        created++;
+      }
+      return { created, skipped };
+    });
   }
 
   // ---- gastos com IA

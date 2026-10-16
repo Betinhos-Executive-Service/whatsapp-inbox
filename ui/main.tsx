@@ -1224,6 +1224,19 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [newBelow, setNewBelow] = useState(0);
 
+  /** Recarrega a lista em volta de uma mensagem antiga (busca, citação) e rola até ela. */
+  const openAround = useCallback(
+    async (id: string) => {
+      const list = await api.messagesAround(chat.jid, id);
+      stickToBottom.current = false;
+      atLatest.current = false;
+      pendingFocus.current = id;
+      setHasMore(true);
+      setMessages(list);
+    },
+    [chat.jid],
+  );
+
   useEffect(() => {
     let alive = true;
     setMessages(null);
@@ -1915,27 +1928,43 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     (jid: string, name: string) => openProfile({ jid, name, phone: jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : null, isGroup: false }),
     [openProfile],
   );
-  // ---- busca na conversa (Ctrl+F): procura nas mensagens já carregadas
+  // ---- busca na conversa (Ctrl+F): o servidor procura no histórico inteiro (índice sem acento)
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [findIndex, setFindIndex] = useState(0);
+  const [findHits, setFindHits] = useState<string[]>([]);
+  const [findLoading, setFindLoading] = useState(false);
   const findInput = useRef<HTMLInputElement>(null);
-  const findHits = useMemo(() => {
-    const q = normalize(findQuery.trim());
-    if (!q || !messages) return [];
-    return messages
-      .filter((m) => !m.deleted && normalize(captionOf(m, splitAuthor(m, chat.isGroup).body)).includes(q))
-      .map((m) => m.id)
-      .reverse(); // mais recente primeiro, como no WhatsApp
-  }, [findQuery, messages, chat.isGroup]);
+  useEffect(() => {
+    const q = findQuery.trim();
+    setFindIndex(0);
+    if (!q || !findOpen) {
+      setFindHits([]);
+      setFindLoading(false);
+      return;
+    }
+    let alive = true;
+    setFindLoading(true);
+    const timer = window.setTimeout(() => {
+      api
+        .searchInChat(chat.jid, q)
+        .then((hits) => alive && setFindHits(hits.map((h) => h.id))) // mais recente primeiro, como no WhatsApp
+        .catch((e: Error) => alive && notify("error", `Busca não concluída. ${e.message}`))
+        .finally(() => alive && setFindLoading(false));
+    }, 250);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [findQuery, findOpen, chat.jid, notify]);
   const hitId = findOpen ? (findHits[Math.min(findIndex, findHits.length - 1)] ?? null) : null;
-  useEffect(() => setFindIndex(0), [findQuery]);
   useEffect(() => {
     if (!hitId) return;
-    scroller.current
-      ?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(hitId)}"]`)
-      ?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  }, [hitId]);
+    const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(hitId)}"]`);
+    if (row) return row.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    // Resultado fora do que está carregado: recarrega a conversa em volta dele.
+    openAround(hitId).catch((e: Error) => notify("error", `Não foi possível abrir a mensagem. ${e.message}`));
+  }, [hitId, openAround, notify]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
@@ -2139,13 +2168,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             }}
           />
           <span className="chat-find__count" role="status" aria-live="polite">
-            {findQuery.trim() ? (findHits.length ? `${Math.min(findIndex, findHits.length - 1) + 1} de ${findHits.length}` : "Nenhum resultado") : ""}
+            {findQuery.trim() ? (findLoading ? "Buscando…" : findHits.length ? `${Math.min(findIndex, findHits.length - 1) + 1} de ${findHits.length}` : "Nenhum resultado") : ""}
           </span>
-          {findQuery.trim() && !findHits.length && hasMore && (
-            <Button variant="ghost" size="compact" loading={loadingMore} onClick={loadMore}>
-              Buscar em anteriores
-            </Button>
-          )}
           <div className="chat-find__nav">
             <Button variant="ghost" size="compact" aria-label="Resultado anterior" title="Anterior (Enter)" icon={<ChevronUp size={16} aria-hidden />} disabled={findHits.length < 2} onClick={() => stepFind(1)} />
             <Button variant="ghost" size="compact" aria-label="Próximo resultado" title="Próximo (Shift+Enter)" icon={<ChevronDown size={16} aria-hidden />} disabled={findHits.length < 2} onClick={() => stepFind(-1)} />

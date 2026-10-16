@@ -246,7 +246,8 @@ export const photoUrl = (jid: string, full = false, v = 0) =>
 
 export const mediaUrl = (m: Message, download = false) =>
   `/api/media/${encodeURIComponent(m.chatJid)}/${encodeURIComponent(m.id)}${download ? "?download=1" : ""}`;
-export type Label = { name: string; description: string };
+/** `waId`: ligada a uma etiqueta do WhatsApp Business (sincroniza com o celular). */
+export type Label = { name: string; description: string; waId?: string | null };
 export type Connection = {
   status: "iniciando" | "qr" | "conectado" | "reconectando" | "desconectado";
   qr: string | null;
@@ -326,6 +327,8 @@ export const api = {
   /** Foto do grupo: JPEG em base64 (já redimensionado) ou remoção. */
   setGroupPhoto: (jid: string, data: string) => request<{ ok: true }>("POST", `${chatPath(jid)}/photo`, { data }),
   removeGroupPhoto: (jid: string) => request<{ ok: true }>("DELETE", `${chatPath(jid)}/photo`, {}),
+  /** Busca na conversa pelo histórico inteiro (Ctrl+F): ids da mais recente para a mais antiga. */
+  searchInChat: (jid: string, q: string) => request<{ id: string; at: number }[]>("GET", `${chatPath(jid)}/search?q=${encodeURIComponent(q)}`),
   /** Info da mensagem: entregue/lida/ouvida por quem (grupos). */
   messageInfo: (jid: string, id: string) => request<MessageInfo>("GET", `${chatPath(jid)}/info?id=${encodeURIComponent(id)}`),
   /** Link do export da conversa (.txt ou .zip com mídia), para baixar fora do app desktop. */
@@ -394,6 +397,7 @@ export const api = {
     request<{ text: string }>("POST", `/api/transcribe/${encodeURIComponent(jid)}/${encodeURIComponent(id)}`, {}),
   classify: (jid: string) => request<Chat>("POST", `${chatPath(jid)}/classify`, {}),
   saveLabels: (labels: Label[]) => request<Label[]>("PUT", "/api/labels", labels),
+  importLabels: () => request<{ labels: Label[]; found: number; created: number; skipped: number }>("POST", "/api/labels/import", {}),
   saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; anthropicApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: Classifier; prefs?: Partial<Prefs> }) =>
     request<AppState>("PUT", "/api/settings", s),
   logout: () => request<AppState>("POST", "/api/logout", {}),

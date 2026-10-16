@@ -676,7 +676,10 @@ export class WhatsApp extends EventEmitter<{
       if (update.accountSettings) this.store.keepArchived = !update.accountSettings.unarchiveChats;
       void saveCreds();
       // Chave nova do celular (pedida em syncArchives): agora dá para enviar e receber o arquivamento.
-      if (update.myAppStateKeyId && this.state.status === "conectado") setTimeout(() => void this.syncArchives(sock), 3000);
+      if (update.myAppStateKeyId && this.state.status === "conectado") {
+        setTimeout(() => void this.syncArchives(sock), 3000);
+        setTimeout(() => void this.pushLabels(sock).catch(() => undefined), 3500);
+      }
     });
 
     sock.ev.on("connection.update", async (u) => {
@@ -819,6 +822,16 @@ export class WhatsApp extends EventEmitter<{
         if (message) this.emit("update", { message, chat: this.store.getChat(chatJid)! });
       }
     });
+    // Etiquetas do WhatsApp Business: definições e associações mudadas no celular (e o eco das nossas).
+    sock.ev.on("labels.edit", (label) => {
+      if (this.store.applyWaLabel(label)) this.emit("reload");
+    });
+    sock.ev.on("labels.association", ({ type, association }) => {
+      if (association.type !== "label_jid") return;
+      const jid = this.canonical(association.chatId);
+      const chat = this.store.applyWaAssociation(jid, association.labelId, type === "add");
+      if (chat) this.emit("chat", chat);
+    });
     // Recibos por participante (só grupos): quem recebeu, leu ou ouviu cada mensagem minha. Em 1:1 vem só o status acima.
     sock.ev.on("message-receipt.update", (list) => {
       for (const { key, receipt } of list) {
@@ -882,6 +895,49 @@ export class WhatsApp extends EventEmitter<{
    * Relê do celular as respostas rápidas do WhatsApp Business. Zera a versão das coleções do app state
    * para receber o retrato completo (o que já existe é reaplicado sem efeito). Só leitura no celular.
    */
+  /**
+   * Força o celular a reenviar o app state "regular" (onde vivem as etiquetas do WhatsApp Business); os eventos
+   * labels.* gravam o espelho. Devolve quantas etiquetas ativas existem depois disso.
+   */
+  async businessLabels(): Promise<{ found: number }> {
+    const sock = this.ready();
+    if (!(await this.hasAppStateKey(sock))) {
+      await this.requestAppStateKey(sock);
+      throw new Error("Falta a chave de sincronização do celular. Abra o WhatsApp no celular e tente de novo em instantes.");
+    }
+    await sock.authState.keys.set({ "app-state-sync-version": { regular: null } });
+    await sock.resyncAppState(["regular"], false);
+    return { found: this.store.listWaLabels().filter((l) => !l.deleted).length };
+  }
+
+  /** Associa/desassocia etiquetas do WhatsApp Business a uma conversa, no celular. Sem conexão ou chave, fica pendente. */
+  async setChatLabels(jid: string, add: string[], remove: string[]): Promise<void> {
+    const pending = this.pendingLabels.get(jid) ?? new Map<string, boolean>();
+    for (const id of add) pending.set(id, true);
+    for (const id of remove) pending.set(id, false);
+    this.pendingLabels.set(jid, pending);
+    if (this.sock) await this.pushLabels(this.sock);
+  }
+
+  private pendingLabels = new Map<string, Map<string, boolean>>();
+
+  private async pushLabels(sock: WASocket): Promise<void> {
+    for (const [jid, pending] of [...this.pendingLabels]) {
+      const rawJid = this.store.lastMessageKey(jid)?.rawJid ?? jid;
+      for (const [labelId, add] of [...pending]) {
+        try {
+          if (add) await sock.addChatLabel(rawJid, labelId);
+          else await sock.removeChatLabel(rawJid, labelId);
+        } catch (error) {
+          if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(sock);
+          throw error;
+        }
+        if (pending.get(labelId) === add) pending.delete(labelId);
+      }
+      if (!pending.size) this.pendingLabels.delete(jid);
+    }
+  }
+
   async businessQuickReplies(): Promise<{ shortcut: string; text: string }[]> {
     const sock = this.ready();
     if (!(await this.hasAppStateKey(sock))) {

@@ -631,6 +631,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       await connected().sendPoll(jid, question, options, multiple);
     },
     businessQuickReplies: () => connected().businessQuickReplies(),
+    businessLabels: () => connected().businessLabels(),
+    syncLabels: (jid, add, remove) => void wa?.setChatLabels(jid, add, remove).catch((e: Error) => console.warn(`Etiquetas não sincronizadas com o celular: ${e.message}`)),
     vote: (jid, id, options) => connected().votePoll(jid, id, options),
     sendLocation: async (jid, place) => {
       await connected().sendLocation(jid, place);

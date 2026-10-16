@@ -1515,6 +1515,7 @@ kbd {
 .sticker-grid__busy { position: absolute; color: var(--bt-color-action); }
 
 .starred { list-style: none; display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; }
+.labels-editor__synced { align-self: center; white-space: nowrap; }
 /* Info da mensagem. */
 .info__preview { padding: var(--bt-space-2) var(--bt-space-3); border-radius: var(--bt-radius-md); background-color: var(--bt-color-surface-soft); font-size: var(--bt-font-size-13); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
 .info__facts { display: grid; grid-template-columns: auto 1fr; gap: var(--bt-space-1) var(--bt-space-3); margin: 0; font-size: var(--bt-font-size-13); }
