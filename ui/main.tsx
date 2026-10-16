@@ -1961,7 +1961,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   useEffect(() => {
     if (!hitId) return;
     const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(hitId)}"]`);
-    if (row) return row.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    if (row) {
+      row.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      return;
+    }
     // Resultado fora do que está carregado: recarrega a conversa em volta dele.
     openAround(hitId).catch((e: Error) => notify("error", `Não foi possível abrir a mensagem. ${e.message}`));
   }, [hitId, openAround, notify]);
