@@ -548,6 +548,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
   const [savedAiText, setSavedAiText] = useState("");
   const [quick, setQuick] = useState<QuickReply[]>([]);
   const [importingQuick, setImportingQuick] = useState(false);
+  const [importingLabels, setImportingLabels] = useState(false);
   const [savedQuick, setSavedQuick] = useState<QuickReply[]>([]);
   const [prefs, setPrefs] = useState<Prefs>(state.prefs);
   const [key, setKey] = useState("");
@@ -669,7 +670,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
     try {
       let next = state;
       if (!sameLabels(labels, state.labels)) {
-        const cleaned = labels.map((l) => ({ name: l.name.trim(), description: l.description.trim() }));
+        const cleaned = labels.map((l) => ({ name: l.name.trim(), description: l.description.trim(), waId: l.waId ?? null }));
         next = { ...next, labels: await api.saveLabels(cleaned) };
       }
       if (aiText !== savedAiText) await api.setAiInstructions(aiText.trim() || null);
@@ -996,8 +997,14 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                         value={l.name}
                         maxLength={40}
                         placeholder="Nome"
+                        title={l.waId ? "Sincronizada com o WhatsApp Business do celular" : undefined}
                         onChange={(e) => setLabels((ls) => ls.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
                       />
+                    {l.waId && (
+                      <span className="badge badge--info labels-editor__synced" title="Sincronizada com o WhatsApp Business do celular">
+                        <Smartphone size={12} aria-hidden /> Celular
+                      </span>
+                    )}
                     <Input
                         aria-label={`Descrição da etiqueta ${i + 1}`}
                         value={l.description}
@@ -1023,6 +1030,32 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                 onClick={() => setLabels((ls) => [...ls, { name: "", description: "" }])}
               >
                 Adicionar etiqueta
+              </Button>
+              <Button
+                variant="ghost"
+                size="compact"
+                icon={<Briefcase size={16} aria-hidden />}
+                disabled={importingLabels || !sameLabels(labels, state.labels)}
+                title={sameLabels(labels, state.labels) ? "Traz as etiquetas do WhatsApp Business e passa a sincronizar com o celular" : "Salve as alterações antes de importar."}
+                onClick={async () => {
+                  setImportingLabels(true);
+                  try {
+                    const r = await api.importLabels();
+                    setLabels(r.labels);
+                    notify(
+                      "success",
+                      r.found
+                        ? `WhatsApp Business: ${r.found} etiqueta(s) no celular, ${r.created} nova(s) aqui${r.skipped ? `, ${r.skipped} fora do limite` : ""}.`
+                        : "Esta conta não tem etiquetas no celular (só o WhatsApp Business tem).",
+                    );
+                  } catch (e) {
+                    notify("error", (e as Error).message);
+                  } finally {
+                    setImportingLabels(false);
+                  }
+                }}
+              >
+                {importingLabels ? "Importando…" : "Importar do WhatsApp Business"}
               </Button>
             </section>
           )}

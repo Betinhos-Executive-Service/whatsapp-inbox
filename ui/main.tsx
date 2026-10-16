@@ -34,6 +34,7 @@ import {
   WifiOff,
   X,
   Clock3,
+  Camera,
   ChevronUp,
   ChevronDown,
   ListChecks,
@@ -50,12 +51,15 @@ import {
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
-import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status, type Priority } from "./api.ts";
+import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type Presence, type QuickReply, type SearchHit, type Status, type Priority } from "./api.ts";
 import { ChatItemMenu, drafts, isMuted, useDraft, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
-import { LocationDialog, NewChatDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
+import { LocationDialog, MessageInfoDialog, NewChatDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
+import { CameraDialog } from "./camera.tsx";
+import { groupAlbums } from "./album.ts";
+import { toSticker } from "./sticker.ts";
 import { isRich, PinnedBar, RichContent, type RichActions } from "./rich.tsx";
 import {
   applyMentions,
@@ -79,12 +83,12 @@ import { NotesPanel, reminderLabel } from "./notes.tsx";
 import { ResizeHandle } from "./resize.tsx";
 import { ImageEditor } from "./image-editor/ImageEditor.tsx";
 import { canEditImage } from "./image-editor/model.ts";
-import { AttachmentTray, canViewOnce, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
+import { AttachmentTray, canViewOnce, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment, AlbumView } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
 import type { Emoji } from "./emoji-data.ts";
-import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
+import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, lastSeenLabel, listTime, normalize, percent, sameDay } from "./format.ts";
 // Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
 import { UpdateDialog } from "./update.tsx";
@@ -829,6 +833,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   onCopyText: (text: string) => void;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
+  const { albums, hidden } = useMemo(() => groupAlbums(messages), [messages]);
   // Autores das mensagens também valem, para o destaque funcionar antes de os participantes carregarem.
   const authorKey = parts.map((p) => p.author ?? "").join("\n");
   const names = useMemo(() => [...(mentionNames ?? []), ...authorKey.split("\n").filter(Boolean)], [mentionNames, authorKey]);
@@ -847,6 +852,10 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         const continues = !newDay && prev.fromMe === m.fromMe && parts[i - 1].author === author && m.at - prev.at < 5 * 60_000;
         const caption = captionOf(m, body);
         const sender = m.sender;
+        // Fotos/vídeos em sequência: só a primeira aparece, como álbum; a hora e o tique são da última.
+        if (hidden.has(m.id)) return null;
+        const album = albums.get(m.id) ?? null;
+        const shown = album ? album[album.length - 1]! : m;
         // Aviso do grupo ou da conversa (entrou, saiu, temporárias, fixou): linha central, sem balão nem ações.
         if (m.kind === "system") {
           return (
@@ -931,6 +940,11 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   ) : (
                     <span className={`bubble__author tone-${authorTone(author)}`}>{author}</span>
                   ))}
+                {m.forwarded > 0 && !m.deleted && (
+                  <span className="bubble__forwarded">
+                    <Forward size={12} aria-hidden /> {m.forwarded === 2 ? "Encaminhada muitas vezes" : "Encaminhada"}
+                  </span>
+                )}
                 {m.quoted && (
                   <button type="button" className="quote" onClick={() => onJump(m.quoted!.id)} title="Ir para a mensagem respondida">
                     <span className="quote__author">{quoteAuthor(m.quoted, chatName)}</span>
@@ -945,7 +959,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   <RichContent m={m} canAct={canAct} actions={rich} />
                 ) : (
                   <>
-                    {m.media && <MediaView m={m} caption={caption} />}
+                    {album ? <AlbumView items={album} onMenu={onMenu} /> : m.media && <MediaView m={m} caption={caption} />}
                     {link && <LinkCard url={link} />}
                     {m.contacts?.length ? (
                       <ContactCards contacts={m.contacts} onOpen={onOpenContact} onCopy={onCopyText} />
@@ -965,10 +979,10 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   <span className="bubble__meta">
                     {m.starred && !m.deleted && <Star className="bubble__star" size={11} aria-label="Favorita" />}
                     {m.editedAt !== null && !m.deleted && <span className="bubble__edited" title={`Editada em ${new Date(m.editedAt).toLocaleString("pt-BR")}`}>Editada</span>}
-                    <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
-                      {formatTime(m.at)}
+                    <time className="bubble__time" dateTime={new Date(shown.at).toISOString()} title={new Date(shown.at).toLocaleString("pt-BR")}>
+                      {formatTime(shown.at)}
                     </time>
-                    {m.pending === "sending" ? <Clock3 className="bubble__pending" size={11} aria-label="Enviando" /> : m.fromMe && !m.deleted && <AckIcon ack={m.ack} />}
+                    {m.pending === "sending" ? <Clock3 className="bubble__pending" size={11} aria-label="Enviando" /> : m.fromMe && !m.deleted && <AckIcon ack={shown.ack} />}
                   </span>
                 )}
               </div>
@@ -1056,13 +1070,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   // Citação de outra conversa (responder em particular a alguém do grupo).
   const [replyFrom, setReplyFrom] = useState<{ jid: string; name: string; isGroup: boolean } | null>(null);
-  const [composeDialog, setComposeDialog] = useState<"poll" | "location" | "sticker" | null>(null);
+  const [composeDialog, setComposeDialog] = useState<"poll" | "location" | "sticker" | "camera" | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [forwarding, setForwarding] = useState<Message[] | null>(null);
   const [selected, setSelected] = useState<Set<string> | null>(null);
   const [pickingContact, setPickingContact] = useState(false);
-  const [presence, setPresence] = useState<"composing" | "recording" | null>(null);
+  const [presence, setPresence] = useState<Presence | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
+  const [infoFor, setInfoFor] = useState<Message | null>(null);
   // Menções: participantes carregados no primeiro "@"; escolhas valem até enviar.
   const [participants, setParticipants] = useState<Participant[] | null>(null);
   const [caret, setCaret] = useState(0);
@@ -1111,6 +1126,34 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         return toAttachment(file);
       }),
     );
+  /** Vira figurinha (WebP 512×512, convertido aqui mesmo) ou volta à foto original. */
+  const stickerAttachment = async (a: Attachment, on: boolean) => {
+    try {
+      const file = on ? await toSticker(a.file) : (a.original ?? a.file);
+      setAttachments((list) =>
+        list.map((x) => {
+          if (x.id !== a.id) return x;
+          if (x.preview) URL.revokeObjectURL(x.preview);
+          return on ? { ...toAttachment(file), sticker: true, original: a.original ?? a.file } : toAttachment(file);
+        }),
+      );
+    } catch (e) {
+      notify("error", `Não foi possível converter a imagem em figurinha. ${(e as Error).message}`);
+    }
+  };
+  /** Imagem recebida (ou enviada) vira figurinha na bandeja desta conversa. */
+  const stickerFromMessage = async (m: Message) => {
+    try {
+      const res = await fetch(mediaUrl(m));
+      if (!res.ok) throw new Error("Não foi possível abrir a imagem. Ela pode ter expirado no WhatsApp.");
+      const blob = await res.blob();
+      const file = await toSticker(blob);
+      setAttachments((list) => [...list, { ...toAttachment(file), sticker: true, original: new File([blob], m.media?.fileName || `imagem-${m.id}.jpg`, { type: blob.type }) }].slice(0, 10));
+      requestAnimationFrame(() => composer.current?.focus());
+    } catch (e) {
+      notify("error", `Não foi possível converter a imagem em figurinha. ${(e as Error).message}`);
+    }
+  };
   useEffect(() => {
     setAttachments((list) => {
       list.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
@@ -1180,6 +1223,19 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   // Botão "ir para o fim" e quantas mensagens chegaram abaixo enquanto se lia acima.
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [newBelow, setNewBelow] = useState(0);
+
+  /** Recarrega a lista em volta de uma mensagem antiga (busca, citação) e rola até ela. */
+  const openAround = useCallback(
+    async (id: string) => {
+      const list = await api.messagesAround(chat.jid, id);
+      stickToBottom.current = false;
+      atLatest.current = false;
+      pendingFocus.current = id;
+      setHasMore(true);
+      setMessages(list);
+    },
+    [chat.jid],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -1313,6 +1369,18 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, [chat.jid, notify]);
 
   // Seta "ir para o fim": desce até a última mensagem (recarrega o fim se a conversa veio da busca).
+  // Texto do cabeçalho: digitando/gravando (verde), online (verde) ou "visto por último" (cinza); sem nada, mostra o telefone.
+  const presenceText = useMemo((): { text: string; live: boolean } | null => {
+    if (!presence) return null;
+    if (presence.state === "recording") return { text: "gravando áudio…", live: true };
+    if (presence.state === "composing") return { text: chat.isGroup ? "alguém está digitando…" : "digitando…", live: true };
+    if (chat.isGroup) return null;
+    if (presence.state === "available") return { text: "online", live: true };
+    // Offline: só mostra o "visto por último" quando o contato deixa ver (privacidade); sem isso, nada.
+    if (presence.state === "unavailable" && presence.lastSeen) return { text: lastSeenLabel(presence.lastSeen), live: false };
+    return null;
+  }, [presence, chat.isGroup]);
+
   const jumpToEnd = async () => {
     setNewBelow(0);
     if (!atLatest.current) {
@@ -1426,7 +1494,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       outbox.current.set(localId, { text: withMentions.text, quotedId, quotedChat, mentions: withMentions.mentions, mentionAll: mentionAll || undefined });
       setMessages((list) => [
         ...(list ?? []),
-        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, contacts: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false, pending: "sending" },
+        { chatJid: chat.jid, id: localId, fromMe: true, at: Date.now(), text: withMentions.text, kind: "text", media: null, contacts: null, quoted, deleted: false, sender: null, ack: null, editedAt: null, reactions: [], extra: null, poll: null, starred: false, forwarded: 0, pending: "sending" },
       ]);
       setDraft("");
       setReplyTo(null);
@@ -1439,14 +1507,26 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     try {
       // A legenda vai no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
       // A resposta (citação) vai só no primeiro.
+      // Figurinha não leva legenda (o WhatsApp ignora): o texto vai no primeiro anexo que não é figurinha.
+      const captionAt = attachments.findIndex((a) => !a.sticker);
+      // Duas ou mais fotos/vídeos comuns (sem visualização única) saem como álbum: o celular do destinatário
+      // agrupa numa bolha só. O resto (voz, figurinha, documento, GIF) vai um a um, como antes.
+      const album = viewOnce ? [] : attachments.filter((a) => !a.voice && !a.sticker && canViewOnce(a));
+      if (album.length >= 2) {
+        const files = await Promise.all(album.map((a) => fileToOutgoing(a.file, a === attachments[captionAt] && text ? text : undefined)));
+        onChat(await api.sendAlbum(chat.jid, files, album[0] === attachments[0] ? mediaQuotedId : undefined));
+        for (const a of album) removeAttachment(a.id);
+      }
       for (const [i, a] of attachments.entries()) {
-        const base = a.voice ?? (await fileToOutgoing(a.file, i === 0 && text ? text : undefined));
+        if (album.includes(a)) continue;
+        const base = a.voice ?? (await fileToOutgoing(a.file, i === captionAt && text ? text : undefined, !!a.sticker));
         const file = viewOnce && canViewOnce(a) ? { ...base, viewOnce: true } : base;
         onChat(await api.sendMedia(chat.jid, i === 0 && mediaQuotedId ? { ...file, quotedId: mediaQuotedId } : file));
         removeAttachment(a.id);
       }
       setViewOnce(false);
-      setDraft("");
+      // Só figurinhas e havia texto: o texto fica no campo para ir como mensagem separada.
+      if (captionAt >= 0 || !text) setDraft("");
       setReplyTo(null);
       setReplyFrom(null);
       picks.current = [];
@@ -1817,12 +1897,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, [chat.jid, connected]);
   useEffect(() => {
     let timer = 0;
+    setPresence(null);
     const onPresence = (e: Event) => {
-      const p = (e as CustomEvent<{ jid: string; state: "composing" | "recording" | null }>).detail;
+      const p = (e as CustomEvent<{ jid: string } & Presence>).detail;
       if (p.jid !== chat.jid) return;
-      setPresence(p.state);
+      // "visto por último" só vem no aviso de offline; guarda o último conhecido enquanto o contato digita.
+      setPresence((prev) => ({ state: p.state, lastSeen: p.lastSeen ?? prev?.lastSeen ?? null }));
       window.clearTimeout(timer);
-      if (p.state) timer = window.setTimeout(() => setPresence(null), 25_000);
+      // Digitando/gravando sem aviso de parada: volta para "online" depois de um tempo.
+      if (p.state === "composing" || p.state === "recording") timer = window.setTimeout(() => setPresence((prev) => (prev ? { ...prev, state: "available" } : null)), 25_000);
     };
     window.addEventListener("inbox:presence", onPresence);
     return () => {
@@ -1854,27 +1937,46 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     (jid: string, name: string) => openProfile({ jid, name, phone: jid.endsWith("@s.whatsapp.net") ? jid.split("@")[0] : null, isGroup: false }),
     [openProfile],
   );
-  // ---- busca na conversa (Ctrl+F): procura nas mensagens já carregadas
+  // ---- busca na conversa (Ctrl+F): o servidor procura no histórico inteiro (índice sem acento)
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [findIndex, setFindIndex] = useState(0);
+  const [findHits, setFindHits] = useState<string[]>([]);
+  const [findLoading, setFindLoading] = useState(false);
   const findInput = useRef<HTMLInputElement>(null);
-  const findHits = useMemo(() => {
-    const q = normalize(findQuery.trim());
-    if (!q || !messages) return [];
-    return messages
-      .filter((m) => !m.deleted && normalize(captionOf(m, splitAuthor(m, chat.isGroup).body)).includes(q))
-      .map((m) => m.id)
-      .reverse(); // mais recente primeiro, como no WhatsApp
-  }, [findQuery, messages, chat.isGroup]);
+  useEffect(() => {
+    const q = findQuery.trim();
+    setFindIndex(0);
+    if (!q || !findOpen) {
+      setFindHits([]);
+      setFindLoading(false);
+      return;
+    }
+    let alive = true;
+    setFindLoading(true);
+    const timer = window.setTimeout(() => {
+      api
+        .searchInChat(chat.jid, q)
+        .then((hits) => alive && setFindHits(hits.map((h) => h.id))) // mais recente primeiro, como no WhatsApp
+        .catch((e: Error) => alive && notify("error", `Busca não concluída. ${e.message}`))
+        .finally(() => alive && setFindLoading(false));
+    }, 250);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [findQuery, findOpen, chat.jid, notify]);
   const hitId = findOpen ? (findHits[Math.min(findIndex, findHits.length - 1)] ?? null) : null;
-  useEffect(() => setFindIndex(0), [findQuery]);
   useEffect(() => {
     if (!hitId) return;
-    scroller.current
-      ?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(hitId)}"]`)
-      ?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  }, [hitId]);
+    const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(hitId)}"]`);
+    if (row) {
+      row.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      return;
+    }
+    // Resultado fora do que está carregado: recarrega a conversa em volta dele.
+    openAround(hitId).catch((e: Error) => notify("error", `Não foi possível abrir a mensagem. ${e.message}`));
+  }, [hitId, openAround, notify]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
@@ -1995,9 +2097,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
               <span className="heading-card" role="heading" aria-level={2}>
                 {chat.name}
               </span>
-              {presence ? (
-                <span className="hint chat-pane__presence" role="status">
-                  {presence === "recording" ? "gravando áudio…" : chat.isGroup ? "alguém está digitando…" : "digitando…"}
+              {presenceText ? (
+                <span className={`hint${presenceText.live ? " chat-pane__presence" : ""}`} role="status">
+                  {presenceText.text}
                 </span>
               ) : (
                 <>
@@ -2078,13 +2180,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             }}
           />
           <span className="chat-find__count" role="status" aria-live="polite">
-            {findQuery.trim() ? (findHits.length ? `${Math.min(findIndex, findHits.length - 1) + 1} de ${findHits.length}` : "Nenhum resultado") : ""}
+            {findQuery.trim() ? (findLoading ? "Buscando…" : findHits.length ? `${Math.min(findIndex, findHits.length - 1) + 1} de ${findHits.length}` : "Nenhum resultado") : ""}
           </span>
-          {findQuery.trim() && !findHits.length && hasMore && (
-            <Button variant="ghost" size="compact" loading={loadingMore} onClick={loadMore}>
-              Buscar em anteriores
-            </Button>
-          )}
           <div className="chat-find__nav">
             <Button variant="ghost" size="compact" aria-label="Resultado anterior" title="Anterior (Enter)" icon={<ChevronUp size={16} aria-hidden />} disabled={findHits.length < 2} onClick={() => stepFind(1)} />
             <Button variant="ghost" size="compact" aria-label="Próximo resultado" title="Próximo (Shift+Enter)" icon={<ChevronDown size={16} aria-hidden />} disabled={findHits.length < 2} onClick={() => stepFind(-1)} />
@@ -2179,7 +2276,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }
           pinned={chat.pins.some((p) => p.id === menuAt.message.id && p.until > Date.now())}
           canPrivateReply={chat.isGroup && !menuAt.message.fromMe && !!menuAt.message.sender}
-          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onEditImage: (m) => void editImage(m), onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect }}
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onEditImage: (m) => void editImage(m), onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect, onInfo: setInfoFor, onSticker: (m) => void stickerFromMessage(m) }}
           onClose={closeMenu}
         />
       )}
@@ -2222,7 +2319,18 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       {composeDialog === "poll" && <PollDialog onClose={() => setComposeDialog(null)} onSend={async (poll) => onChat(await api.sendPoll(chat.jid, poll))} />}
       {composeDialog === "location" && <LocationDialog onClose={() => setComposeDialog(null)} onSend={async (place) => onChat(await api.sendLocation(chat.jid, place))} />}
       {composeDialog === "sticker" && <StickerDialog onClose={() => setComposeDialog(null)} onSend={async (from) => onChat(await api.sendSticker(chat.jid, from))} />}
+      {composeDialog === "camera" && (
+        <CameraDialog
+          onClose={() => setComposeDialog(null)}
+          onDone={(file) => {
+            // A foto passa pelo editor (cortar, desenhar) e cai na bandeja, como "Editar e enviar".
+            setComposeDialog(null);
+            setImageEditing({ file, attachmentId: null, seq: Date.now() });
+          }}
+        />
+      )}
       {deleting && <DeleteDialog message={deleting} busy={false} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
+      {infoFor && <MessageInfoDialog m={infoFor} isGroup={chat.isGroup} onClose={() => setInfoFor(null)} />}
       {selected && (
         <SelectionBar
           count={selectedMessages.length}
@@ -2265,7 +2373,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         )}
         {replyTo && replyFrom && <p className="hint reply-origin">Resposta em particular a uma mensagem de {replyFrom.name}</p>}
         {attachments.length > 0 && (
-          <AttachmentTray items={attachments} onRemove={removeAttachment} onEdit={(a) => setImageEditing({ file: a.file, attachmentId: a.id, seq: Date.now() })} disabled={sending} viewOnce={viewOnce} onViewOnce={setViewOnce} />
+          <AttachmentTray items={attachments} onRemove={removeAttachment} onEdit={(a) => setImageEditing({ file: a.file, attachmentId: a.id, seq: Date.now() })} onSticker={(a, on) => void stickerAttachment(a, on)} disabled={sending} viewOnce={viewOnce} onViewOnce={setViewOnce} />
         )}
         <input
           ref={fileInput}
@@ -2293,10 +2401,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         <Menu
           align="start"
           trigger={(t) => (
-            <Button {...t} variant="ghost" aria-label="Anexar arquivo, contato, enquete, localização ou figurinha" title="Anexar (arquivo, contato, enquete, localização ou figurinha)" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
+            <Button {...t} variant="ghost" aria-label="Anexar arquivo, foto da câmera, contato, enquete, localização ou figurinha" title="Anexar (arquivo, câmera, contato, enquete, localização ou figurinha)" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
           )}
           actions={[
             { id: "file", label: "Arquivo", icon: <Paperclip size={16} aria-hidden />, onSelect: () => fileInput.current?.click() },
+            { id: "camera", label: "Câmera", icon: <Camera size={16} aria-hidden />, onSelect: () => setComposeDialog("camera") },
             { id: "contact", label: "Contato", icon: <Contact size={16} aria-hidden />, onSelect: () => setPickingContact(true) },
             { id: "poll", label: "Enquete", icon: <ListChecks size={16} aria-hidden />, onSelect: () => setComposeDialog("poll") },
             { id: "location", label: "Localização", icon: <MapPin size={16} aria-hidden />, onSelect: () => setComposeDialog("location") },

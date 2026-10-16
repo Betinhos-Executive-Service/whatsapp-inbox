@@ -23,6 +23,13 @@ export function dayLabel(ms: number, now = Date.now()): string {
 
 export const sameDay = (a: number, b: number) => dayKey.format(a) === dayKey.format(b);
 
+/** "visto por último hoje às 14:32", "ontem às 09:10" ou "em 03/10/2026 às 18:00", como o WhatsApp. */
+export function lastSeenLabel(ms: number, now = Date.now()): string {
+  const label = dayLabel(ms, now);
+  const when = label === "Hoje" ? "hoje" : label === "Ontem" ? "ontem" : `em ${label}`;
+  return `visto por último ${when} às ${formatTime(ms)}`;
+}
+
 /** Hora de hoje, "Ontem" ou data — usado na lista de conversas. */
 export function listTime(ms: number, now = Date.now()): string {
   if (!ms) return "";
