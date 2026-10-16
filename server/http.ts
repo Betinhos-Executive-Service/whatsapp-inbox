@@ -297,6 +297,8 @@ const sendMediaSchema = z.object({
   seconds: z.number().positive().max(24 * 3600).optional(),
   viewOnce: z.boolean().optional(),
   quotedId: z.string().min(1).max(200).optional(),
+  waveform: z.array(z.number().int().min(0).max(100)).length(64).optional(),
+  sticker: z.boolean().optional(),
 });
 
 /** Resposta proposta por uma IA (MCP); mesmos limites do envio de texto e de anexo. */

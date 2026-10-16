@@ -21,6 +21,7 @@ import makeWASocket, {
   type WASocket,
 } from "@whiskeysockets/baileys";
 import { presenceOf, type Presence } from "./presence.ts";
+import { albumParentId } from "./text.ts";
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
@@ -104,7 +105,7 @@ function isConversation(jid: string | null | undefined): jid is string {
 }
 
 /** `viewOnce`: visualização única (só foto, vídeo e voz); o destinatário abre uma vez e a mídia some. */
-export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number; sticker?: boolean; viewOnce?: boolean };
+export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number; sticker?: boolean; viewOnce?: boolean; /** Voz: 64 amostras 0..100 (o Baileys só calcula com audio-decode, que não está instalado). */ waveform?: number[] };
 /** Resposta a uma mensagem (citação), menções com @ e, ao encaminhar, o score para o selo "Encaminhada". */
 export type SendOptions = { quoted?: MessageKeyRef | null; mentions?: string[]; mentionAll?: boolean; forwardingScore?: number };
 
@@ -291,6 +292,7 @@ export class WhatsApp extends EventEmitter<{
     if (ephemeral !== null) return this.applyEphemeral(chatJid, ephemeral, m, live, quiet);
     const extracted = viewOnce ? viewOnceText(wrapped ? VIEW_ONCE_LABEL[wrapped] : undefined, !!m.key.fromMe) : extractText(content);
     const media = viewOnce ? null : extractMedia(content);
+    if (media) media.album = albumParentId(content, m.message);
     if (!extracted) return;
     const at = timestamp(m);
     const group = isJidGroup(raw) === true;
@@ -1389,7 +1391,7 @@ export class WhatsApp extends EventEmitter<{
     const content = file.sticker
       ? { sticker: body, mimetype: "image/webp" }
       : file.ptt
-      ? { audio: body, ptt: true, mimetype: "audio/ogg; codecs=opus", ...(file.seconds ? { seconds: Math.round(file.seconds) } : {}) }
+      ? { audio: body, ptt: true, mimetype: "audio/ogg; codecs=opus", ...(file.seconds ? { seconds: Math.round(file.seconds) } : {}), ...(file.waveform?.length ? { waveform: Uint8Array.from(file.waveform) } : {}) }
       : base.startsWith("image/") && base !== "image/gif" && base !== "image/svg+xml"
         ? { image: body, mimetype: base, caption }
         : base === "video/mp4"

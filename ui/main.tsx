@@ -34,6 +34,7 @@ import {
   WifiOff,
   X,
   Clock3,
+  Camera,
   ChevronUp,
   ChevronDown,
   ListChecks,
@@ -56,6 +57,9 @@ import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
 import { LocationDialog, MessageInfoDialog, NewChatDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
+import { CameraDialog } from "./camera.tsx";
+import { groupAlbums } from "./album.ts";
+import { toSticker } from "./sticker.ts";
 import { isRich, PinnedBar, RichContent, type RichActions } from "./rich.tsx";
 import {
   applyMentions,
@@ -79,7 +83,7 @@ import { NotesPanel, reminderLabel } from "./notes.tsx";
 import { ResizeHandle } from "./resize.tsx";
 import { ImageEditor } from "./image-editor/ImageEditor.tsx";
 import { canEditImage } from "./image-editor/model.ts";
-import { AttachmentTray, canViewOnce, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment } from "./media.tsx";
+import { AttachmentTray, canViewOnce, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment, AlbumView } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
@@ -829,6 +833,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   onCopyText: (text: string) => void;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
+  const { albums, hidden } = useMemo(() => groupAlbums(messages), [messages]);
   // Autores das mensagens também valem, para o destaque funcionar antes de os participantes carregarem.
   const authorKey = parts.map((p) => p.author ?? "").join("\n");
   const names = useMemo(() => [...(mentionNames ?? []), ...authorKey.split("\n").filter(Boolean)], [mentionNames, authorKey]);
@@ -847,6 +852,10 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
         const continues = !newDay && prev.fromMe === m.fromMe && parts[i - 1].author === author && m.at - prev.at < 5 * 60_000;
         const caption = captionOf(m, body);
         const sender = m.sender;
+        // Fotos/vídeos em sequência: só a primeira aparece, como álbum; a hora e o tique são da última.
+        if (hidden.has(m.id)) return null;
+        const album = albums.get(m.id) ?? null;
+        const shown = album ? album[album.length - 1]! : m;
         // Aviso do grupo ou da conversa (entrou, saiu, temporárias, fixou): linha central, sem balão nem ações.
         if (m.kind === "system") {
           return (
@@ -950,7 +959,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   <RichContent m={m} canAct={canAct} actions={rich} />
                 ) : (
                   <>
-                    {m.media && <MediaView m={m} caption={caption} />}
+                    {album ? <AlbumView items={album} onMenu={onMenu} /> : m.media && <MediaView m={m} caption={caption} />}
                     {link && <LinkCard url={link} />}
                     {m.contacts?.length ? (
                       <ContactCards contacts={m.contacts} onOpen={onOpenContact} onCopy={onCopyText} />
@@ -970,10 +979,10 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   <span className="bubble__meta">
                     {m.starred && !m.deleted && <Star className="bubble__star" size={11} aria-label="Favorita" />}
                     {m.editedAt !== null && !m.deleted && <span className="bubble__edited" title={`Editada em ${new Date(m.editedAt).toLocaleString("pt-BR")}`}>Editada</span>}
-                    <time className="bubble__time" dateTime={new Date(m.at).toISOString()} title={new Date(m.at).toLocaleString("pt-BR")}>
-                      {formatTime(m.at)}
+                    <time className="bubble__time" dateTime={new Date(shown.at).toISOString()} title={new Date(shown.at).toLocaleString("pt-BR")}>
+                      {formatTime(shown.at)}
                     </time>
-                    {m.pending === "sending" ? <Clock3 className="bubble__pending" size={11} aria-label="Enviando" /> : m.fromMe && !m.deleted && <AckIcon ack={m.ack} />}
+                    {m.pending === "sending" ? <Clock3 className="bubble__pending" size={11} aria-label="Enviando" /> : m.fromMe && !m.deleted && <AckIcon ack={shown.ack} />}
                   </span>
                 )}
               </div>
@@ -1061,7 +1070,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   // Citação de outra conversa (responder em particular a alguém do grupo).
   const [replyFrom, setReplyFrom] = useState<{ jid: string; name: string; isGroup: boolean } | null>(null);
-  const [composeDialog, setComposeDialog] = useState<"poll" | "location" | "sticker" | null>(null);
+  const [composeDialog, setComposeDialog] = useState<"poll" | "location" | "sticker" | "camera" | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [forwarding, setForwarding] = useState<Message[] | null>(null);
   const [selected, setSelected] = useState<Set<string> | null>(null);
@@ -1117,6 +1126,34 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         return toAttachment(file);
       }),
     );
+  /** Vira figurinha (WebP 512×512, convertido aqui mesmo) ou volta à foto original. */
+  const stickerAttachment = async (a: Attachment, on: boolean) => {
+    try {
+      const file = on ? await toSticker(a.file) : (a.original ?? a.file);
+      setAttachments((list) =>
+        list.map((x) => {
+          if (x.id !== a.id) return x;
+          if (x.preview) URL.revokeObjectURL(x.preview);
+          return on ? { ...toAttachment(file), sticker: true, original: a.original ?? a.file } : toAttachment(file);
+        }),
+      );
+    } catch (e) {
+      notify("error", `Não foi possível converter a imagem em figurinha. ${(e as Error).message}`);
+    }
+  };
+  /** Imagem recebida (ou enviada) vira figurinha na bandeja desta conversa. */
+  const stickerFromMessage = async (m: Message) => {
+    try {
+      const res = await fetch(mediaUrl(m));
+      if (!res.ok) throw new Error("Não foi possível abrir a imagem. Ela pode ter expirado no WhatsApp.");
+      const blob = await res.blob();
+      const file = await toSticker(blob);
+      setAttachments((list) => [...list, { ...toAttachment(file), sticker: true, original: new File([blob], m.media?.fileName || `imagem-${m.id}.jpg`, { type: blob.type }) }].slice(0, 10));
+      requestAnimationFrame(() => composer.current?.focus());
+    } catch (e) {
+      notify("error", `Não foi possível converter a imagem em figurinha. ${(e as Error).message}`);
+    }
+  };
   useEffect(() => {
     setAttachments((list) => {
       list.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
@@ -1457,14 +1494,17 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     try {
       // A legenda vai no primeiro anexo; os outros seguem sem texto, como no WhatsApp.
       // A resposta (citação) vai só no primeiro.
+      // Figurinha não leva legenda (o WhatsApp ignora): o texto vai no primeiro anexo que não é figurinha.
+      const captionAt = attachments.findIndex((a) => !a.sticker);
       for (const [i, a] of attachments.entries()) {
-        const base = a.voice ?? (await fileToOutgoing(a.file, i === 0 && text ? text : undefined));
+        const base = a.voice ?? (await fileToOutgoing(a.file, i === captionAt && text ? text : undefined, !!a.sticker));
         const file = viewOnce && canViewOnce(a) ? { ...base, viewOnce: true } : base;
         onChat(await api.sendMedia(chat.jid, i === 0 && mediaQuotedId ? { ...file, quotedId: mediaQuotedId } : file));
         removeAttachment(a.id);
       }
       setViewOnce(false);
-      setDraft("");
+      // Só figurinhas e havia texto: o texto fica no campo para ir como mensagem separada.
+      if (captionAt >= 0 || !text) setDraft("");
       setReplyTo(null);
       setReplyFrom(null);
       picks.current = [];
@@ -2200,7 +2240,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }
           pinned={chat.pins.some((p) => p.id === menuAt.message.id && p.until > Date.now())}
           canPrivateReply={chat.isGroup && !menuAt.message.fromMe && !!menuAt.message.sender}
-          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onEditImage: (m) => void editImage(m), onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect, onInfo: setInfoFor }}
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onEditImage: (m) => void editImage(m), onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect, onInfo: setInfoFor, onSticker: (m) => void stickerFromMessage(m) }}
           onClose={closeMenu}
         />
       )}
@@ -2243,6 +2283,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       {composeDialog === "poll" && <PollDialog onClose={() => setComposeDialog(null)} onSend={async (poll) => onChat(await api.sendPoll(chat.jid, poll))} />}
       {composeDialog === "location" && <LocationDialog onClose={() => setComposeDialog(null)} onSend={async (place) => onChat(await api.sendLocation(chat.jid, place))} />}
       {composeDialog === "sticker" && <StickerDialog onClose={() => setComposeDialog(null)} onSend={async (from) => onChat(await api.sendSticker(chat.jid, from))} />}
+      {composeDialog === "camera" && (
+        <CameraDialog
+          onClose={() => setComposeDialog(null)}
+          onDone={(file) => {
+            // A foto passa pelo editor (cortar, desenhar) e cai na bandeja, como "Editar e enviar".
+            setComposeDialog(null);
+            setImageEditing({ file, attachmentId: null, seq: Date.now() });
+          }}
+        />
+      )}
       {deleting && <DeleteDialog message={deleting} busy={false} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
       {infoFor && <MessageInfoDialog m={infoFor} isGroup={chat.isGroup} onClose={() => setInfoFor(null)} />}
       {selected && (
@@ -2287,7 +2337,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         )}
         {replyTo && replyFrom && <p className="hint reply-origin">Resposta em particular a uma mensagem de {replyFrom.name}</p>}
         {attachments.length > 0 && (
-          <AttachmentTray items={attachments} onRemove={removeAttachment} onEdit={(a) => setImageEditing({ file: a.file, attachmentId: a.id, seq: Date.now() })} disabled={sending} viewOnce={viewOnce} onViewOnce={setViewOnce} />
+          <AttachmentTray items={attachments} onRemove={removeAttachment} onEdit={(a) => setImageEditing({ file: a.file, attachmentId: a.id, seq: Date.now() })} onSticker={(a, on) => void stickerAttachment(a, on)} disabled={sending} viewOnce={viewOnce} onViewOnce={setViewOnce} />
         )}
         <input
           ref={fileInput}
@@ -2315,10 +2365,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         <Menu
           align="start"
           trigger={(t) => (
-            <Button {...t} variant="ghost" aria-label="Anexar arquivo, contato, enquete, localização ou figurinha" title="Anexar (arquivo, contato, enquete, localização ou figurinha)" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
+            <Button {...t} variant="ghost" aria-label="Anexar arquivo, foto da câmera, contato, enquete, localização ou figurinha" title="Anexar (arquivo, câmera, contato, enquete, localização ou figurinha)" disabled={!connected || sending} icon={<Plus size={18} aria-hidden />} />
           )}
           actions={[
             { id: "file", label: "Arquivo", icon: <Paperclip size={16} aria-hidden />, onSelect: () => fileInput.current?.click() },
+            { id: "camera", label: "Câmera", icon: <Camera size={16} aria-hidden />, onSelect: () => setComposeDialog("camera") },
             { id: "contact", label: "Contato", icon: <Contact size={16} aria-hidden />, onSelect: () => setPickingContact(true) },
             { id: "poll", label: "Enquete", icon: <ListChecks size={16} aria-hidden />, onSelect: () => setComposeDialog("poll") },
             { id: "location", label: "Localização", icon: <MapPin size={16} aria-hidden />, onSelect: () => setComposeDialog("location") },

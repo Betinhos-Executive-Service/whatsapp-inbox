@@ -1,9 +1,10 @@
-import { Check, Copy, Download, ExternalLink, Eye, FileText, LoaderCircle, Mic, Pause, Pencil, Play, RefreshCw, Reply, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
+import { Check, Copy, Download, ExternalLink, Eye, FileText, LoaderCircle, Mic, Pause, Pencil, Play, RefreshCw, Reply, Sparkles, Sticker, Trash2, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, mediaUrl, type AudioSummary, type Message, type OutgoingMedia } from "./api.ts";
 import { desktop } from "./desktop.ts";
 import { canEditImage } from "./image-editor/model.ts";
 import { webmToOgg } from "./ogg.ts";
+import { computeWaveform } from "./waveform.ts";
 import { ChatGallery } from "./gallery.tsx";
 import { Button, Select } from "./ds/index.ts";
 
@@ -23,7 +24,7 @@ const SPEEDS = [1, 1.5, 2];
 /** Só um áudio toca por vez: o que começa pausa o anterior. */
 let playing: HTMLAudioElement | null = null;
 
-export function AudioPlayer({ src, seconds, voice, onError }: { src: string; seconds: number | null; voice: boolean; onError: () => void }) {
+export function AudioPlayer({ src, seconds, voice, waveform, onError }: { src: string; seconds: number | null; voice: boolean; waveform?: number[] | null; onError: () => void }) {
   const audio = useRef<HTMLAudioElement>(null);
   const [isPlaying, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -85,8 +86,16 @@ export function AudioPlayer({ src, seconds, voice, onError }: { src: string; sec
         {isPlaying ? <Pause size={18} aria-hidden /> : <Play size={18} aria-hidden />}
       </button>
       <div className="audio__track">
-        <div className="audio__bar">
-        <span className="audio__fill" style={{ width: `${total ? Math.min(100, (time / total) * 100) : 0}%` }} />
+        <div className={`audio__bar${voice && waveform?.length ? " audio__bar--wave" : ""}`}>
+        {voice && waveform?.length ? (
+          <span className="audio__wave" aria-hidden>
+            {waveform.map((v, i) => (
+              <span key={i} className={`audio__wave-bar${total && i / waveform.length <= time / total && time > 0 ? " audio__wave-bar--played" : ""}`} style={{ height: `${Math.max(12, v)}%` }} />
+            ))}
+          </span>
+        ) : (
+          <span className="audio__fill" style={{ width: `${total ? Math.min(100, (time / total) * 100) : 0}%` }} />
+        )}
         <input
           type="range"
           className="audio__seek"
@@ -646,7 +655,7 @@ export function MediaView({ m, caption }: { m: Message; caption: string }) {
   if (media.type === "audio")
     return (
       <>
-        <AudioPlayer src={src} seconds={media.seconds} voice={media.ptt} onError={() => setFailed(true)} />
+        <AudioPlayer src={src} seconds={media.seconds} voice={media.ptt} waveform={media.waveform} onError={() => setFailed(true)} />
         <Transcript m={m} />
       </>
     );
@@ -655,10 +664,71 @@ export function MediaView({ m, caption }: { m: Message; caption: string }) {
 
 const noop = () => undefined;
 
+/** Álbum: até 4 fotos/vídeos em grade; o último mostra "+N" quando há mais. Clique abre a galeria; botão direito age na foto. */
+export function AlbumView({ items, onMenu }: { items: Message[]; onMenu?: (m: Message, x: number, y: number) => void }) {
+  const [open, setOpen] = useState<Message | null>(null);
+  const closeGallery = useCallback(() => setOpen(null), []);
+  const shown = items.slice(0, 4);
+  const extra = items.length - shown.length;
+  return (
+    <>
+      <div className={`album album--${shown.length}`} role="group" aria-label={`Álbum com ${items.length} itens`}>
+        {shown.map((m, i) => (
+          <AlbumTile key={m.id} m={m} more={i === shown.length - 1 ? extra : 0} onOpen={() => setOpen(m)} onMenu={onMenu} />
+        ))}
+      </div>
+      {open && <ChatGallery m={open} onClose={closeGallery} />}
+    </>
+  );
+}
+
+function AlbumTile({ m, more, onOpen, onMenu }: { m: Message; more: number; onOpen: () => void; onMenu?: (m: Message, x: number, y: number) => void }) {
+  const [failed, setFailed] = useState(false);
+  const video = m.media?.type === "video";
+  return (
+    <button
+      type="button"
+      className="album__tile"
+      data-message-id={m.id}
+      aria-label={`${video ? "Vídeo" : "Foto"} de ${new Date(m.at).toLocaleString("pt-BR")}${more ? `, mais ${more}` : ""}`}
+      title={new Date(m.at).toLocaleString("pt-BR")}
+      onClick={onOpen}
+      onContextMenu={(e) => {
+        if (!onMenu) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onMenu(m, e.clientX, e.clientY);
+      }}
+    >
+      {failed ? (
+        <TriangleAlert size={16} aria-hidden />
+      ) : video ? (
+        <video src={mediaUrl(m)} preload="metadata" muted onError={() => setFailed(true)} />
+      ) : (
+        <img src={mediaUrl(m)} alt="" loading="lazy" onError={() => setFailed(true)} />
+      )}
+      {video && !failed && !more && (
+        <span className="profile-media__play" aria-hidden>
+          <Play size={12} />
+        </span>
+      )}
+      {more > 0 && <span className="album__more">+{more}</span>}
+    </button>
+  );
+}
+
 // ---- Envio
 
 /** voice: mensagem de voz já pronta (envio que falhou volta para a bandeja e sai de novo como voz). */
-export type Attachment = { id: number; file: File; preview: string | null; voice?: OutgoingMedia };
+export type Attachment = {
+  id: number;
+  file: File;
+  preview: string | null;
+  voice?: OutgoingMedia;
+  /** Imagem já convertida em figurinha (WebP); `original` guarda a foto para "Voltar a foto". */
+  sticker?: boolean;
+  original?: File;
+};
 
 let nextId = 1;
 export function toAttachment(file: File): Attachment {
@@ -671,14 +741,15 @@ export function base64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
-export async function fileToOutgoing(file: File, caption?: string): Promise<OutgoingMedia> {
-  return { fileName: file.name || "arquivo", mimetype: file.type || "application/octet-stream", data: base64(new Uint8Array(await file.arrayBuffer())), caption };
+export async function fileToOutgoing(file: File, caption?: string, sticker = false): Promise<OutgoingMedia> {
+  return { fileName: file.name || "arquivo", mimetype: file.type || "application/octet-stream", data: base64(new Uint8Array(await file.arrayBuffer())), caption, ...(sticker ? { sticker: true } : {}) };
 }
 
 export const MAX_ATTACHMENT = 32 * 1024 * 1024;
 
 /** Visualização única vale para foto, vídeo e voz; documento, GIF e SVG vão como arquivo comum. */
 export function canViewOnce(a: Attachment): boolean {
+  if (a.sticker) return false;
   if (a.voice) return !!a.voice.ptt;
   const type = a.file.type.split(";")[0];
   return (type.startsWith("image/") && type !== "image/gif" && type !== "image/svg+xml") || type === "video/mp4";
@@ -688,6 +759,7 @@ export function AttachmentTray({
   items,
   onRemove,
   onEdit,
+  onSticker,
   disabled,
   viewOnce,
   onViewOnce,
@@ -695,6 +767,8 @@ export function AttachmentTray({
   items: Attachment[];
   onRemove: (id: number) => void;
   onEdit: (a: Attachment) => void;
+  /** Vira figurinha (`on`) ou volta a ser foto. */
+  onSticker: (a: Attachment, on: boolean) => void;
   disabled: boolean;
   viewOnce: boolean;
   onViewOnce: (on: boolean) => void;
@@ -721,17 +795,20 @@ export function AttachmentTray({
       {items.map((a) => (
         <li key={a.id} className="attachment">
           {a.preview ? (
-            <img className="attachment__thumb" src={a.preview} alt="" />
+            <img className={`attachment__thumb${a.sticker ? " attachment__thumb--sticker" : ""}`} src={a.preview} alt="" />
           ) : (
             <span className="attachment__thumb attachment__thumb--file" aria-hidden>
               <FileText size={18} />
             </span>
           )}
           <span className="attachment__info">
-            <span className="attachment__name">{a.file.name}</span>
-            <span className="hint">{fileSize(a.file.size)}</span>
+            <span className="attachment__name">{a.sticker ? "Figurinha" : a.file.name}</span>
+            <span className="hint">{a.sticker ? "Sem legenda, como no WhatsApp" : fileSize(a.file.size)}</span>
           </span>
-          {a.preview && !a.voice && canEditImage(a.file.type) && (
+          {a.preview && !a.voice && (a.sticker || canEditImage(a.file.type)) && (
+            <Button variant="ghost" size="compact" icon={<Sticker size={14} aria-hidden />} aria-label={a.sticker ? "Voltar a foto" : `Virar figurinha ${a.file.name}`} title={a.sticker ? "Voltar a foto" : "Virar figurinha"} aria-pressed={!!a.sticker} disabled={disabled} onClick={() => onSticker(a, !a.sticker)} />
+          )}
+          {a.preview && !a.voice && !a.sticker && canEditImage(a.file.type) && (
             <Button variant="ghost" size="compact" icon={<Pencil size={14} aria-hidden />} aria-label={`Editar ${a.file.name}`} title="Editar imagem" disabled={disabled} onClick={() => onEdit(a)} />
           )}
           <Button variant="ghost" size="compact" icon={<X size={14} aria-hidden />} aria-label={`Remover ${a.file.name}`} disabled={disabled} onClick={() => onRemove(a.id)} />
@@ -979,7 +1056,9 @@ export function useRecorder(onError: (text: string) => void) {
     const webm = new Uint8Array(await new Blob(chunks).arrayBuffer());
     const { ogg, seconds } = webmToOgg(webm);
     if (seconds < 0.5) return null;
-    return { fileName: "voz.ogg", mimetype: "audio/ogg", data: base64(ogg), ptt: true, seconds };
+    // Forma de onda como o celular mostra; se o navegador não decodificar, a voz vai sem ela (barra lisa).
+    const waveform = await computeWaveform(webm);
+    return { fileName: "voz.ogg", mimetype: "audio/ogg", data: base64(ogg), ptt: true, seconds, ...(waveform ? { waveform } : {}) };
   };
 
   /** O que já foi gravado (pausado), para transcrever sem parar a gravação. */

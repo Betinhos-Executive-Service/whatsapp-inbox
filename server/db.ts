@@ -145,7 +145,7 @@ export type Message = {
   /** Cartões de contato recebidos ou enviados. */
   contacts: ContactCard[] | null;
   /** Mídia baixável (sem as chaves, que ficam só no banco). */
-  media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
+  media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean; waveform: number[] | null; album: string | null } | null;
   /** Mensagem respondida (citação). */
   quoted: QuotedRef | null;
   /** Apagada para todos (o texto vira "Mensagem apagada"). */
@@ -506,7 +506,16 @@ function toMessage(r: Row, reactions: Message["reactions"] = [], poll: PollResul
   if (typeof r.media === "string") {
     try {
       const m = JSON.parse(r.media);
-      media = { type: m.type, mimetype: m.mimetype, fileName: m.fileName ?? null, size: m.size ?? null, seconds: m.seconds ?? null, ptt: m.ptt === true };
+      media = {
+        type: m.type,
+        mimetype: m.mimetype,
+        fileName: m.fileName ?? null,
+        size: m.size ?? null,
+        seconds: m.seconds ?? null,
+        ptt: m.ptt === true,
+        waveform: Array.isArray(m.waveform) && m.waveform.length ? m.waveform.map(Number) : null,
+        album: typeof m.album === "string" && m.album ? m.album : null,
+      };
     } catch {
       media = null;
     }

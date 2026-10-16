@@ -16,6 +16,10 @@ export type MediaRef = {
   seconds?: number | null;
   /** Áudio gravado no app (mensagem de voz), não arquivo de áudio. */
   ptt?: boolean;
+  /** Voz: forma de onda (64 amostras 0..100) que o aparelho mandou. */
+  waveform?: number[] | null;
+  /** Foto/vídeo de um álbum: id da mensagem-cabeçalho (albumMessage), para agrupar na tela. */
+  album?: string | null;
 };
 
 const MEDIA_TYPES: Record<string, MediaRef["type"]> = {
@@ -52,7 +56,18 @@ export function extractMedia(content: Content): MediaRef | null {
     size: m.fileLength == null ? null : Number(m.fileLength),
     seconds: typeof m.seconds === "number" && m.seconds > 0 ? m.seconds : null,
     ptt: m.ptt === true,
+    waveform: m.ptt === true && m.waveform && typeof m.waveform.length === "number" && m.waveform.length ? Array.from(m.waveform as ArrayLike<number>, Number) : null,
   };
+}
+
+/** Id do cabeçalho do álbum (messageContextInfo.messageAssociation, tipo MEDIA_ALBUM), ou null. */
+export function albumParentId(content: Content, raw?: Content): string | null {
+  const assoc = content?.messageContextInfo?.messageAssociation ?? raw?.messageContextInfo?.messageAssociation;
+  if (!assoc || typeof assoc !== "object") return null;
+  const type = assoc.associationType;
+  if (type !== 1 && type !== "MEDIA_ALBUM") return null;
+  const id = assoc.parentMessageKey?.id;
+  return typeof id === "string" && id ? id : null;
 }
 
 /** Tipos que não são mensagem para o usuário. Apagar sai por revokedId; editar e reagir por extractAction. */

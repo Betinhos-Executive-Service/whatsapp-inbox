@@ -1,4 +1,4 @@
-import { Brush, CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, Info, MessageCircleReply, Pencil, Pin, PinOff, Plus, Reply, Star, StarOff, Trash2, UserRound } from "lucide-react";
+import { Brush, CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, Info, MessageCircleReply, Pencil, Pin, PinOff, Plus, Reply, Star, StarOff, Sticker, Trash2, UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { mediaUrl, type Message } from "./api.ts";
 import { EmojiPicker, rememberEmoji } from "./emoji.tsx";
@@ -31,6 +31,8 @@ export type MessageMenuActions = {
   onSelect: (m: Message) => void;
   /** Info da mensagem: quando foi entregue, lida e ouvida (por quem, em grupo). */
   onInfo: (m: Message) => void;
+  /** Imagem vira figurinha na bandeja de anexos desta conversa. */
+  onSticker: (m: Message) => void;
 };
 
 /** Prazos que o WhatsApp oferece para fixar. */
@@ -85,6 +87,7 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
           : []),
         ...(viewable ? [{ id: "view", label: "Visualizar", icon: <Eye size={16} aria-hidden />, run: () => actions.onView(m) }] : []),
         ...(m.media?.type === "image" ? [{ id: "edit-image", label: "Editar e enviar", icon: <Brush size={16} aria-hidden />, disabled: !canAct, run: () => actions.onEditImage(m) }] : []),
+        ...(m.media?.type === "image" ? [{ id: "to-sticker", label: "Enviar como figurinha", icon: <Sticker size={16} aria-hidden />, disabled: !canAct, run: () => actions.onSticker(m) }] : []),
         ...(call ? [] : [{ id: "forward", label: "Encaminhar", icon: <Forward size={16} aria-hidden />, disabled: !canAct, run: () => actions.onForward(m) }]),
         { id: "star", label: m.starred ? "Desfavoritar" : "Favoritar", icon: m.starred ? <StarOff size={16} aria-hidden /> : <Star size={16} aria-hidden />, run: () => actions.onStar(m) },
         ...(call

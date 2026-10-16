@@ -184,7 +184,7 @@ export type Message = {
   at: number;
   text: string;
   kind: string;
-  media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean } | null;
+  media: { type: string; mimetype: string; fileName: string | null; size: number | null; seconds: number | null; ptt: boolean; /** Voz: forma de onda (64 amostras 0..100) quando o aparelho mandou. */ waveform: number[] | null; /** Id da mensagem-cabeçalho do álbum, quando a foto/vídeo veio num álbum. */ album: string | null } | null;
   /** Mensagem respondida (citação). */
   quoted: { id: string; text: string; fromMe: boolean; author: string | null } | null;
   /** Cartões de contato (mensagem de contato). */
@@ -219,7 +219,7 @@ export type ContactCard = { name: string; phones: { number: string; wa: string |
 export type LinkPreview = { url: string; title: string; description: string | null; image: string | null; site: string };
 
 /** Anexo saindo: conteúdo em base64 (a API só aceita JSON). */
-export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number; viewOnce?: boolean; quotedId?: string };
+export type OutgoingMedia = { fileName: string; mimetype: string; data: string; caption?: string; ptt?: boolean; seconds?: number; viewOnce?: boolean; quotedId?: string; /** Voz: 64 amostras 0..100. */ waveform?: number[]; /** Imagem já convertida em figurinha (WebP 512×512). */ sticker?: boolean };
 
 export type Participant = { jid: string; name: string; phone: string | null; admin: boolean; me: boolean };
 export type Profile = {

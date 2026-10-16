@@ -10,7 +10,7 @@ import { parseLocation, phoneDigits } from "./location.ts";
  * Caixa de formulário: fecha por X, Esc ou clique fora. Com alteração não salva, pergunta antes
  * ("Descartar alterações?"); enquanto envia, não fecha.
  */
-function FormModal({ title, icon, dirty, busy, onClose, children, footer, wide }: {
+export function FormModal({ title, icon, dirty, busy, onClose, children, footer, wide }: {
   title: string;
   icon: ReactNode;
   dirty: boolean;
