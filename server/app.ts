@@ -575,6 +575,12 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     if (id && !file.viewOnce) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
   }
 
+  /** Álbum: fotos/vídeos agrupados no celular do destinatário; cada mídia enviada ganha cópia local. */
+  async function sendAlbum(jid: string, files: OutgoingFile[], quotedId?: string) {
+    const ids = await connected().sendAlbum(jid, files, { quoted: quotedId ? store.messageKey(jid, quotedId) : null });
+    await Promise.all(ids.map((id, i) => (files[i] ? cacheMedia(join(options.dataDir, "media"), jid, id, files[i].mimetype, files[i].body).catch(() => undefined) : undefined)));
+  }
+
   const photos = new PhotoCache(join(options.dataDir, "photos"), store, {
     url: (jid, full) => (wa?.state.status === "conectado" ? wa.photoUrl(jid, full) : null),
   });
@@ -627,6 +633,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       await connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(opts.quotedChat ?? jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll });
     },
     sendMedia,
+    sendAlbum,
     sendPoll: async (jid, question, options, multiple) => {
       await connected().sendPoll(jid, question, options, multiple);
     },

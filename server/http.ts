@@ -8,6 +8,7 @@ import { claudeOptionsSchema, type ClaudeOptions } from "./claude.ts";
 import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
 import { STATUSES, type Store } from "./db.ts";
 import { linkPreview } from "./link-preview.ts";
+import { albumKind } from "./media.ts";
 import { EXT_BY_TYPE, TYPE_BY_EXT } from "./mime.ts";
 import { prefsSchema, type Prefs } from "./prefs.ts";
 import { voucherSchema, type Voucher } from "./voucher.ts";
@@ -46,6 +47,8 @@ export type Api = {
   /** `quotedChat`: a mensagem citada é de outra conversa (responder em particular a alguém do grupo). */
   send: (jid: string, text: string, opts: { quotedId?: string; quotedChat?: string; mentions?: string[]; mentionAll?: boolean }) => Promise<void>;
   sendMedia: (jid: string, file: { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number }, quotedId?: string) => Promise<void>;
+  /** Álbum de fotos/vídeos (≥ 2): o destinatário vê uma bolha só. */
+  sendAlbum: (jid: string, files: { body: Buffer; mimetype: string; fileName: string; caption?: string }[], quotedId?: string) => Promise<void>;
   sendPoll: (jid: string, question: string, options: string[], multiple: boolean) => Promise<void>;
   businessQuickReplies: () => Promise<{ shortcut: string; text: string }[]>;
   /** Etiquetas do WhatsApp Business: força o celular a reenviar as definições; devolve quantas existem. */
@@ -305,6 +308,16 @@ const sendMediaSchema = z.object({
   sticker: z.boolean().optional(),
 });
 
+/** Álbum: só foto e vídeo, de 2 a 32 itens (limite do WhatsApp), cada um até 32 MB. */
+const MAX_ALBUM = 32;
+const albumSchema = z.object({
+  files: z
+    .array(z.object({ fileName: z.string().trim().min(1).max(255), mimetype: z.string().trim().min(1).max(128), data: z.string().min(1), caption: z.string().max(4096).optional() }))
+    .min(2, "Álbum precisa de pelo menos 2 fotos ou vídeos.")
+    .max(MAX_ALBUM, `Álbum leva no máximo ${MAX_ALBUM} itens.`),
+  quotedId: z.string().min(1).max(200).optional(),
+});
+
 /** Resposta proposta por uma IA (MCP); mesmos limites do envio de texto e de anexo. */
 const pendingDraftSchema = z.object({
   text: z.string().max(65536).default(""),
@@ -533,6 +546,18 @@ export function createHandler(api: Api) {
         if (!body.length) throw new HttpError(400, "Arquivo vazio.");
         if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
         await api.sendMedia(jid, { ...file, body }, quotedId);
+        return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/album" && method === "POST") {
+        const { files, quotedId } = parse(albumSchema, await readJson(req, MAX_ALBUM * (Math.ceil((MAX_MEDIA * 4) / 3) + 64 * 1024)));
+        const decoded = files.map(({ data, ...file }) => {
+          const body = Buffer.from(data, "base64");
+          if (!body.length) throw new HttpError(400, "Arquivo vazio.");
+          if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
+          if (!albumKind(file.mimetype)) throw new HttpError(400, "Álbum só leva fotos e vídeos.");
+          return { ...file, body };
+        });
+        await api.sendAlbum(jid, decoded, quotedId);
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/send-contacts" && method === "POST") {

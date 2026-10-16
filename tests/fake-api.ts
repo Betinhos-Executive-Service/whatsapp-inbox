@@ -18,6 +18,7 @@ export function fakeApi(store: Store, over: Partial<Api> = {}): Api {
     watch: async () => undefined,
     typing: async () => undefined,
     sendMedia: async () => undefined,
+    sendAlbum: async () => undefined,
     sendPoll: async () => undefined,
     businessQuickReplies: async () => [],
     vote: async () => null,

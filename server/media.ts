@@ -18,6 +18,31 @@ const EXT: Record<string, string> = {
   "application/pdf": "pdf",
 };
 
+/** Tipo de uma mídia dentro de um álbum do WhatsApp (só foto e vídeo entram), ou null. */
+export function albumKind(mimetype: string): "image" | "video" | null {
+  const base = mimetype.split(";")[0].trim().toLowerCase();
+  if (base.startsWith("image/") && base !== "image/gif" && base !== "image/svg+xml") return "image";
+  if (base === "video/mp4") return "video";
+  return null;
+}
+
+/**
+ * Cabeçalho do álbum: quantas fotos e vídeos vêm a seguir. Lança se tiver menos de 2 itens
+ * ou algo que não seja foto/vídeo (figurinha, áudio, documento, GIF).
+ */
+export function albumCounts(mimetypes: string[]): { expectedImageCount: number; expectedVideoCount: number } {
+  if (mimetypes.length < 2) throw new Error("Álbum precisa de pelo menos 2 fotos ou vídeos.");
+  let expectedImageCount = 0;
+  let expectedVideoCount = 0;
+  for (const mimetype of mimetypes) {
+    const kind = albumKind(mimetype);
+    if (kind === "image") expectedImageCount++;
+    else if (kind === "video") expectedVideoCount++;
+    else throw new Error("Álbum só leva fotos e vídeos.");
+  }
+  return { expectedImageCount, expectedVideoCount };
+}
+
 function mediaFile(dir: string, chatJid: string, id: string, mimetype: string): string {
   const name = createHash("sha256").update(`${chatJid}|${id}`).digest("hex").slice(0, 32);
   return join(dir, `${name}.${EXT[mimetype.split(";")[0]] ?? "bin"}`);

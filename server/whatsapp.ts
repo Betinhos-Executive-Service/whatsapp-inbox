@@ -22,6 +22,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import { presenceOf, type Presence } from "./presence.ts";
 import { albumParentId } from "./text.ts";
+import { albumCounts } from "./media.ts";
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
@@ -1439,12 +1440,37 @@ export class WhatsApp extends EventEmitter<{
     return this.tracked(kind, jid, () => this.sendFile(jid, file, opts));
   }
 
-  private async sendFile(jid: string, file: OutgoingFile, opts: SendOptions): Promise<string | null> {
-    const sock = this.ready();
+  /**
+   * Álbum: várias fotos/vídeos que o celular do destinatário agrupa numa bolha só. Como o WhatsApp Web:
+   * primeiro um `albumMessage` com as contagens, depois cada mídia com `messageAssociation` apontando
+   * para a chave do cabeçalho. A citação vai só na primeira mídia. Devolve os ids das mídias.
+   */
+  async sendAlbum(jid: string, files: OutgoingFile[], opts: SendOptions = {}): Promise<string[]> {
+    const ids: string[] = [];
+    await this.tracked("álbum", jid, async () => {
+      const sock = this.ready();
+      const counts = albumCounts(files.map((f) => f.mimetype));
+      const header = await sock.sendMessage(jid, { album: counts }, this.sendOptions(jid, null));
+      const parent = header?.key;
+      if (!parent?.id || !parent.remoteJid) throw new Error("O WhatsApp não devolveu o cabeçalho do álbum.");
+      const albumParentKey = { remoteJid: parent.remoteJid, id: parent.id, fromMe: true };
+      for (const [i, file] of files.entries()) {
+        const sent = await this.confirm(
+          await sock.sendMessage(jid, { ...this.fileContent(file), albumParentKey, ...forwardedContext(opts) }, this.sendOptions(jid, i === 0 ? opts.quoted : null)),
+        );
+        if (sent.key.id) ids.push(sent.key.id);
+      }
+      return parent.id;
+    });
+    return ids;
+  }
+
+  /** Conteúdo de mídia como o `sendMessage` do Baileys espera, pelo mimetype. */
+  private fileContent(file: OutgoingFile) {
     const { body, fileName } = file;
     const caption = file.caption?.trim() || undefined;
     const base = file.mimetype.split(";")[0];
-    const content = file.sticker
+    return file.sticker
       ? { sticker: body, mimetype: "image/webp" }
       : file.ptt
       ? { audio: body, ptt: true, mimetype: "audio/ogg; codecs=opus", ...(file.seconds ? { seconds: Math.round(file.seconds) } : {}), ...(file.waveform?.length ? { waveform: Uint8Array.from(file.waveform) } : {}) }
@@ -1455,6 +1481,11 @@ export class WhatsApp extends EventEmitter<{
           : base.startsWith("audio/")
             ? { audio: body, mimetype: base }
             : { document: body, mimetype: base || "application/octet-stream", fileName, caption };
+  }
+
+  private async sendFile(jid: string, file: OutgoingFile, opts: SendOptions): Promise<string | null> {
+    const sock = this.ready();
+    const content = this.fileContent(file);
     if (file.viewOnce) {
       if (!("image" in content || "video" in content || ("audio" in content && file.ptt))) {
         throw new Error("Visualização única só vale para foto, vídeo e mensagem de voz.");

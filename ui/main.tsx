@@ -1509,7 +1509,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       // A resposta (citação) vai só no primeiro.
       // Figurinha não leva legenda (o WhatsApp ignora): o texto vai no primeiro anexo que não é figurinha.
       const captionAt = attachments.findIndex((a) => !a.sticker);
+      // Duas ou mais fotos/vídeos comuns (sem visualização única) saem como álbum: o celular do destinatário
+      // agrupa numa bolha só. O resto (voz, figurinha, documento, GIF) vai um a um, como antes.
+      const album = viewOnce ? [] : attachments.filter((a) => !a.voice && !a.sticker && canViewOnce(a));
+      if (album.length >= 2) {
+        const files = await Promise.all(album.map((a) => fileToOutgoing(a.file, a === attachments[captionAt] && text ? text : undefined)));
+        onChat(await api.sendAlbum(chat.jid, files, album[0] === attachments[0] ? mediaQuotedId : undefined));
+        for (const a of album) removeAttachment(a.id);
+      }
       for (const [i, a] of attachments.entries()) {
+        if (album.includes(a)) continue;
         const base = a.voice ?? (await fileToOutgoing(a.file, i === captionAt && text ? text : undefined, !!a.sticker));
         const file = viewOnce && canViewOnce(a) ? { ...base, viewOnce: true } : base;
         onChat(await api.sendMedia(chat.jid, i === 0 && mediaQuotedId ? { ...file, quotedId: mediaQuotedId } : file));
