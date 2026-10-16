@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DELETED_TEXT, Store, type IncomingMessage } from "../server/db.ts";
-import { chronological } from "../server/history.ts";
+import { chronological, isLiveArrival } from "../server/history.ts";
 import { PhotoCache } from "../server/photos.ts";
 import { extractContext, revokedId } from "../server/text.ts";
 
@@ -102,4 +102,26 @@ test("histórico do WhatsApp (mais nova primeiro) é gravado em ordem cronológi
   const s = new Store(":memory:");
   for (const m of chronological(batch)) s.insertMessage(msg({ id: m.key.id, text: m.key.id, at: m.messageTimestamp * 1000 }), false);
   assert.deepEqual(s.listMessages(PN, null).map((m) => m.id), ["a1", "p1", "p2", "p3", "b2"]);
+});
+
+test("mensagem atrasada mais nova que a conversa conta como ao vivo", () => {
+  const now = 1_800_000_000_000;
+  const win = 2 * 60_000;
+  const ontem = now - 20 * 3600_000;
+  // Chegou agora: ao vivo, como antes.
+  assert.equal(isLiveArrival(true, now - 10_000, now - 3600_000, win, now), true);
+  // Enviada ontem, chegou hoje, e a conversa não tem nada mais novo: nova para quem usa.
+  assert.equal(isLiveArrival(true, ontem, ontem - 3600_000, win, now), true);
+  assert.equal(isLiveArrival(true, ontem, null, win, now), true);
+  // Antiga e a conversa já tem mensagem mais nova: só completa o histórico.
+  assert.equal(isLiveArrival(true, ontem, now - 3600_000, win, now), false);
+  // Lote de histórico nunca é ao vivo.
+  assert.equal(isLiveArrival(false, now - 10_000, 0, win, now), false);
+  // Gravada como ao vivo, a mensagem antiga vira não lida e abre a conversa.
+  const s = new Store(":memory:");
+  s.insertMessage(msg({ id: "velha", at: ontem - 3600_000 }), false);
+  s.markRead(PN);
+  s.insertMessage(msg({ id: "atrasada", at: ontem }), isLiveArrival(true, ontem, s.getChat(PN)!.lastAt, win, now));
+  assert.equal(s.getChat(PN)!.unread, 1);
+  assert.equal(s.getChat(PN)!.status, "aberta");
 });
