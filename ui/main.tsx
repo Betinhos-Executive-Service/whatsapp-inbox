@@ -50,12 +50,12 @@ import {
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
-import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type QuickReply, type SearchHit, type Status, type Priority } from "./api.ts";
+import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type Presence, type QuickReply, type SearchHit, type Status, type Priority } from "./api.ts";
 import { ChatItemMenu, drafts, isMuted, useDraft, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
-import { LocationDialog, NewChatDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
+import { LocationDialog, MessageInfoDialog, NewChatDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
 import { isRich, PinnedBar, RichContent, type RichActions } from "./rich.tsx";
 import {
   applyMentions,
@@ -84,7 +84,7 @@ import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
 import type { Emoji } from "./emoji-data.ts";
-import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, listTime, normalize, percent, sameDay } from "./format.ts";
+import { dayLabel, formatBrl, formatBuild, formatTime, formatTokens, initials, lastSeenLabel, listTime, normalize, percent, sameDay } from "./format.ts";
 // Configurações só carregam na primeira abertura: menos JS para interpretar ao iniciar.
 const SettingsDrawer = lazy(() => import("./settings.tsx").then((m) => ({ default: m.SettingsDrawer })));
 import { UpdateDialog } from "./update.tsx";
@@ -1066,8 +1066,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [forwarding, setForwarding] = useState<Message[] | null>(null);
   const [selected, setSelected] = useState<Set<string> | null>(null);
   const [pickingContact, setPickingContact] = useState(false);
-  const [presence, setPresence] = useState<"composing" | "recording" | null>(null);
+  const [presence, setPresence] = useState<Presence | null>(null);
   const [deleting, setDeleting] = useState<Message | null>(null);
+  const [infoFor, setInfoFor] = useState<Message | null>(null);
   // Menções: participantes carregados no primeiro "@"; escolhas valem até enviar.
   const [participants, setParticipants] = useState<Participant[] | null>(null);
   const [caret, setCaret] = useState(0);
@@ -1318,6 +1319,18 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, [chat.jid, notify]);
 
   // Seta "ir para o fim": desce até a última mensagem (recarrega o fim se a conversa veio da busca).
+  // Texto do cabeçalho: digitando/gravando (verde), online (verde) ou "visto por último" (cinza); sem nada, mostra o telefone.
+  const presenceText = useMemo((): { text: string; live: boolean } | null => {
+    if (!presence) return null;
+    if (presence.state === "recording") return { text: "gravando áudio…", live: true };
+    if (presence.state === "composing") return { text: chat.isGroup ? "alguém está digitando…" : "digitando…", live: true };
+    if (chat.isGroup) return null;
+    if (presence.state === "available") return { text: "online", live: true };
+    // Offline: só mostra o "visto por último" quando o contato deixa ver (privacidade); sem isso, nada.
+    if (presence.state === "unavailable" && presence.lastSeen) return { text: lastSeenLabel(presence.lastSeen), live: false };
+    return null;
+  }, [presence, chat.isGroup]);
+
   const jumpToEnd = async () => {
     setNewBelow(0);
     if (!atLatest.current) {
@@ -1822,12 +1835,15 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   }, [chat.jid, connected]);
   useEffect(() => {
     let timer = 0;
+    setPresence(null);
     const onPresence = (e: Event) => {
-      const p = (e as CustomEvent<{ jid: string; state: "composing" | "recording" | null }>).detail;
+      const p = (e as CustomEvent<{ jid: string } & Presence>).detail;
       if (p.jid !== chat.jid) return;
-      setPresence(p.state);
+      // "visto por último" só vem no aviso de offline; guarda o último conhecido enquanto o contato digita.
+      setPresence((prev) => ({ state: p.state, lastSeen: p.lastSeen ?? prev?.lastSeen ?? null }));
       window.clearTimeout(timer);
-      if (p.state) timer = window.setTimeout(() => setPresence(null), 25_000);
+      // Digitando/gravando sem aviso de parada: volta para "online" depois de um tempo.
+      if (p.state === "composing" || p.state === "recording") timer = window.setTimeout(() => setPresence((prev) => (prev ? { ...prev, state: "available" } : null)), 25_000);
     };
     window.addEventListener("inbox:presence", onPresence);
     return () => {
@@ -2000,9 +2016,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
               <span className="heading-card" role="heading" aria-level={2}>
                 {chat.name}
               </span>
-              {presence ? (
-                <span className="hint chat-pane__presence" role="status">
-                  {presence === "recording" ? "gravando áudio…" : chat.isGroup ? "alguém está digitando…" : "digitando…"}
+              {presenceText ? (
+                <span className={`hint${presenceText.live ? " chat-pane__presence" : ""}`} role="status">
+                  {presenceText.text}
                 </span>
               ) : (
                 <>
@@ -2184,7 +2200,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }
           pinned={chat.pins.some((p) => p.id === menuAt.message.id && p.until > Date.now())}
           canPrivateReply={chat.isGroup && !menuAt.message.fromMe && !!menuAt.message.sender}
-          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onEditImage: (m) => void editImage(m), onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect }}
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onEditImage: (m) => void editImage(m), onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect, onInfo: setInfoFor }}
           onClose={closeMenu}
         />
       )}
@@ -2228,6 +2244,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       {composeDialog === "location" && <LocationDialog onClose={() => setComposeDialog(null)} onSend={async (place) => onChat(await api.sendLocation(chat.jid, place))} />}
       {composeDialog === "sticker" && <StickerDialog onClose={() => setComposeDialog(null)} onSend={async (from) => onChat(await api.sendSticker(chat.jid, from))} />}
       {deleting && <DeleteDialog message={deleting} busy={false} onCancel={() => setDeleting(null)} onConfirm={(mode) => void confirmDelete(mode)} />}
+      {infoFor && <MessageInfoDialog m={infoFor} isGroup={chat.isGroup} onClose={() => setInfoFor(null)} />}
       {selected && (
         <SelectionBar
           count={selectedMessages.length}

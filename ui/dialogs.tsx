@@ -1,9 +1,9 @@
-import { Crosshair, ListChecks, LoaderCircle, MapPin, MessageSquarePlus, Plus, Star, Sticker, Trash2, UserRoundPlus, Users, X } from "lucide-react";
+import { CheckCheck, Crosshair, Info, ListChecks, LoaderCircle, MapPin, MessageSquarePlus, Plus, Star, Sticker, Trash2, UserRoundPlus, Users, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, type Chat, type Message } from "./api.ts";
+import { api, type Chat, type Message, type MessageInfo } from "./api.ts";
 import { Avatar } from "./avatar.tsx";
 import { Alert, Button, Dialog, Field, Input, SearchBox, SegmentedControl, Switch, Textarea } from "./ds/index.ts";
-import { listTime, normalize } from "./format.ts";
+import { formatTime, listTime, normalize } from "./format.ts";
 import { parseLocation, phoneDigits } from "./location.ts";
 
 /**
@@ -520,6 +520,91 @@ export function AddParticipantsDialog({ groupName, exclude, onAdd, onClose }: { 
 }
 
 /** Mensagens favoritas de todas as conversas; o clique abre a conversa nela. */
+/** Info da mensagem, como o WhatsApp: em grupo, quem leu e quem só recebeu; em 1:1, o estado geral. */
+export function MessageInfoDialog({ m, isGroup, onClose }: { m: Message; isGroup: boolean; onClose: () => void }) {
+  const [info, setInfo] = useState<MessageInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.messageInfo(m.chatJid, m.id).then((i) => alive && setInfo(i)).catch((e: Error) => alive && setError(e.message));
+    void load();
+    // Recibo novo chega por SSE enquanto o diálogo está aberto.
+    const onUpdate = (e: Event) => {
+      const u = (e as CustomEvent<{ message: Message }>).detail;
+      if (u.message.chatJid === m.chatJid && u.message.id === m.id) void load();
+    };
+    window.addEventListener("inbox:update", onUpdate);
+    return () => {
+      alive = false;
+      window.removeEventListener("inbox:update", onUpdate);
+    };
+  }, [m.chatJid, m.id]);
+  const when = (ms: number) => (listTime(ms).includes(":") ? `hoje às ${formatTime(ms)}` : `${listTime(ms)} às ${formatTime(ms)}`);
+  const current = info?.message ?? m;
+  const read = (info?.receipts ?? []).filter((r) => r.readAt);
+  const delivered = (info?.receipts ?? []).filter((r) => !r.readAt && r.deliveredAt);
+  const voice = current.media?.ptt === true;
+  const status = current.ack === 5 ? "Ouvida" : current.ack === 4 ? "Lida" : current.ack === 3 ? "Entregue" : current.ack === 2 ? "Enviada" : "Pendente";
+  return (
+    <FormModal title="Info da mensagem" icon={<Info size={18} aria-hidden />} dirty={false} busy={false} onClose={onClose}>
+      {error && (
+        <Alert tone="danger" role="alert">
+          {error}
+        </Alert>
+      )}
+      <p className="info__preview">
+        <span className="chat-item__me">Você: </span>
+        {current.text}
+      </p>
+      <dl className="info__facts">
+        <dt>Enviada</dt>
+        <dd>{when(current.at)}</dd>
+        {!isGroup && (
+          <>
+            <dt>Estado</dt>
+            <dd>{status}</dd>
+          </>
+        )}
+      </dl>
+      {isGroup && (
+        <>
+          <section className="info__section">
+            <h4 className="eyebrow">
+              <CheckCheck size={14} aria-hidden className="bubble__ack--read" /> {voice ? "Lida ou ouvida por" : "Lida por"}
+            </h4>
+            {info && !read.length && <p className="hint">Ninguém ainda.</p>}
+            <ul className="info__list">
+              {read.map((r) => (
+                <li key={r.participant} className="info__row">
+                  <Avatar jid={r.participant} name={r.name} className="avatar--sm" />
+                  <span className="info__name">{r.name}</span>
+                  <span className="hint">{when((voice && r.playedAt) || r.readAt!)}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <section className="info__section">
+            <h4 className="eyebrow">
+              <CheckCheck size={14} aria-hidden /> Entregue a
+            </h4>
+            {info && !delivered.length && <p className="hint">{read.length ? "Todos já leram." : "Ninguém ainda."}</p>}
+            <ul className="info__list">
+              {delivered.map((r) => (
+                <li key={r.participant} className="info__row">
+                  <Avatar jid={r.participant} name={r.name} className="avatar--sm" />
+                  <span className="info__name">{r.name}</span>
+                  <span className="hint">{when(r.deliveredAt!)}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+          {info && !info.receipts.length && <p className="hint">Sem recibos para esta mensagem. Eles chegam só para mensagens enviadas com o app aberto.</p>}
+        </>
+      )}
+    </FormModal>
+  );
+}
+
 export function StarredDialog({ chats, onOpenAt, onClose }: { chats: Map<string, Chat>; onOpenAt: (jid: string, id: string) => void; onClose: () => void }) {
   const [list, setList] = useState<Message[] | null>(null);
   const [error, setError] = useState<string | null>(null);

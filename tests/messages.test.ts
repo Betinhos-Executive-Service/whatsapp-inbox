@@ -119,3 +119,38 @@ test("selo 'Encaminhada' fica gravado na mensagem e some quando apagada", () => 
   store.markRevoked(PN, "f2");
   assert.equal(store.getMessage(PN, "f2")?.forwarded, 0);
 });
+
+test("presença: prioridade dos estados, visto por último em ms e grupo só com digitando/gravando", async () => {
+  const { presenceOf } = await import("../server/presence.ts");
+  assert.deepEqual(presenceOf({ a: { lastKnownPresence: "unavailable", lastSeen: 1_700_000_000 } }, false), { state: "unavailable", lastSeen: 1_700_000_000_000 });
+  assert.deepEqual(presenceOf({ a: { lastKnownPresence: "unavailable" } }, false), { state: "unavailable", lastSeen: null });
+  assert.deepEqual(presenceOf({ a: { lastKnownPresence: "available" } }, false), { state: "available", lastSeen: null });
+  assert.deepEqual(presenceOf({ a: { lastKnownPresence: "composing" }, b: { lastKnownPresence: "recording" } }, true), { state: "recording", lastSeen: null });
+  assert.deepEqual(presenceOf({ a: { lastKnownPresence: "available" } }, true), { state: null, lastSeen: null });
+  const { lastSeenLabel } = await import("../ui/format.ts");
+  const now = Date.UTC(2026, 9, 5, 17, 32);
+  assert.equal(lastSeenLabel(now - 60_000, now), "visto por último hoje às 14:31");
+  assert.equal(lastSeenLabel(now - 86_400_000, now), "visto por último ontem às 14:32");
+  assert.equal(lastSeenLabel(now - 3 * 86_400_000, now), "visto por último em 02/10/2026 às 14:32");
+});
+
+test("recibos de grupo: cada marco só avança, tique vai a entregue e a lista sai com nome", () => {
+  const store = new Store(":memory:");
+  const group = "120363000000000000@g.us";
+  const ana = "5511888880000@s.whatsapp.net";
+  store.addMessage(msg({ chatJid: group, rawJid: group, id: "r1", fromMe: true, ack: 2 }), true);
+  store.addMessage(msg({ chatJid: group, rawJid: group, id: "r2", fromMe: false, participant: ana, text: "Ana: oi" }), true);
+  store.setNames(ana, { push: "Ana" });
+  assert.equal(store.recordReceipt(group, "r2", ana, { deliveredAt: 1000 }), null, "recibo de mensagem alheia não conta");
+  const first = store.recordReceipt(group, "r1", ana, { deliveredAt: 1000 });
+  assert.equal(first?.message.ack, 3);
+  assert.equal(first?.readCount, 0);
+  const second = store.recordReceipt(group, "r1", ana, { readAt: 2000 });
+  assert.equal(second?.readCount, 1);
+  assert.deepEqual(store.messageReceipts(group, "r1"), [{ participant: ana, name: "Ana", deliveredAt: 1000, readAt: 2000, playedAt: null }]);
+  // Recibo repetido não volta atrás.
+  store.recordReceipt(group, "r1", ana, { deliveredAt: 5000 });
+  assert.equal(store.messageReceipts(group, "r1")[0]?.deliveredAt, 1000);
+  store.deleteMessage(group, "r1");
+  assert.deepEqual(store.messageReceipts(group, "r1"), []);
+});

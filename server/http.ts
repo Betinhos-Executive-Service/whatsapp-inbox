@@ -599,6 +599,12 @@ export function createHandler(api: Api) {
         await api.updateGroupInfo(jid, info);
         return json(res, 200, store.getChat(jid));
       }
+      if (action === "/info" && method === "GET") {
+        const id = url.searchParams.get("id") ?? "";
+        const message = store.getMessage(jid, id);
+        if (!message) throw new HttpError(404, "Mensagem não encontrada.");
+        return json(res, 200, { message, receipts: store.messageReceipts(jid, id) });
+      }
       if (action === "/export" && method === "GET") {
         const withMedia = url.searchParams.get("media") === "1";
         const out = await api.exportChat(jid, withMedia);

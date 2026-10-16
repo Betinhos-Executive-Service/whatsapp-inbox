@@ -208,6 +208,12 @@ export type Message = {
   pending?: "sending" | "failed";
 };
 
+export type Receipt = { participant: string; name: string; deliveredAt: number | null; readAt: number | null; playedAt: number | null };
+export type MessageInfo = { message: Message; receipts: Receipt[] };
+
+/** Presença do contato vinda do servidor (evento SSE "presence"). */
+export type Presence = { state: "composing" | "recording" | "available" | "unavailable" | null; lastSeen: number | null };
+
 export type ContactCard = { name: string; phones: { number: string; wa: string | null }[] };
 
 export type LinkPreview = { url: string; title: string; description: string | null; image: string | null; site: string };
@@ -320,6 +326,8 @@ export const api = {
   /** Foto do grupo: JPEG em base64 (já redimensionado) ou remoção. */
   setGroupPhoto: (jid: string, data: string) => request<{ ok: true }>("POST", `${chatPath(jid)}/photo`, { data }),
   removeGroupPhoto: (jid: string) => request<{ ok: true }>("DELETE", `${chatPath(jid)}/photo`, {}),
+  /** Info da mensagem: entregue/lida/ouvida por quem (grupos). */
+  messageInfo: (jid: string, id: string) => request<MessageInfo>("GET", `${chatPath(jid)}/info?id=${encodeURIComponent(id)}`),
   /** Link do export da conversa (.txt ou .zip com mídia), para baixar fora do app desktop. */
   exportUrl: (jid: string, withMedia: boolean) => `${chatPath(jid)}/export?media=${withMedia ? 1 : 0}`,
   acceptInvite: (jid: string, id: string) => request<Chat>("POST", `${chatPath(jid)}/accept-invite`, { id }),

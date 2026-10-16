@@ -178,6 +178,9 @@ export type LabelExample = { label: string; snippet: string };
 
 export type Label = { name: string; description: string };
 
+/** Recibo de um participante do grupo para uma mensagem minha (Info da mensagem). */
+export type Receipt = { participant: string; name: string; deliveredAt: number | null; readAt: number | null; playedAt: number | null };
+
 export type IncomingMessage = Omit<Message, "media" | "quoted" | "deleted" | "sender" | "ack" | "editedAt" | "reactions" | "contacts" | "extra" | "poll" | "starred" | "forwarded"> & {
   rawJid: string;
   forwarded?: 0 | 1 | 2;
@@ -339,6 +342,15 @@ create table if not exists pins (
   until integer not null,
   at integer not null,
   primary key (chat_jid, message_id)
+);
+create table if not exists receipts (
+  chat_jid text not null references chats(jid) on delete cascade on update cascade,
+  message_id text not null,
+  participant text not null,
+  delivered_at integer,
+  read_at integer,
+  played_at integer,
+  primary key (chat_jid, message_id, participant)
 );
 `;
 
@@ -1029,6 +1041,7 @@ export class Store {
         this.q("delete from reactions where chat_jid = ? and message_id = ?").run(jid, id);
         this.q("delete from poll_votes where chat_jid = ? and poll_id = ?").run(jid, id);
         this.q("delete from pins where chat_jid = ? and message_id = ?").run(jid, id);
+        this.q("delete from receipts where chat_jid = ? and message_id = ?").run(jid, id);
         this.refreshLast(jid);
       }
       return gone;
@@ -1133,6 +1146,46 @@ export class Store {
       .q("update messages set ack = ? where chat_jid = ? and id = ? and from_me = 1 and coalesce(ack, 0) < ?")
       .run(ack, chatJid, id, ack).changes;
     return changed ? this.getMessage(chatJid, id) : null;
+  }
+
+  /**
+   * Recibo de um participante (grupo) para uma mensagem minha; cada marco só avança. Devolve a mensagem e quantos
+   * já leram (qualquer recibo põe pelo menos "entregue"; "lida por todos" é decidida por quem conhece o grupo).
+   */
+  recordReceipt(chatJid: string, id: string, participant: string, r: { deliveredAt?: number | null; readAt?: number | null; playedAt?: number | null }): { message: Message; readCount: number } | null {
+    return this.tx(() => {
+      const exists = this.q("select from_me from messages where chat_jid = ? and id = ?").get(chatJid, id) as Row | undefined;
+      if (!exists || exists.from_me !== 1) return null;
+      this
+        .q(
+          `insert into receipts (chat_jid, message_id, participant, delivered_at, read_at, played_at) values (?, ?, ?, ?, ?, ?)
+           on conflict (chat_jid, message_id, participant) do update set
+             delivered_at = coalesce(delivered_at, excluded.delivered_at),
+             read_at = coalesce(read_at, excluded.read_at),
+             played_at = coalesce(played_at, excluded.played_at)`,
+        )
+        .run(chatJid, id, participant, r.deliveredAt ?? r.readAt ?? r.playedAt ?? null, r.readAt ?? r.playedAt ?? null, r.playedAt ?? null);
+      const readCount = Number((this.q("select count(*) as n from receipts where chat_jid = ? and message_id = ? and read_at is not null").get(chatJid, id) as Row).n);
+      const message = this.setAck(chatJid, id, r.playedAt ? 5 : 3) ?? this.getMessage(chatJid, id);
+      return message ? { message, readCount } : null;
+    });
+  }
+
+  /** Quem recebeu, leu e ouviu uma mensagem minha, com nome resolvido (número quando não há contato). */
+  messageReceipts(chatJid: string, id: string): Receipt[] {
+    const rows = this
+      .q("select participant, delivered_at, read_at, played_at from receipts where chat_jid = ? and message_id = ? order by coalesce(read_at, 9e15), coalesce(delivered_at, 9e15)")
+      .all(chatJid, id) as Row[];
+    return rows.map((r) => {
+      const participant = String(r.participant);
+      return {
+        participant,
+        name: this.contactName(participant) ?? `+${participant.split("@")[0]}`,
+        deliveredAt: r.delivered_at == null ? null : Number(r.delivered_at),
+        readAt: r.read_at == null ? null : Number(r.read_at),
+        playedAt: r.played_at == null ? null : Number(r.played_at),
+      };
+    });
   }
 
   editMessage(chatJid: string, id: string, text: string, at = Date.now()): { message: Message; chat: Chat } | null {

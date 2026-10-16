@@ -1,4 +1,4 @@
-import { Brush, CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, MessageCircleReply, Pencil, Pin, PinOff, Plus, Reply, Star, StarOff, Trash2, UserRound } from "lucide-react";
+import { Brush, CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, Info, MessageCircleReply, Pencil, Pin, PinOff, Plus, Reply, Star, StarOff, Trash2, UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { mediaUrl, type Message } from "./api.ts";
 import { EmojiPicker, rememberEmoji } from "./emoji.tsx";
@@ -29,6 +29,8 @@ export type MessageMenuActions = {
   onPrivateReply: (m: Message) => void;
   /** Entra no modo de seleção com esta mensagem marcada. */
   onSelect: (m: Message) => void;
+  /** Info da mensagem: quando foi entregue, lida e ouvida (por quem, em grupo). */
+  onInfo: (m: Message) => void;
 };
 
 /** Prazos que o WhatsApp oferece para fixar. */
@@ -92,6 +94,7 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
             : [{ id: "pin", label: "Fixar", icon: <Pin size={16} aria-hidden />, disabled: !canAct, keep: true, sub: true, run: () => setView("pin") }]),
         ...(m.media ? [{ id: "download", label: "Baixar arquivo", icon: <Download size={16} aria-hidden />, href: mediaUrl(m, true) }] : []),
         ...(canEdit(m) ? [{ id: "edit", label: "Editar", icon: <Pencil size={16} aria-hidden />, disabled: !canAct, run: () => actions.onEdit(m) }] : []),
+        ...(m.fromMe && !m.pending ? [{ id: "info", label: "Info", icon: <Info size={16} aria-hidden />, run: () => actions.onInfo(m) }] : []),
         { id: "select", label: "Selecionar mensagens", icon: <CheckSquare size={16} aria-hidden />, run: () => actions.onSelect(m) },
         ...(author ? [{ id: "author", label: `Ver perfil de ${author.name}`, icon: <UserRound size={16} aria-hidden />, run: () => actions.onAuthor(author.jid, author.name) }] : []),
         { id: "delete", label: "Apagar", icon: <Trash2 size={16} aria-hidden />, danger: true, run: () => actions.onDelete(m) },

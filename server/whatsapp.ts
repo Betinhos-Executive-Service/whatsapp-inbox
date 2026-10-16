@@ -20,6 +20,7 @@ import makeWASocket, {
   type WAMessage,
   type WASocket,
 } from "@whiskeysockets/baileys";
+import { presenceOf, type Presence } from "./presence.ts";
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
@@ -163,8 +164,8 @@ export class WhatsApp extends EventEmitter<{
   /** Mensagem existente mudou: apagada para todos, editada, reação ou status de entrega. */
   update: [{ message: Message; chat: Chat }];
   chat: [Chat];
-  /** Contato digitando ou gravando áudio; null = parou. */
-  presence: [{ jid: string; state: "composing" | "recording" | null }];
+  /** Contato digitando, gravando áudio, online ou offline (com "visto por último" quando ele deixa ver); null = parou. */
+  presence: [{ jid: string } & Presence];
   /** Mensagem que o WhatsApp não confirmou saiu da conversa (a tela tira a bolha). */
   remove: [{ chatJid: string; id: string; chat: Chat }];
   /** Resultado de cada tentativa de envio (texto, anexo, enquete…), confirmado ou não, para o log. */
@@ -798,9 +799,7 @@ export class WhatsApp extends EventEmitter<{
     });
     sock.ev.on("presence.update", ({ id, presences }) => {
       if (!isConversation(id)) return;
-      const states = Object.values(presences).map((p) => p.lastKnownPresence);
-      const state = states.includes("recording") ? "recording" : states.includes("composing") ? "composing" : null;
-      this.emit("presence", { jid: this.canonical(id), state });
+      this.emit("presence", { jid: this.canonical(id), ...presenceOf(presences, isJidGroup(id) === true) });
     });
     // Recibos das minhas mensagens (entregue, lida, ouvida), estrela dada no celular e edição.
     sock.ev.on("messages.update", (list) => {
@@ -816,6 +815,32 @@ export class WhatsApp extends EventEmitter<{
         if (key.fromMe && typeof update.status === "number") message = this.store.setAck(chatJid, key.id, update.status);
         if (typeof update.starred === "boolean") message = this.store.setStarred(chatJid, key.id, update.starred) ?? message;
         if (message) this.emit("update", { message, chat: this.store.getChat(chatJid)! });
+      }
+    });
+    // Recibos por participante (só grupos): quem recebeu, leu ou ouviu cada mensagem minha. Em 1:1 vem só o status acima.
+    sock.ev.on("message-receipt.update", (list) => {
+      for (const { key, receipt } of list) {
+        const remote = key.remoteJid;
+        if (!key.id || !key.fromMe || !remote || isJidGroup(remote) !== true || !receipt.userJid || this.isMe(receipt.userJid)) continue;
+        const chatJid = this.canonical(remote);
+        const ms = (v: unknown) => (v ? Number(v) * 1000 : null);
+        const result = this.store.recordReceipt(chatJid, key.id, this.canonical(receipt.userJid), {
+          deliveredAt: ms(receipt.receiptTimestamp),
+          readAt: ms(receipt.readTimestamp),
+          playedAt: ms(receipt.playedTimestamp),
+        });
+        if (!result) continue;
+        this.emit("update", { message: result.message, chat: this.store.getChat(chatJid)! });
+        // Lida por todos (menos eu): tique azul, como o celular.
+        const id = key.id;
+        void this.participants(chatJid)
+          .then((people) => {
+            const others = people.filter((p) => !p.me).length;
+            if (!others || result.readCount < others) return;
+            const read = this.store.setAck(chatJid, id, 4);
+            if (read) this.emit("update", { message: read, chat: this.store.getChat(chatJid)! });
+          })
+          .catch(() => undefined);
       }
     });
   }
