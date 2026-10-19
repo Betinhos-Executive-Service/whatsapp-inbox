@@ -270,11 +270,17 @@ export type AppState = {
 };
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    // Servidor local fora do ar: o navegador só diz "Failed to fetch".
+    throw new Error("Sem comunicação com o WhatsApp Inbox. Confira se o app está aberto e tente de novo.");
+  }
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(data?.error ?? `Falha na comunicação com o app (${res.status}).`);
   return data as T;
