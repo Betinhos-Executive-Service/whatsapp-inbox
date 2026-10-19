@@ -36,7 +36,7 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
   notify: (kind: "error" | "success", text: string) => void;
 }) {
   const [note, setNote] = useState(chat.note ?? "");
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [reminders, setReminders] = useState<Reminder[] | null>(null);
   const [when, setWhen] = useState(() => toLocalInput(Date.now() + 3600_000));
   const [text, setText] = useState("");
@@ -83,7 +83,7 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
       lastSaved.current = value;
       setSaveState("saved");
     } catch (e) {
-      setSaveState("idle");
+      setSaveState("error");
       notify("error", `Nota não salva. ${(e as Error).message}`);
     }
   };
@@ -148,8 +148,18 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
             <h4 id="notes-note" className="notes__title">
               <StickyNote size={15} aria-hidden /> Nota interna
             </h4>
-            <span className={`notes__status${saveState === "saved" ? " is-saved" : ""}`} role="status">
-              {saveState === "saving" ? "Salvando…" : saveState === "saved" ? <><Check size={13} aria-hidden /> Salva</> : "Salva sozinha"}
+            <span
+              className={`notes__status${saveState === "saved" ? " is-saved" : saveState === "error" ? " is-error" : ""}`}
+              role="status"
+              title={saveState === "error" ? "Saia do campo para tentar de novo." : undefined}
+            >
+              {saveState === "saving"
+                ? "Salvando…"
+                : saveState === "saved"
+                  ? <><Check size={13} aria-hidden /> Salva</>
+                  : saveState === "error"
+                    ? "Não salva"
+                    : "Salva sozinha"}
             </span>
           </div>
           <textarea

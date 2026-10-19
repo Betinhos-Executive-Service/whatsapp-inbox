@@ -493,6 +493,8 @@ function ChatList(props: {
 
   const searchInput = useRef<HTMLInputElement>(null);
   const searching = query.trim() !== "";
+  // Nenhum contato bateu, mas a busca no texto das mensagens achou (ou ainda procura): não é "nada encontrado".
+  const onlyMessageHits = searching && filtered.length === 0 && !!messageQuery && (hitsLoading || hits.length > 0);
   const clearSearch = () => {
     setQuery("");
     searchInput.current?.focus();
@@ -587,7 +589,19 @@ function ChatList(props: {
           <div className="search-status" role="status">
             <Search size={14} aria-hidden />
             <p className="search-status__text">
-              <strong>{filtered.length}</strong> {filtered.length === 1 ? "resultado" : "resultados"} para <q>{query.trim()}</q>
+              {onlyMessageHits ? (
+                hitsLoading ? (
+                  <>Procurando <q>{query.trim()}</q> nas mensagens…</>
+                ) : (
+                  <>
+                    <strong>{hits.length}</strong> {hits.length === 1 ? "mensagem" : "mensagens"} com <q>{query.trim()}</q>
+                  </>
+                )
+              ) : (
+                <>
+                  <strong>{filtered.length}</strong> {filtered.length === 1 ? "resultado" : "resultados"} para <q>{query.trim()}</q>
+                </>
+              )}
             </p>
             <Button variant="ghost" size="compact" icon={<X size={14} aria-hidden />} onClick={clearSearch}>
               Limpar busca
@@ -609,6 +623,12 @@ function ChatList(props: {
               <li key={i} className="chat-item chat-item--skeleton" aria-hidden />
             ))}
           </ul>
+        ) : onlyMessageHits ? (
+          hitsLoading ? null : (
+            <p className="hint list-note">
+              Nenhum contato com <q>{query.trim()}</q>. Veja as mensagens encontradas abaixo.
+            </p>
+          )
         ) : filtered.length === 0 ? (
           <div className="empty">
             <Inbox size={36} aria-hidden />

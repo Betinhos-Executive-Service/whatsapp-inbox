@@ -8,3 +8,4 @@ data/
 .worktrees/
 .memsearch/
 *.mts
+.verificacao/

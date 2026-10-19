@@ -1,0 +1,2 @@
+- verificar-interface | ui/** | interface no navegador sem WhatsApp: lista, busca, status, conversa, notas, configurações e falha de conexão
+- verificar-servidor | server/**, tests/**, scripts/**, voucher/**, package.json, tsconfig.json | typecheck, testes e subida do servidor local
