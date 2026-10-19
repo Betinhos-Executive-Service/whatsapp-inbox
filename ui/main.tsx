@@ -389,6 +389,13 @@ function ChatList(props: {
   const peekChat = peek && peek.jid !== props.selected && !menu ? props.byJid.get(peek.jid) : undefined;
   const [showArchived, setShowArchived] = useState(false);
   const [onlyUnread, setOnlyUnread] = useState(false);
+  // Como no WhatsApp: com o filtro ligado, a conversa que já apareceu como não lida continua
+  // na lista depois de lida; só sai quando o filtro é desligado e ligado de novo.
+  const keptUnread = useRef(new Set<string>());
+  const toggleUnread = () => {
+    keptUnread.current = new Set();
+    setOnlyUnread((v) => !v);
+  };
   const [labelChoice, setLabel] = useState("");
   const label = props.useLabels ? labelChoice : "";
   const [query, setQuery] = useState("");
@@ -429,9 +436,14 @@ function ChatList(props: {
   const filtered = useMemo(() => {
     const q = normalize(deferredQuery.trim());
     const now = Date.now();
+    const kept = keptUnread.current;
+    const keepUnread = (c: Chat) => {
+      if (c.unread > 0 || c.markedUnread) kept.add(c.jid);
+      return kept.has(c.jid);
+    };
     const list = props.chats.filter(
       (c) =>
-        (!onlyUnread || c.unread > 0 || c.markedUnread) &&
+        (!onlyUnread || keepUnread(c)) &&
         (showArchived
           ? c.archived
           : !c.archived && (tab === "todas" || (c.status === tab && (tab === "resolvida" || !isSnoozed(c, now))))) &&
@@ -566,7 +578,7 @@ function ChatList(props: {
           className="unread-toggle"
           aria-pressed={onlyUnread}
           title={onlyUnread ? "Mostrar todas as conversas" : "Ver só as não lidas"}
-          onClick={() => setOnlyUnread((v) => !v)}
+          onClick={toggleUnread}
         >
           Não lidas
         </Button>
