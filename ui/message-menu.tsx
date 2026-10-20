@@ -1,6 +1,7 @@
-import { Brush, CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, MessageCircleReply, Pencil, Pin, PinOff, Reply, Star, StarOff, Trash2, UserRound } from "lucide-react";
+import { Brush, CheckSquare, ChevronLeft, Copy, Download, Eye, Forward, ImageIcon, Info, MessageCircleReply, Pencil, Pin, PinOff, Plus, Reply, Star, StarOff, Sticker, Trash2, UserRound } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { mediaUrl, type Message } from "./api.ts";
+import { EmojiPicker, rememberEmoji } from "./emoji.tsx";
 import { canEdit, REACTIONS } from "./message-extras.tsx";
 import { canCopyMedia } from "./media.tsx";
 
@@ -28,6 +29,10 @@ export type MessageMenuActions = {
   onPrivateReply: (m: Message) => void;
   /** Entra no modo de seleção com esta mensagem marcada. */
   onSelect: (m: Message) => void;
+  /** Info da mensagem: quando foi entregue, lida e ouvida (por quem, em grupo). */
+  onInfo: (m: Message) => void;
+  /** Imagem vira figurinha na bandeja de anexos desta conversa. */
+  onSticker: (m: Message) => void;
 };
 
 /** Prazos que o WhatsApp oferece para fixar. */
@@ -62,6 +67,8 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
   const panel = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: at.x, top: at.y });
   const [view, setView] = useState<"main" | "pin">("main");
+  /** Painel completo de emojis no lugar das 6 reações. */
+  const [more, setMore] = useState(false);
   const call = m.kind === "call";
 
   const items: Item[] = m.deleted
@@ -80,6 +87,7 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
           : []),
         ...(viewable ? [{ id: "view", label: "Visualizar", icon: <Eye size={16} aria-hidden />, run: () => actions.onView(m) }] : []),
         ...(m.media?.type === "image" ? [{ id: "edit-image", label: "Editar e enviar", icon: <Brush size={16} aria-hidden />, disabled: !canAct, run: () => actions.onEditImage(m) }] : []),
+        ...(m.media?.type === "image" ? [{ id: "to-sticker", label: "Enviar como figurinha", icon: <Sticker size={16} aria-hidden />, disabled: !canAct, run: () => actions.onSticker(m) }] : []),
         ...(call ? [] : [{ id: "forward", label: "Encaminhar", icon: <Forward size={16} aria-hidden />, disabled: !canAct, run: () => actions.onForward(m) }]),
         { id: "star", label: m.starred ? "Desfavoritar" : "Favoritar", icon: m.starred ? <StarOff size={16} aria-hidden /> : <Star size={16} aria-hidden />, run: () => actions.onStar(m) },
         ...(call
@@ -89,6 +97,7 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
             : [{ id: "pin", label: "Fixar", icon: <Pin size={16} aria-hidden />, disabled: !canAct, keep: true, sub: true, run: () => setView("pin") }]),
         ...(m.media ? [{ id: "download", label: "Baixar arquivo", icon: <Download size={16} aria-hidden />, href: mediaUrl(m, true) }] : []),
         ...(canEdit(m) ? [{ id: "edit", label: "Editar", icon: <Pencil size={16} aria-hidden />, disabled: !canAct, run: () => actions.onEdit(m) }] : []),
+        ...(m.fromMe && !m.pending ? [{ id: "info", label: "Info", icon: <Info size={16} aria-hidden />, run: () => actions.onInfo(m) }] : []),
         { id: "select", label: "Selecionar mensagens", icon: <CheckSquare size={16} aria-hidden />, run: () => actions.onSelect(m) },
         ...(author ? [{ id: "author", label: `Ver perfil de ${author.name}`, icon: <UserRound size={16} aria-hidden />, run: () => actions.onAuthor(author.jid, author.name) }] : []),
         { id: "delete", label: "Apagar", icon: <Trash2 size={16} aria-hidden />, danger: true, run: () => actions.onDelete(m) },
@@ -104,8 +113,8 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
       left: Math.max(gap, Math.min(at.x, window.innerWidth - width - gap)),
       top: Math.max(gap, at.y + height + gap > window.innerHeight ? at.y - height : at.y),
     });
-    el.querySelector<HTMLElement>("[role=menuitem]:not(:disabled)")?.focus();
-  }, [at, view]);
+    if (!more) el.querySelector<HTMLElement>("[role=menuitem]:not(:disabled)")?.focus();
+  }, [at, view, more]);
 
   useEffect(() => {
     const onDown = (e: PointerEvent) => !panel.current?.contains(e.target as Node) && onClose();
@@ -123,6 +132,11 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
   }, [onClose]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Com o painel de emojis aberto, as teclas são dele (busca, Esc).
+    if (more) {
+      if (e.key === "Escape" && !e.defaultPrevented) onClose();
+      return;
+    }
     const list = [...(panel.current?.querySelectorAll<HTMLElement>("[role=menuitem]:not(:disabled)") ?? [])];
     const i = list.indexOf(document.activeElement as HTMLElement);
     const go = (n: number) => list[(n + list.length) % list.length]?.focus();
@@ -153,8 +167,17 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
   };
 
   return (
-    <div ref={panel} className="bt-menu__panel ctx-menu" role="menu" aria-label="Opções da mensagem" style={pos} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}>
-      {!m.deleted && !call && view === "main" && (
+    <div ref={panel} className={`bt-menu__panel ctx-menu${more ? " ctx-menu--emoji" : ""}`} role="menu" aria-label="Opções da mensagem" style={pos} onKeyDown={onKeyDown} onContextMenu={(e) => e.preventDefault()}>
+      {more && (
+        <EmojiPicker
+          onPick={(emoji) => {
+            rememberEmoji(emoji);
+            pick(() => actions.onReact(m, mine === emoji ? "" : emoji));
+          }}
+          onClose={onClose}
+        />
+      )}
+      {!more && !m.deleted && !call && view === "main" && (
         <div className="ctx-menu__reactions" role="group" aria-label="Reagir">
           {REACTIONS.map((emoji) => (
             <button
@@ -171,9 +194,12 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
               {emoji}
             </button>
           ))}
+          <button type="button" role="menuitem" data-emoji className="ctx-menu__emoji" aria-label="Mais emojis" title="Mais emojis" disabled={!canAct} onClick={() => setMore(true)}>
+            <Plus size={16} aria-hidden />
+          </button>
         </div>
       )}
-      {items.map((item) =>
+      {!more && items.map((item) =>
         item.href ? (
           <a key={item.id} role="menuitem" className="bt-menu__item" href={item.href} download onClick={() => setTimeout(onClose)}>
             <span className="bt-menu__icon">{item.icon}</span>

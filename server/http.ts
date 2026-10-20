@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
@@ -47,6 +48,10 @@ export type Api = {
   sendMedia: (jid: string, file: { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number }, quotedId?: string) => Promise<void>;
   sendPoll: (jid: string, question: string, options: string[], multiple: boolean) => Promise<void>;
   businessQuickReplies: () => Promise<{ shortcut: string; text: string }[]>;
+  /** Etiquetas do WhatsApp Business: força o celular a reenviar as definições; devolve quantas existem. */
+  businessLabels: () => Promise<{ found: number }>;
+  /** Reflete no celular as etiquetas (ids do WhatsApp) adicionadas e removidas numa conversa. */
+  syncLabels: (jid: string, add: string[], remove: string[]) => void;
   vote: (jid: string, id: string, options: string[]) => Promise<unknown>;
   sendLocation: (jid: string, place: { lat: number; lng: number; name?: string; address?: string }) => Promise<void>;
   sendContacts: (jid: string, contacts: { name: string; phone: string }[]) => Promise<void>;
@@ -70,6 +75,8 @@ export type Api = {
   createGroup: (subject: string, participants: string[]) => Promise<unknown>;
   updateParticipants: (jid: string, participants: string[], action: "add" | "remove" | "promote" | "demote") => Promise<unknown>;
   updateGroupInfo: (jid: string, info: { subject?: string; description?: string }) => Promise<void>;
+  /** Troca (JPEG) ou remove (null) a foto do grupo. */
+  setGroupPhoto: (jid: string, jpeg: Buffer | null) => Promise<void>;
   acceptInvite: (jid: string, id: string) => Promise<unknown>;
   /** everyone = apagar para todos; me = só deste lado. synced = o celular também apagou. */
   deleteMessage: (jid: string, id: string, mode: "everyone" | "me") => Promise<{ synced: boolean }>;
@@ -136,6 +143,8 @@ export type Api = {
   proposeVoucher: (jid: string, caption: string, voucher: Voucher) => Promise<unknown>;
   /** Caminho de uma cópia consistente do banco, para download. */
   backup: () => Promise<string>;
+  /** Exporta a conversa (.txt, ou .zip com mídia) num arquivo temporário; quem chama apaga depois. */
+  exportChat: (jid: string, withMedia: boolean) => Promise<{ file: string; fileName: string; mimetype: string }>;
   /** Log de envios: arquivo e últimas linhas (mais recente primeiro). */
   sendLog: () => { file: string; lines: string[] };
   vigilanciaStatus: () => StatusVigilancia;
@@ -164,7 +173,7 @@ const TYPES: Record<string, string> = {
 };
 
 const labelsSchema = z
-  .array(z.object({ name: z.string().trim().min(1).max(40), description: z.string().trim().max(300) }))
+  .array(z.object({ name: z.string().trim().min(1).max(40), description: z.string().trim().max(300), waId: z.string().min(1).max(64).nullable().optional() }))
   .min(2, "Cadastre pelo menos duas etiquetas.")
   .max(30)
   .refine((l) => new Set(l.map((x) => x.name.toLowerCase())).size === l.length, "Há etiquetas com o mesmo nome.");
@@ -292,6 +301,8 @@ const sendMediaSchema = z.object({
   seconds: z.number().positive().max(24 * 3600).optional(),
   viewOnce: z.boolean().optional(),
   quotedId: z.string().min(1).max(200).optional(),
+  waveform: z.array(z.number().int().min(0).max(100)).length(64).optional(),
+  sticker: z.boolean().optional(),
 });
 
 /** Resposta proposta por uma IA (MCP); mesmos limites do envio de texto e de anexo. */
@@ -483,7 +494,12 @@ export function createHandler(api: Api) {
         if (patch.snoozedUntil && patch.snoozedUntil <= Date.now()) throw new HttpError(400, "Escolha um horário no futuro para adiar.");
         // "Marcar como lida" zera as não lidas e manda os recibos, como abrir a conversa.
         if (patch.markedUnread === false) await api.markRead(jid);
-        store.updateChat(jid, { ...patch, markedUnread: patch.markedUnread || undefined });
+        const before = store.getChat(jid);
+        const after = store.updateChat(jid, { ...patch, markedUnread: patch.markedUnread || undefined });
+        if (before && after && (patch.label !== undefined || patch.extraLabels)) {
+          const diff = store.waLabelDiff(before, after);
+          if (diff.add.length || diff.remove.length) api.syncLabels(jid, diff.add, diff.remove);
+        }
         if (patch.note !== undefined) store.setNote(jid, patch.note);
         if (patch.archived !== undefined) api.syncArchive(jid, patch.archived);
         if (patch.mutedUntil !== undefined) api.syncMute(jid, patch.mutedUntil);
@@ -491,6 +507,10 @@ export function createHandler(api: Api) {
         if (patch.markedUnread) api.syncUnread(jid, true);
         api.onChatChanged(jid);
         return json(res, 200, store.getChat(jid));
+      }
+      if (action === "/search" && method === "GET") {
+        const q = (url.searchParams.get("q") ?? "").slice(0, 200);
+        return json(res, 200, store.searchInChat(jid, q));
       }
       if (action === "/messages" && method === "GET") {
         const around = url.searchParams.get("around");
@@ -594,6 +614,42 @@ export function createHandler(api: Api) {
         await api.updateGroupInfo(jid, info);
         return json(res, 200, store.getChat(jid));
       }
+      if (action === "/info" && method === "GET") {
+        const id = url.searchParams.get("id") ?? "";
+        const message = store.getMessage(jid, id);
+        if (!message) throw new HttpError(404, "Mensagem não encontrada.");
+        return json(res, 200, { message, receipts: store.messageReceipts(jid, id) });
+      }
+      if (action === "/export" && method === "GET") {
+        const withMedia = url.searchParams.get("media") === "1";
+        const out = await api.exportChat(jid, withMedia);
+        try {
+          const size = (await stat(out.file)).size;
+          res.writeHead(200, {
+            "content-type": out.mimetype,
+            "content-length": size,
+            "content-disposition": `attachment; filename="${out.fileName.replace(/[^ -~]/g, "_").replace(/"/g, "'")}"; filename*=UTF-8''${encodeURIComponent(out.fileName)}`,
+            "cache-control": "no-store",
+          });
+          await new Promise<void>((resolve, reject) => createReadStream(out.file).on("error", reject).on("end", resolve).pipe(res));
+          return;
+        } finally {
+          await rm(out.file, { force: true });
+        }
+      }
+      if (action === "/photo" && (method === "POST" || method === "DELETE")) {
+        if (!jid.endsWith("@g.us")) throw new HttpError(400, "Só grupos têm foto editável aqui.");
+        if (method === "DELETE") {
+          await api.setGroupPhoto(jid, null);
+          return json(res, 200, { ok: true });
+        }
+        const { data } = parse(z.object({ data: z.string().min(1) }), await readJson(req, 2 * 1024 * 1024));
+        const jpeg = Buffer.from(data, "base64");
+        if (jpeg.length < 4 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8) throw new HttpError(400, "A foto precisa ser um JPEG.");
+        if (jpeg.length > 1024 * 1024) throw new HttpError(400, "A foto precisa ter até 1 MB.");
+        await api.setGroupPhoto(jid, jpeg);
+        return json(res, 200, { ok: true });
+      }
       if (action === "/accept-invite" && method === "POST") {
         const { id } = parse(z.object({ id: z.string().min(1).max(200) }), await readJson(req));
         return json(res, 200, await api.acceptInvite(jid, id));
@@ -627,7 +683,7 @@ export function createHandler(api: Api) {
         return json(res, 200, { ok: true });
       }
       if (action === "/react" && method === "POST") {
-        const { id, emoji } = parse(z.object({ id: z.string().min(1).max(200), emoji: z.string().max(16) }), await readJson(req));
+        const { id, emoji } = parse(z.object({ id: z.string().min(1).max(200), emoji: z.string().max(32) }), await readJson(req));
         await api.react(jid, id, emoji);
         return json(res, 200, store.getMessage(jid, id));
       }
@@ -830,6 +886,13 @@ export function createHandler(api: Api) {
       const imported = await api.businessQuickReplies();
       const merged = mergeQuickReplies(store.listQuickReplies(), imported);
       return json(res, 200, { list: store.saveQuickReplies(merged.list), added: merged.added, updated: merged.updated, found: imported.length });
+    }
+    if (path === "/api/labels/import" && method === "POST") {
+      await readJson(req);
+      const { found } = await api.businessLabels();
+      const result = store.importWaLabels();
+      api.onChatChanged("*");
+      return json(res, 200, { labels: store.listLabels(), found, ...result });
     }
     if (path === "/api/labels" && method === "GET") return json(res, 200, store.listLabels());
     if (path === "/api/labels" && method === "PUT") {
