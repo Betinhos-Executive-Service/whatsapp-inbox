@@ -21,6 +21,10 @@ import { readPrefs, savePrefs, type Prefs } from "./prefs.ts";
 import { DEFAULT_USD_BRL, estimateCostUsd, type Provider as UsageProvider, type TokenUsage, type UsageKind } from "./pricing.ts";
 import { JEV_MODEL, type Jev } from "./jev.ts";
 import type { ConnectionState, OutgoingFile, WhatsApp } from "./whatsapp.ts";
+import { FORWARDED_MANY } from "./text.ts";
+import { exportFileName, renderExport } from "./export.ts";
+import { zipSync } from "./zip.ts";
+import { writeFile } from "node:fs/promises";
 import { aplicarPatch, criarVigilancia, lerConfig, type PatchVigilancia, type StatusVigilancia } from "./vigilancia/index.ts";
 import { MODELO as MODELO_VIGILANCIA } from "./vigilancia/mensagem.ts";
 import type { Vigilancia } from "./vigilancia/job.ts";
@@ -565,10 +569,16 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   /** Áudio curto não ganha resumo automático: a transcrição já basta. */
   const AUTO_SUMMARY_SECONDS = 15;
 
-  async function sendMedia(jid: string, file: OutgoingFile, quotedId?: string) {
-    const id = await connected().sendMedia(jid, file, { quoted: quotedId ? store.messageKey(jid, quotedId) : null });
+  async function sendMedia(jid: string, file: OutgoingFile, quotedId?: string, forwardingScore?: number) {
+    const id = await connected().sendMedia(jid, file, { quoted: quotedId ? store.messageKey(jid, quotedId) : null, forwardingScore });
     // Visualização única não fica no histórico; não guarda cópia local.
     if (id && !file.viewOnce) await cacheMedia(join(options.dataDir, "media"), jid, id, file.ptt ? "audio/ogg" : file.mimetype, file.body).catch(() => undefined);
+  }
+
+  /** Álbum: fotos/vídeos agrupados no celular do destinatário; cada mídia enviada ganha cópia local. */
+  async function sendAlbum(jid: string, files: OutgoingFile[], quotedId?: string) {
+    const ids = await connected().sendAlbum(jid, files, { quoted: quotedId ? store.messageKey(jid, quotedId) : null });
+    await Promise.all(ids.map((id, i) => (files[i] ? cacheMedia(join(options.dataDir, "media"), jid, id, files[i].mimetype, files[i].body).catch(() => undefined) : undefined)));
   }
 
   const photos = new PhotoCache(join(options.dataDir, "photos"), store, {
@@ -623,10 +633,13 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       await connected().send(jid, text, { quoted: opts.quotedId ? store.messageKey(opts.quotedChat ?? jid, opts.quotedId) : null, mentions: opts.mentions, mentionAll: opts.mentionAll });
     },
     sendMedia,
+    sendAlbum,
     sendPoll: async (jid, question, options, multiple) => {
       await connected().sendPoll(jid, question, options, multiple);
     },
     businessQuickReplies: () => connected().businessQuickReplies(),
+    businessLabels: () => connected().businessLabels(),
+    syncLabels: (jid, add, remove) => void wa?.setChatLabels(jid, add, remove).catch((e: Error) => console.warn(`Etiquetas não sincronizadas com o celular: ${e.message}`)),
     vote: (jid, id, options) => connected().votePoll(jid, id, options),
     sendLocation: async (jid, place) => {
       await connected().sendLocation(jid, place);
@@ -655,6 +668,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     setBlocked: (jid, blocked) => connected().setBlocked(jid, blocked),
     leaveGroup: async (jid) => {
       await connected().leaveGroup(jid);
+      broadcast("chat", store.getChat(jid));
+    },
+    setGroupPhoto: async (jid, jpeg) => {
+      await connected().setGroupPhoto(jid, jpeg);
       broadcast("chat", store.getChat(jid));
     },
     deleteChat: async (jid) => {
@@ -701,12 +718,14 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         return;
       }
       if (m.kind === "call" || m.kind === "system") throw new Error("Avisos e ligações não podem ser encaminhados.");
+      // Selo "Encaminhada" no destino: o score cresce a cada encaminhamento (≥ 5 vira "muitas vezes").
+      const forwardingScore = m.forwarded === 2 ? FORWARDED_MANY : m.forwarded === 1 ? 2 : 1;
       if (m.media?.type === "sticker") {
         const file = await readMedia(from, id);
-        return sendMedia(to, { body: file.body, mimetype: "image/webp", fileName: "figurinha.webp", sticker: true });
+        return sendMedia(to, { body: file.body, mimetype: "image/webp", fileName: "figurinha.webp", sticker: true }, undefined, forwardingScore);
       }
       if (!m.media) {
-        await connected().send(to, text);
+        await connected().send(to, text, { forwardingScore });
         return;
       }
       // Mídia: baixa (ou lê do cache) e envia de novo, com a mesma legenda.
@@ -720,7 +739,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         caption: caption || undefined,
         ptt: m.media.ptt,
         seconds: m.media.seconds ?? undefined,
-      });
+      }, undefined, forwardingScore);
     },
     watch: async (jid) => wa?.watchPresence(jid),
     typing: async (jid, state) => {
@@ -921,6 +940,28 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     vigilanciaStatus,
     vigilanciaSalvar,
     vigilanciaCiclo,
+    exportChat: async (jid, withMedia) => {
+      const chat = store.getChat(jid);
+      if (!chat) throw new Error("Conversa não encontrada.");
+      const rows = store.exportRows(jid);
+      const fileName = exportFileName(chat.name, withMedia);
+      const file = join(tmpdir(), `whatsapp-inbox-export-${process.pid}-${Date.now()}.${withMedia ? "zip" : "txt"}`);
+      if (!withMedia) {
+        await writeFile(file, renderExport(rows, { chatName: chat.name, withMedia: false }).text, "utf8");
+        return { file, fileName, mimetype: "text/plain; charset=utf-8" };
+      }
+      // Mídia do cache (ou baixada do WhatsApp); a que expirou fica marcada no texto em vez de derrubar o export.
+      const loaded = new Map<string, Buffer>();
+      for (const r of rows) {
+        if (!r.media || r.deleted) continue;
+        const m = await readMedia(jid, r.id).catch(() => null);
+        if (m) loaded.set(r.id, m.body);
+      }
+      const { text, attachments } = renderExport(rows, { chatName: chat.name, withMedia: true, available: (id) => loaded.has(id) });
+      const entries = [{ name: fileName.replace(/\.zip$/, ".txt"), data: Buffer.from(text, "utf8") }, ...attachments.map((a) => ({ name: a.name, data: loaded.get(a.id)! }))];
+      await writeFile(file, zipSync(entries));
+      return { file, fileName, mimetype: "application/zip" };
+    },
     backup: async () => {
       const file = join(tmpdir(), `whatsapp-inbox-backup-${process.pid}-${Date.now()}.db`);
       store.db.prepare("vacuum into ?").run(file);

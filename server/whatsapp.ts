@@ -14,11 +14,15 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   normalizeMessageContent,
   proto,
+  S_WHATSAPP_NET,
   useMultiFileAuthState,
   type WACallEvent,
   type WAMessage,
   type WASocket,
 } from "@whiskeysockets/baileys";
+import { presenceOf, type Presence } from "./presence.ts";
+import { albumParentId } from "./text.ts";
+import { albumCounts } from "./media.ts";
 import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
@@ -102,9 +106,14 @@ function isConversation(jid: string | null | undefined): jid is string {
 }
 
 /** `viewOnce`: visualização única (só foto, vídeo e voz); o destinatário abre uma vez e a mídia some. */
-export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number; sticker?: boolean; viewOnce?: boolean };
-/** Resposta a uma mensagem (citação) e menções com @. */
-export type SendOptions = { quoted?: MessageKeyRef | null; mentions?: string[]; mentionAll?: boolean };
+export type OutgoingFile = { body: Buffer; mimetype: string; fileName: string; caption?: string; ptt?: boolean; seconds?: number; sticker?: boolean; viewOnce?: boolean; /** Voz: 64 amostras 0..100 (o Baileys só calcula com audio-decode, que não está instalado). */ waveform?: number[] };
+/** Resposta a uma mensagem (citação), menções com @ e, ao encaminhar, o score para o selo "Encaminhada". */
+export type SendOptions = { quoted?: MessageKeyRef | null; mentions?: string[]; mentionAll?: boolean; forwardingScore?: number };
+
+/** `contextInfo` do selo "Encaminhada" (o Baileys mescla no conteúdo da mensagem). */
+function forwardedContext(opts: SendOptions) {
+  return opts.forwardingScore ? { contextInfo: { isForwarded: true, forwardingScore: opts.forwardingScore } } : {};
+}
 
 export type Participant = { jid: string; name: string; phone: string | null; admin: boolean; me: boolean };
 export type Profile = {
@@ -157,8 +166,8 @@ export class WhatsApp extends EventEmitter<{
   /** Mensagem existente mudou: apagada para todos, editada, reação ou status de entrega. */
   update: [{ message: Message; chat: Chat }];
   chat: [Chat];
-  /** Contato digitando ou gravando áudio; null = parou. */
-  presence: [{ jid: string; state: "composing" | "recording" | null }];
+  /** Contato digitando, gravando áudio, online ou offline (com "visto por último" quando ele deixa ver); null = parou. */
+  presence: [{ jid: string } & Presence];
   /** Mensagem que o WhatsApp não confirmou saiu da conversa (a tela tira a bolha). */
   remove: [{ chatJid: string; id: string; chat: Chat }];
   /** Resultado de cada tentativa de envio (texto, anexo, enquete…), confirmado ou não, para o log. */
@@ -289,6 +298,7 @@ export class WhatsApp extends EventEmitter<{
     if (ephemeral !== null) return this.applyEphemeral(chatJid, ephemeral, m, live, quiet);
     const extracted = viewOnce ? viewOnceText(wrapped ? VIEW_ONCE_LABEL[wrapped] : undefined, !!m.key.fromMe) : extractText(content);
     const media = viewOnce ? null : extractMedia(content);
+    if (media) media.album = albumParentId(content, m.message);
     if (!extracted) return;
     const at = timestamp(m);
     const group = isJidGroup(raw) === true;
@@ -320,6 +330,7 @@ export class WhatsApp extends EventEmitter<{
       quoted: ctx.quoted ? JSON.stringify(this.quoteRef(chatJid, ctx.quoted, group)) : null,
       extra: extra ? JSON.stringify(extra) : null,
       ack: m.key.fromMe ? (m.status ?? null) : null,
+      forwarded: ctx.forwarded,
     };
     const isLive = this.isLive(chatJid, at, live);
     // Enviada agora: guarda o proto para reenviar se o WhatsApp do contato pedir retry.
@@ -472,6 +483,8 @@ export class WhatsApp extends EventEmitter<{
       if (chat && !quiet) this.emit("chat", chat);
     }
     if (type >= STUB.ADD && type <= STUB.LEAVE) this.groupCache.delete(m.key.remoteJid!);
+    // Outro admin trocou a foto: a cópia local fica velha; a próxima abertura busca de novo.
+    if (type === STUB.ICON) this.store.forgetPhoto(chatJid);
     const text = (() => {
       switch (type) {
         case STUB.CREATE:
@@ -669,7 +682,10 @@ export class WhatsApp extends EventEmitter<{
       if (update.accountSettings) this.store.keepArchived = !update.accountSettings.unarchiveChats;
       void saveCreds();
       // Chave nova do celular (pedida em syncArchives): agora dá para enviar e receber o arquivamento.
-      if (update.myAppStateKeyId && this.state.status === "conectado") setTimeout(() => void this.syncArchives(sock), 3000);
+      if (update.myAppStateKeyId && this.state.status === "conectado") {
+        setTimeout(() => void this.syncArchives(sock), 3000);
+        setTimeout(() => void this.pushLabels(sock).catch(() => undefined), 3500);
+      }
     });
 
     sock.ev.on("connection.update", async (u) => {
@@ -794,9 +810,7 @@ export class WhatsApp extends EventEmitter<{
     });
     sock.ev.on("presence.update", ({ id, presences }) => {
       if (!isConversation(id)) return;
-      const states = Object.values(presences).map((p) => p.lastKnownPresence);
-      const state = states.includes("recording") ? "recording" : states.includes("composing") ? "composing" : null;
-      this.emit("presence", { jid: this.canonical(id), state });
+      this.emit("presence", { jid: this.canonical(id), ...presenceOf(presences, isJidGroup(id) === true) });
     });
     // Recibos das minhas mensagens (entregue, lida, ouvida), estrela dada no celular e edição.
     sock.ev.on("messages.update", (list) => {
@@ -812,6 +826,42 @@ export class WhatsApp extends EventEmitter<{
         if (key.fromMe && typeof update.status === "number") message = this.store.setAck(chatJid, key.id, update.status);
         if (typeof update.starred === "boolean") message = this.store.setStarred(chatJid, key.id, update.starred) ?? message;
         if (message) this.emit("update", { message, chat: this.store.getChat(chatJid)! });
+      }
+    });
+    // Etiquetas do WhatsApp Business: definições e associações mudadas no celular (e o eco das nossas).
+    sock.ev.on("labels.edit", (label) => {
+      if (this.store.applyWaLabel(label)) this.emit("reload");
+    });
+    sock.ev.on("labels.association", ({ type, association }) => {
+      if (association.type !== "label_jid") return;
+      const jid = this.canonical(association.chatId);
+      const chat = this.store.applyWaAssociation(jid, association.labelId, type === "add");
+      if (chat) this.emit("chat", chat);
+    });
+    // Recibos por participante (só grupos): quem recebeu, leu ou ouviu cada mensagem minha. Em 1:1 vem só o status acima.
+    sock.ev.on("message-receipt.update", (list) => {
+      for (const { key, receipt } of list) {
+        const remote = key.remoteJid;
+        if (!key.id || !key.fromMe || !remote || isJidGroup(remote) !== true || !receipt.userJid || this.isMe(receipt.userJid)) continue;
+        const chatJid = this.canonical(remote);
+        const ms = (v: unknown) => (v ? Number(v) * 1000 : null);
+        const result = this.store.recordReceipt(chatJid, key.id, this.canonical(receipt.userJid), {
+          deliveredAt: ms(receipt.receiptTimestamp),
+          readAt: ms(receipt.readTimestamp),
+          playedAt: ms(receipt.playedTimestamp),
+        });
+        if (!result) continue;
+        this.emit("update", { message: result.message, chat: this.store.getChat(chatJid)! });
+        // Lida por todos (menos eu): tique azul, como o celular.
+        const id = key.id;
+        void this.participants(chatJid)
+          .then((people) => {
+            const others = people.filter((p) => !p.me).length;
+            if (!others || result.readCount < others) return;
+            const read = this.store.setAck(chatJid, id, 4);
+            if (read) this.emit("update", { message: read, chat: this.store.getChat(chatJid)! });
+          })
+          .catch(() => undefined);
       }
     });
   }
@@ -851,6 +901,49 @@ export class WhatsApp extends EventEmitter<{
    * Relê do celular as respostas rápidas do WhatsApp Business. Zera a versão das coleções do app state
    * para receber o retrato completo (o que já existe é reaplicado sem efeito). Só leitura no celular.
    */
+  /**
+   * Força o celular a reenviar o app state "regular" (onde vivem as etiquetas do WhatsApp Business); os eventos
+   * labels.* gravam o espelho. Devolve quantas etiquetas ativas existem depois disso.
+   */
+  async businessLabels(): Promise<{ found: number }> {
+    const sock = this.ready();
+    if (!(await this.hasAppStateKey(sock))) {
+      await this.requestAppStateKey(sock);
+      throw new Error("Falta a chave de sincronização do celular. Abra o WhatsApp no celular e tente de novo em instantes.");
+    }
+    await sock.authState.keys.set({ "app-state-sync-version": { regular: null } });
+    await sock.resyncAppState(["regular"], false);
+    return { found: this.store.listWaLabels().filter((l) => !l.deleted).length };
+  }
+
+  /** Associa/desassocia etiquetas do WhatsApp Business a uma conversa, no celular. Sem conexão ou chave, fica pendente. */
+  async setChatLabels(jid: string, add: string[], remove: string[]): Promise<void> {
+    const pending = this.pendingLabels.get(jid) ?? new Map<string, boolean>();
+    for (const id of add) pending.set(id, true);
+    for (const id of remove) pending.set(id, false);
+    this.pendingLabels.set(jid, pending);
+    if (this.sock) await this.pushLabels(this.sock);
+  }
+
+  private pendingLabels = new Map<string, Map<string, boolean>>();
+
+  private async pushLabels(sock: WASocket): Promise<void> {
+    for (const [jid, pending] of [...this.pendingLabels]) {
+      const rawJid = this.store.lastMessageKey(jid)?.rawJid ?? jid;
+      for (const [labelId, add] of [...pending]) {
+        try {
+          if (add) await sock.addChatLabel(rawJid, labelId);
+          else await sock.removeChatLabel(rawJid, labelId);
+        } catch (error) {
+          if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(sock);
+          throw error;
+        }
+        if (pending.get(labelId) === add) pending.delete(labelId);
+      }
+      if (!pending.size) this.pendingLabels.delete(jid);
+    }
+  }
+
   async businessQuickReplies(): Promise<{ shortcut: string; text: string }[]> {
     const sock = this.ready();
     if (!(await this.hasAppStateKey(sock))) {
@@ -988,7 +1081,7 @@ export class WhatsApp extends EventEmitter<{
     const mentions = list.length || all ? { ...(list.length ? { mentions: list } : {}), ...(all ? { mentionAll: true } : {}) } : {};
     // Prévia do primeiro link (título, descrição e miniatura), como o WhatsApp faz ao digitar.
     const preview = await sendPreview(text).catch(() => null);
-    const sent = await sock.sendMessage(jid, { text, ...mentions, ...(preview ? { linkPreview: preview } : {}) }, this.sendOptions(jid, opts.quoted));
+    const sent = await sock.sendMessage(jid, { text, ...mentions, ...(preview ? { linkPreview: preview } : {}), ...forwardedContext(opts) }, this.sendOptions(jid, opts.quoted));
     return (await this.confirm(sent)).key.id ?? null;
   }
 
@@ -1168,6 +1261,22 @@ export class WhatsApp extends EventEmitter<{
     this.groupCache.delete(jid);
   }
 
+  /**
+   * Troca (JPEG já redimensionado pela tela) ou remove (null) a foto do grupo. Só admin consegue; o WhatsApp recusa o resto.
+   * O `updateProfilePicture` do Baileys exige jimp/sharp para redimensionar, que não estão instalados, então o IQ vai direto.
+   */
+  async setGroupPhoto(jid: string, jpeg: Buffer | null): Promise<void> {
+    if (!isJidGroup(jid)) throw new Error("Só grupos têm foto editável aqui.");
+    const sock = this.ready();
+    await sock.query({
+      tag: "iq",
+      attrs: { to: S_WHATSAPP_NET, type: "set", xmlns: "w:profile:picture", target: jid },
+      ...(jpeg ? { content: [{ tag: "picture", attrs: { type: "image" }, content: jpeg }] } : {}),
+    });
+    this.store.forgetPhoto(jid);
+    this.groupCache.delete(jid);
+  }
+
   /** Sai do grupo: os participantes veem o aviso de saída. A conversa continua aqui, só leitura. */
   async leaveGroup(jid: string): Promise<void> {
     if (!isJidGroup(jid)) throw new Error("Só dá para sair de grupos.");
@@ -1336,15 +1445,40 @@ export class WhatsApp extends EventEmitter<{
     return this.tracked(kind, jid, () => this.sendFile(jid, file, opts));
   }
 
-  private async sendFile(jid: string, file: OutgoingFile, opts: SendOptions): Promise<string | null> {
-    const sock = this.ready();
+  /**
+   * Álbum: várias fotos/vídeos que o celular do destinatário agrupa numa bolha só. Como o WhatsApp Web:
+   * primeiro um `albumMessage` com as contagens, depois cada mídia com `messageAssociation` apontando
+   * para a chave do cabeçalho. A citação vai só na primeira mídia. Devolve os ids das mídias.
+   */
+  async sendAlbum(jid: string, files: OutgoingFile[], opts: SendOptions = {}): Promise<string[]> {
+    const ids: string[] = [];
+    await this.tracked("álbum", jid, async () => {
+      const sock = this.ready();
+      const counts = albumCounts(files.map((f) => f.mimetype));
+      const header = await sock.sendMessage(jid, { album: counts }, this.sendOptions(jid, null));
+      const parent = header?.key;
+      if (!parent?.id || !parent.remoteJid) throw new Error("O WhatsApp não devolveu o cabeçalho do álbum.");
+      const albumParentKey = { remoteJid: parent.remoteJid, id: parent.id, fromMe: true };
+      for (const [i, file] of files.entries()) {
+        const sent = await this.confirm(
+          await sock.sendMessage(jid, { ...this.fileContent(file), albumParentKey, ...forwardedContext(opts) }, this.sendOptions(jid, i === 0 ? opts.quoted : null)),
+        );
+        if (sent.key.id) ids.push(sent.key.id);
+      }
+      return parent.id;
+    });
+    return ids;
+  }
+
+  /** Conteúdo de mídia como o `sendMessage` do Baileys espera, pelo mimetype. */
+  private fileContent(file: OutgoingFile) {
     const { body, fileName } = file;
     const caption = file.caption?.trim() || undefined;
     const base = file.mimetype.split(";")[0];
-    const content = file.sticker
+    return file.sticker
       ? { sticker: body, mimetype: "image/webp" }
       : file.ptt
-      ? { audio: body, ptt: true, mimetype: "audio/ogg; codecs=opus", ...(file.seconds ? { seconds: Math.round(file.seconds) } : {}) }
+      ? { audio: body, ptt: true, mimetype: "audio/ogg; codecs=opus", ...(file.seconds ? { seconds: Math.round(file.seconds) } : {}), ...(file.waveform?.length ? { waveform: Uint8Array.from(file.waveform) } : {}) }
       : base.startsWith("image/") && base !== "image/gif" && base !== "image/svg+xml"
         ? { image: body, mimetype: base, caption }
         : base === "video/mp4"
@@ -1352,13 +1486,18 @@ export class WhatsApp extends EventEmitter<{
           : base.startsWith("audio/")
             ? { audio: body, mimetype: base }
             : { document: body, mimetype: base || "application/octet-stream", fileName, caption };
+  }
+
+  private async sendFile(jid: string, file: OutgoingFile, opts: SendOptions): Promise<string | null> {
+    const sock = this.ready();
+    const content = this.fileContent(file);
     if (file.viewOnce) {
       if (!("image" in content || "video" in content || ("audio" in content && file.ptt))) {
         throw new Error("Visualização única só vale para foto, vídeo e mensagem de voz.");
       }
       return this.sendViewOnce(sock, jid, content, opts);
     }
-    const sent = await this.confirm(await sock.sendMessage(jid, content, this.sendOptions(jid, opts.quoted)));
+    const sent = await this.confirm(await sock.sendMessage(jid, { ...content, ...forwardedContext(opts) }, this.sendOptions(jid, opts.quoted)));
     return sent.key.id ?? null;
   }
 

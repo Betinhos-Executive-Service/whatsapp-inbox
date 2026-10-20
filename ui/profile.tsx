@@ -1,11 +1,14 @@
-import { ArrowLeft, Ban, Check, Copy, LoaderCircle, LogOut, MoreVertical, Pencil, Shield, ShieldOff, Timer, Trash2, UserMinus, UserRoundPlus, Users, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, Ban, Camera, Check, Copy, Download, ImageOff, LoaderCircle, LogOut, MoreVertical, Pencil, Shield, ShieldOff, Timer, Trash2, UserMinus, UserRoundPlus, Users, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Chat, type Participant, type ParticipantAction, type ParticipantResult, type Profile } from "./api.ts";
-import { Avatar } from "./avatar.tsx";
+import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AddParticipantsDialog, GroupInfoDialog } from "./dialogs.tsx";
+import { loadBitmap } from "./image-editor/render.ts";
+import { base64 } from "./media.tsx";
 import { MediaSection, PersonaSection } from "./profile-sections.tsx";
 import { ResizeHandle } from "./resize.tsx";
-import { Button, Dialog, Menu, Select } from "./ds/index.ts";
+import { Button, Dialog, Menu, Select, Switch } from "./ds/index.ts";
+import { desktop } from "./desktop.ts";
 
 /** Quem está aberto no painel: a própria conversa ou um participante de grupo. */
 export type ProfileTarget = { jid: string; name: string; phone: string | null; isGroup: boolean };
@@ -42,6 +45,33 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
+/** Foto de grupo como o WhatsApp manda: quadrado central, 640 px, JPEG. */
+export const GROUP_PHOTO_SIDE = 640;
+
+/** Recorte quadrado centralizado de `w`×`h` (origem e lado), para a foto do grupo. */
+export function squareCrop(w: number, h: number): { x: number; y: number; side: number } {
+  const side = Math.max(1, Math.min(w, h));
+  return { x: Math.floor((w - side) / 2), y: Math.floor((h - side) / 2), side };
+}
+
+async function toGroupPhoto(file: Blob): Promise<string> {
+  const bitmap = await loadBitmap(file);
+  try {
+    const { x, y, side } = squareCrop(bitmap.width, bitmap.height);
+    const canvas = document.createElement("canvas");
+    canvas.width = GROUP_PHOTO_SIDE;
+    canvas.height = GROUP_PHOTO_SIDE;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Este computador não consegue preparar a imagem.");
+    ctx.drawImage(bitmap, x, y, side, side, 0, 0, GROUP_PHOTO_SIDE, GROUP_PHOTO_SIDE);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    if (!blob) throw new Error("Não foi possível converter a foto.");
+    return base64(new Uint8Array(await blob.arrayBuffer()));
+  } finally {
+    bitmap.close();
+  }
+}
+
 /** Ação confirmada antes de ir para o WhatsApp (bloquear, remover do grupo). */
 type Confirm = { title: string; text: string; action: string; run: () => Promise<void> };
 
@@ -67,6 +97,10 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
   const [editing, setEditing] = useState<"subject" | "description" | null>(null);
   const [adding, setAdding] = useState(false);
   const [savingEphemeral, setSavingEphemeral] = useState(false);
+  const [savingPhoto, setSavingPhoto] = useState(false);
+  const [exporting, setExporting] = useState<"closed" | "open" | "busy">("closed");
+  const [exportMedia, setExportMedia] = useState(false);
+  const photoInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => setStack([target]), [target.jid]);
 
@@ -148,6 +182,57 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
       },
     });
 
+  const changePhoto = async (file: File | undefined) => {
+    if (!file) return;
+    setSavingPhoto(true);
+    try {
+      await api.setGroupPhoto(chat.jid, await toGroupPhoto(file));
+      refreshAvatars();
+      notify("success", "Foto do grupo atualizada.");
+    } catch (e) {
+      notify("error", `A foto não foi trocada. ${(e as Error).message}`);
+    } finally {
+      setSavingPhoto(false);
+      if (photoInput.current) photoInput.current.value = "";
+    }
+  };
+
+  /** Nome do arquivo como o celular exporta. */
+  const exportName = () => `Conversa do WhatsApp com ${chat.name}`.replace(/[<>:"/\|?*\u0000-\u001f]/g, "_").trim() + (exportMedia ? ".zip" : ".txt");
+
+  const runExport = async () => {
+    setExporting("busy");
+    try {
+      const bridge = desktop();
+      if (bridge) {
+        const path = await bridge.saveExport(chat.jid, exportMedia, exportName());
+        if (path) notify("success", `Conversa exportada em ${path}`);
+      } else {
+        const a = document.createElement("a");
+        a.href = api.exportUrl(chat.jid, exportMedia);
+        a.download = exportName();
+        a.click();
+        notify("success", "Exportação iniciada.");
+      }
+      setExporting("closed");
+    } catch (e) {
+      notify("error", `A conversa não foi exportada. ${(e as Error).message}`);
+      setExporting("open");
+    }
+  };
+
+  const removePhoto = () =>
+    setConfirm({
+      title: "Remover a foto do grupo?",
+      text: "O grupo fica sem foto para todos os participantes.",
+      action: "Remover foto",
+      run: async () => {
+        await api.removeGroupPhoto(chat.jid);
+        refreshAvatars();
+        notify("success", "Foto do grupo removida.");
+      },
+    });
+
   const deleteChat = () =>
     setConfirm({
       title: `Apagar a conversa com ${chat.name}?`,
@@ -188,7 +273,23 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
       </header>
       <div className="notes__body">
         <div className="profile__hero">
-          <Avatar jid={current.jid} name={current.name} className="avatar--xl" full />
+          <span className="profile__photo">
+            <Avatar jid={current.jid} name={current.name} className="avatar--xl" full />
+            {isChat && group?.meAdmin && connected && (
+              <>
+                <Menu
+                  trigger={(t) => (
+                    <Button {...t} variant="secondary" size="compact" className="profile__photo-button" aria-label="Foto do grupo" title="Foto do grupo" disabled={savingPhoto} icon={savingPhoto ? <LoaderCircle className="spin" size={14} aria-hidden /> : <Camera size={14} aria-hidden />} />
+                  )}
+                  actions={[
+                    { id: "change", label: "Trocar foto", icon: <Camera size={16} aria-hidden />, onSelect: () => photoInput.current?.click() },
+                    { id: "remove", label: "Remover foto", icon: <ImageOff size={16} aria-hidden />, onSelect: removePhoto },
+                  ]}
+                />
+                <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => void changePhoto(e.target.files?.[0])} />
+              </>
+            )}
+          </span>
           <div className="profile__id">
             <h4 className="heading-card profile__name">{group?.subject ?? current.name}</h4>
             {current.phone && (
@@ -332,6 +433,9 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
         )}
         {stack.length === 1 && (
           <section className="stack profile__section">
+            <Button variant="secondary" icon={<Download size={16} aria-hidden />} onClick={() => setExporting("open")}>
+              Exportar conversa
+            </Button>
             {current.isGroup && connected && (
               <Button variant="danger" icon={<LogOut size={16} aria-hidden />} onClick={leaveGroup}>
                 Sair do grupo
@@ -360,6 +464,26 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
         }
       >
         {confirm?.text}
+      </Dialog>
+      <Dialog
+        open={exporting !== "closed"}
+        onClose={() => exporting !== "busy" && setExporting("closed")}
+        title="Exportar conversa"
+        actions={
+          <>
+            <Button variant="secondary" disabled={exporting === "busy"} onClick={() => setExporting("closed")}>
+              Cancelar
+            </Button>
+            <Button variant="primary" loading={exporting === "busy"} onClick={() => void runExport()}>
+              Exportar
+            </Button>
+          </>
+        }
+      >
+        <div className="stack">
+          <p className="hint">Mesmo formato do "Exportar conversa" do celular: um arquivo de texto com data, hora e autor de cada mensagem.</p>
+          <Switch label="Incluir fotos, vídeos e áudios (.zip)" description="Mídias antigas podem já não estar disponíveis no WhatsApp." checked={exportMedia} disabled={exporting === "busy"} onChange={(e) => setExportMedia(e.target.checked)} />
+        </div>
       </Dialog>
       {editing && group && (
         <GroupInfoDialog

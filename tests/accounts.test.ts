@@ -74,7 +74,7 @@ test("copiar configurações entre contas: leva etiquetas e chaves, nunca o núm
     snapshot.quickReplies = [{ shortcut: "oi", text: "Olá!" }];
     b.importSettings(snapshot);
     const copied = b.exportSettings();
-    assert.deepEqual(copied.labels, [{ name: "Cliente", description: "Cliente ativo" }]);
+    assert.deepEqual(copied.labels, [{ name: "Cliente", description: "Cliente ativo", waId: null }]);
     assert.deepEqual(copied.quickReplies, [{ shortcut: "oi", text: "Olá!" }]);
     assert.ok(copied.settings.some(([k, v]) => k === "groq_api_key" && v === "gsk_teste"));
     assert.ok(!copied.settings.some(([k]) => k === "account"));
