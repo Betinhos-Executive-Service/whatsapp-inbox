@@ -24,7 +24,7 @@ import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
 import type { DeliveryEntry } from "./delivery-log.ts";
 import { buildVcard, extractContacts } from "./contacts.ts";
-import { chronological, isLiveArrival } from "./history.ts";
+import { arrivalAt, chronological, isLiveArrival } from "./history.ts";
 import { sendPreview } from "./link-preview.ts";
 import { decryptVote, encryptVote, optionsFromHashes } from "./poll.ts";
 import {
@@ -142,7 +142,7 @@ const PARTICIPANT_ERRORS: Record<string, string> = {
 const STUB = { CREATE: 20, SUBJECT: 21, ICON: 22, DESCRIPTION: 24, RESTRICT: 25, ANNOUNCE: 26, ADD: 27, REMOVE: 28, PROMOTE: 29, DEMOTE: 30, INVITE: 31, LEAVE: 32, MISSED_VOICE: 40, MISSED_VIDEO: 41, MISSED_GROUP_VOICE: 45, MISSED_GROUP_VIDEO: 46, JOIN_REQUEST: 71, EPHEMERAL: 72 } as const;
 
 const joinNames = (names: string[]) => (names.length <= 1 ? (names[0] ?? "alguém") : `${names.slice(0, -1).join(", ")} e ${names[names.length - 1]}`);
-const timestamp = (m: WAMessage) => Number(m.messageTimestamp ?? 0) * 1000 || Date.now();
+const timestamp = (m: { messageTimestamp?: unknown }) => arrivalAt(m.messageTimestamp);
 
 /** Em grupo, o texto salvo começa com "Autor: "; na citação vai só o conteúdo. */
 function quoteText(ref: MessageKeyRef): string {
@@ -526,7 +526,7 @@ export class WhatsApp extends EventEmitter<{
     const known = this.calls.get(c.id);
     const chatJid = known?.chatJid ?? this.canonical(from, c.callerPn);
     const id = `call-${c.id}`;
-    const at = c.date instanceof Date && c.date.getTime() > 0 ? c.date.getTime() : Date.now();
+    const at = arrivalAt(c.date instanceof Date ? c.date.getTime() / 1000 : undefined);
     const info = (outcome: CallInfo["outcome"], seconds: number | null = null): CallInfo => ({
       video: known?.video ?? !!c.isVideo,
       group: known?.group ?? !!c.isGroup,
@@ -576,7 +576,7 @@ export class WhatsApp extends EventEmitter<{
 
   /** Editar e reagir mudam uma mensagem já guardada. `quiet`: lote do histórico, sem evento. */
   private applyAction(chatJid: string, action: Action, m: WAMessage, quiet: boolean) {
-    const at = Number(m.messageTimestamp ?? 0) * 1000 || Date.now();
+    const at = timestamp(m);
     const message = action.type === "reaction"
       ? this.store.setReaction(chatJid, action.id, m.key.fromMe ? "me" : (m.key.participant ?? chatJid), action.emoji, at)
       : (this.store.editMessage(chatJid, action.id, action.text, at)?.message ?? null);
@@ -806,7 +806,7 @@ export class WhatsApp extends EventEmitter<{
         let message: Message | null = null;
         const edited = editedText(update);
         if (edited !== null) {
-          const at = Number(update.messageTimestamp ?? 0) * 1000 || Date.now();
+          const at = timestamp(update);
           message = this.store.editMessage(chatJid, key.id, edited, at)?.message ?? null;
         }
         if (key.fromMe && typeof update.status === "number") message = this.store.setAck(chatJid, key.id, update.status);
