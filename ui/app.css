@@ -264,6 +264,7 @@ ul, ol { margin: 0; padding: 0; }
 .list-pane__scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--bt-space-1) 0 var(--bt-space-6); }
 
 .chat-list { list-style: none; }
+.list-note { padding: var(--bt-space-3) var(--bt-space-4); }
 .chat-item {
   display: flex; gap: var(--bt-space-3); width: 100%;
   padding: var(--bt-space-2-5) var(--bt-space-4);
@@ -713,6 +714,7 @@ ul, ol { margin: 0; padding: 0; }
 .notes__title { display: flex; align-items: center; gap: var(--bt-space-1-5); margin: 0; font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-bold); color: var(--bt-color-text-primary); }
 .notes__status { display: inline-flex; align-items: center; gap: 3px; font-size: var(--bt-font-size-11); color: var(--bt-color-text-secondary); }
 .notes__status.is-saved { color: var(--bt-color-success); }
+.notes__status.is-error { color: var(--bt-color-danger); }
 .notes__new { display: flex; flex-direction: column; gap: var(--bt-space-2); padding: var(--bt-space-3); border: var(--bt-border-width-default) dashed var(--bt-color-border); border-radius: var(--bt-radius-md); background-color: var(--bt-color-surface-neutral); }
 .notes__presets { display: flex; flex-wrap: wrap; gap: var(--bt-space-1-5); }
 .notes__usage { font-size: var(--bt-font-size-11); }

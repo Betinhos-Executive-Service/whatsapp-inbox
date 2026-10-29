@@ -393,6 +393,13 @@ function ChatList(props: {
   const peekChat = peek && peek.jid !== props.selected && !menu ? props.byJid.get(peek.jid) : undefined;
   const [showArchived, setShowArchived] = useState(false);
   const [onlyUnread, setOnlyUnread] = useState(false);
+  // Como no WhatsApp: com o filtro ligado, a conversa que já apareceu como não lida continua
+  // na lista depois de lida; só sai quando o filtro é desligado e ligado de novo.
+  const keptUnread = useRef(new Set<string>());
+  const toggleUnread = () => {
+    keptUnread.current = new Set();
+    setOnlyUnread((v) => !v);
+  };
   const [labelChoice, setLabel] = useState("");
   const label = props.useLabels ? labelChoice : "";
   const [query, setQuery] = useState("");
@@ -433,9 +440,14 @@ function ChatList(props: {
   const filtered = useMemo(() => {
     const q = normalize(deferredQuery.trim());
     const now = Date.now();
+    const kept = keptUnread.current;
+    const keepUnread = (c: Chat) => {
+      if (c.unread > 0 || c.markedUnread) kept.add(c.jid);
+      return kept.has(c.jid);
+    };
     const list = props.chats.filter(
       (c) =>
-        (!onlyUnread || c.unread > 0 || c.markedUnread) &&
+        (!onlyUnread || keepUnread(c)) &&
         (showArchived
           ? c.archived
           : !c.archived && (tab === "todas" || (c.status === tab && (tab === "resolvida" || !isSnoozed(c, now))))) &&
@@ -485,6 +497,8 @@ function ChatList(props: {
 
   const searchInput = useRef<HTMLInputElement>(null);
   const searching = query.trim() !== "";
+  // Nenhum contato bateu, mas a busca no texto das mensagens achou (ou ainda procura): não é "nada encontrado".
+  const onlyMessageHits = searching && filtered.length === 0 && !!messageQuery && (hitsLoading || hits.length > 0);
   const clearSearch = () => {
     setQuery("");
     searchInput.current?.focus();
@@ -570,7 +584,7 @@ function ChatList(props: {
           className="unread-toggle"
           aria-pressed={onlyUnread}
           title={onlyUnread ? "Mostrar todas as conversas" : "Ver só as não lidas"}
-          onClick={() => setOnlyUnread((v) => !v)}
+          onClick={toggleUnread}
         >
           Não lidas
         </Button>
@@ -579,7 +593,19 @@ function ChatList(props: {
           <div className="search-status" role="status">
             <Search size={14} aria-hidden />
             <p className="search-status__text">
-              <strong>{filtered.length}</strong> {filtered.length === 1 ? "resultado" : "resultados"} para <q>{query.trim()}</q>
+              {onlyMessageHits ? (
+                hitsLoading ? (
+                  <>Procurando <q>{query.trim()}</q> nas mensagens…</>
+                ) : (
+                  <>
+                    <strong>{hits.length}</strong> {hits.length === 1 ? "mensagem" : "mensagens"} com <q>{query.trim()}</q>
+                  </>
+                )
+              ) : (
+                <>
+                  <strong>{filtered.length}</strong> {filtered.length === 1 ? "resultado" : "resultados"} para <q>{query.trim()}</q>
+                </>
+              )}
             </p>
             <Button variant="ghost" size="compact" icon={<X size={14} aria-hidden />} onClick={clearSearch}>
               Limpar busca
@@ -601,6 +627,12 @@ function ChatList(props: {
               <li key={i} className="chat-item chat-item--skeleton" aria-hidden />
             ))}
           </ul>
+        ) : onlyMessageHits ? (
+          hitsLoading ? null : (
+            <p className="hint list-note">
+              Nenhum contato com <q>{query.trim()}</q>. Veja as mensagens encontradas abaixo.
+            </p>
+          )
         ) : filtered.length === 0 ? (
           <div className="empty">
             <Inbox size={36} aria-hidden />

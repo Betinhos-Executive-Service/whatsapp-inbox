@@ -8,3 +8,9 @@ data/
 .worktrees/
 .memsearch/
 *.mts
+.verificacao/
+.claude/*
+!.claude/skills/
+!.claude/launch.json
+!.claude/hooks/
+!.claude/settings.json

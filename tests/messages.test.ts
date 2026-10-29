@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { DELETED_TEXT, Store, type IncomingMessage } from "../server/db.ts";
-import { chronological, isLiveArrival } from "../server/history.ts";
+import { arrivalAt, chronological, isLiveArrival } from "../server/history.ts";
 import { PhotoCache } from "../server/photos.ts";
 import { extractContext, revokedId } from "../server/text.ts";
 
@@ -175,4 +175,25 @@ test("mensagem atrasada mais nova que a conversa conta como ao vivo", () => {
   s.insertMessage(msg({ id: "atrasada", at: ontem }), isLiveArrival(true, ontem, s.getChat(PN)!.lastAt, win, now));
   assert.equal(s.getChat(PN)!.unread, 1);
   assert.equal(s.getChat(PN)!.status, "aberta");
+});
+
+test("carimbo do WhatsApp no futuro (relógio adiantado) vira o horário atual e avisa uma vez; sem carimbo usa agora", () => {
+  const now = 1_800_000_000_000;
+  const warn = mock.method(console, "warn", () => undefined);
+  // Carimbo normal, em segundos, vira ms.
+  assert.equal(arrivalAt(1_799_999_000, now), 1_799_999_000_000);
+  // 13 min no futuro: grava agora e avisa o desvio; o segundo no mesmo minuto não repete o aviso.
+  assert.equal(arrivalAt(1_800_000_780, now), now);
+  assert.equal(arrivalAt(1_800_000_900, now + 1000), now + 1000);
+  assert.equal(warn.mock.callCount(), 1);
+  assert.match(String(warn.mock.calls[0]?.arguments[0]), /13 min no futuro/);
+  // Sem carimbo (0, undefined): agora.
+  assert.equal(arrivalAt(0, now), now);
+  assert.equal(arrivalAt(undefined, now), now);
+  // Na conversa, a recebida "futura" não passa na frente da enviada daqui.
+  const s = new Store(":memory:");
+  s.insertMessage(msg({ id: "enviada", fromMe: true, at: now - 1000 }), false);
+  s.insertMessage(msg({ id: "recebida", at: arrivalAt(1_800_000_780, now) }), true);
+  assert.deepEqual(s.listMessages(PN, null).map((m) => m.id), ["enviada", "recebida"]);
+  warn.mock.restore();
 });
