@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("desktop", {
   setUnread: (total: number, image: string | null) => ipcRenderer.send("app:unread", total, image),
   copyFile: (chatJid: string, id: string) => ipcRenderer.invoke("media:copy-file", chatJid, id),
   openFile: (chatJid: string, id: string) => ipcRenderer.invoke("media:open", chatJid, id),
+  saveExport: (chatJid: string, withMedia: boolean, defaultName: string) => ipcRenderer.invoke("chat:export", chatJid, withMedia, defaultName),
   onOpenChat: (callback: (jid: string) => void) => {
     const listener = (_event: unknown, jid: string) => callback(jid);
     ipcRenderer.on("app:open-chat", listener);
