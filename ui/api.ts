@@ -351,6 +351,8 @@ export const api = {
   watch: (jid: string) => request<{ ok: true }>("POST", `${chatPath(jid)}/watch`, {}),
   typing: (jid: string, state: "composing" | "paused") => request<{ ok: true }>("POST", `${chatPath(jid)}/typing`, { state }),
   sendMedia: (jid: string, file: OutgoingMedia) => request<Chat>("POST", `${chatPath(jid)}/send-media`, file),
+  /** Álbum: ≥ 2 fotos/vídeos numa bolha só no celular do destinatário; a citação vale para o álbum inteiro. */
+  sendAlbum: (jid: string, files: OutgoingMedia[], quotedId?: string) => request<Chat>("POST", `${chatPath(jid)}/album`, { files, quotedId }),
   update: (jid: string, patch: ChatPatch & { note?: string | null }) => request<Chat>("PATCH", chatPath(jid), patch),
   sendContacts: (jid: string, contacts: { name: string; phone: string }[]) => request<Chat>("POST", `${chatPath(jid)}/send-contacts`, { contacts }),
   linkPreview: (url: string) => request<LinkPreview | null>("GET", `/api/link-preview?url=${encodeURIComponent(url)}`),
