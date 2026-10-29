@@ -1541,9 +1541,10 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       // A resposta (citação) vai só no primeiro.
       // Figurinha não leva legenda (o WhatsApp ignora): o texto vai no primeiro anexo que não é figurinha.
       const captionAt = attachments.findIndex((a) => !a.sticker);
-      // Duas ou mais fotos/vídeos comuns (sem visualização única) saem como álbum: o celular do destinatário
-      // agrupa numa bolha só. O resto (voz, figurinha, documento, GIF) vai um a um, como antes.
-      const album = viewOnce ? [] : attachments.filter((a) => !a.voice && !a.sticker && canViewOnce(a));
+      // Álbum desligado: o WhatsApp não confirma o cabeçalho do álbum (timeout de 20 s) e as fotos não
+      // saem. Até corrigir, cada foto/vídeo vai um a um, como antes da v0.0.119.
+      const ALBUM_ENABLED = false;
+      const album = viewOnce || !ALBUM_ENABLED ? [] : attachments.filter((a) => !a.voice && !a.sticker && canViewOnce(a));
       if (album.length >= 2) {
         const files = await Promise.all(album.map((a) => fileToOutgoing(a.file, a === attachments[captionAt] && text ? text : undefined)));
         onChat(await api.sendAlbum(chat.jid, files, album[0] === attachments[0] ? mediaQuotedId : undefined));
