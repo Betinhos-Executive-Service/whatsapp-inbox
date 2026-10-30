@@ -2,7 +2,7 @@
 
 export function cameraError(error: unknown): string {
   const name = error instanceof DOMException ? error.name : "";
-  if (name === "NotAllowedError" || name === "SecurityError") return "O acesso à câmera foi negado. Libere a câmera para o app nas configurações do Windows.";
+  if (name === "NotAllowedError" || name === "SecurityError") return "O acesso à câmera foi negado. Libere a câmera para o app nas configurações do sistema.";
   if (name === "NotFoundError" || name === "OverconstrainedError") return "Nenhuma câmera encontrada. Conecte uma câmera e tente de novo.";
   if (name === "NotReadableError") return "A câmera está em uso por outro programa ou falhou ao abrir.";
   return "Câmera indisponível. Confira se ela está conectada e liberada para o app.";

@@ -5,14 +5,19 @@ import { resolve } from "node:path";
 export const root = resolve(import.meta.dirname, "..");
 const dist = resolve(root, "dist");
 
-/** Incrementa o PATCH da versão de build (não é versão Git) e devolve versão + data ISO. */
-export async function bumpVersion() {
+/**
+ * Incrementa o PATCH da versão de build (não é versão Git) e devolve versão + data ISO.
+ * `bump: false` mantém a versão gravada (AppImage da versão que o Windows já publicou).
+ */
+export async function bumpVersion({ bump = true } = {}) {
   const path = resolve(root, "package.json");
   const pkg = JSON.parse(await readFile(path, "utf8"));
   const m = String(pkg.version).match(/^(\d+)\.(\d+)\.(\d+)$/);
   if (!m) throw new Error(`Versão inválida em package.json: ${pkg.version}`);
-  pkg.version = `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
-  await writeFile(path, `${JSON.stringify(pkg, null, 2)}\n`);
+  if (bump) {
+    pkg.version = `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
+    await writeFile(path, `${JSON.stringify(pkg, null, 2)}\n`);
+  }
   return { version: pkg.version, date: new Date().toISOString(), port: pkg.config.port };
 }
 

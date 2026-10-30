@@ -38,7 +38,7 @@ export function setupUpdates(options: {
 
   const trusted = options.trusted;
 
-  // Log em %APPDATA%WhatsApp Inboxlogsatualizacao.log: mostra onde uma atualização parou.
+  // Log em logs/atualizacao.log na pasta de dados do app: mostra onde uma atualização parou.
   const logDir = join(app.getPath("userData"), "logs");
   const write = (level: string) => (...args: unknown[]) => {
     try {
@@ -119,9 +119,11 @@ export function setupUpdates(options: {
       headers: { accept: "application/vnd.github+json", "user-agent": "whatsapp-inbox" },
     });
     if (!res.ok) throw new Error(`GitHub respondeu ${res.status}.`);
-    const releases = (await res.json()) as { tag_name: string; draft: boolean; prerelease: boolean; published_at: string; body: string | null }[];
+    const releases = (await res.json()) as { tag_name: string; draft: boolean; prerelease: boolean; published_at: string; body: string | null; assets: { name: string }[] }[];
+    // Só versões com instalador para este sistema (as antigas não têm o do Linux).
+    const feed = process.platform === "linux" ? "latest-linux.yml" : "latest.yml";
     return releases
-      .filter((r) => !r.draft && !r.prerelease && VERSION.test(r.tag_name.replace(/^v/, "")))
+      .filter((r) => !r.draft && !r.prerelease && VERSION.test(r.tag_name.replace(/^v/, "")) && r.assets.some((a) => a.name === feed))
       .map((r) => ({ version: r.tag_name.replace(/^v/, ""), date: r.published_at, notes: r.body ?? "", current: r.tag_name.replace(/^v/, "") === app.getVersion() }));
   });
 

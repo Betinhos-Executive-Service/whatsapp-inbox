@@ -26,7 +26,7 @@ export type DesktopBridge = {
   setUnread: (total: number, image: string | null) => void;
   /** Põe o arquivo da mídia na área de transferência (colar no Explorer, e-mail etc.). */
   copyFile: (chatJid: string, id: string) => Promise<void>;
-  /** Abre a mídia no app padrão do Windows, sem salvar em Downloads. */
+  /** Abre a mídia no app padrão do computador, sem salvar em Downloads. */
   openFile: (chatJid: string, id: string) => Promise<void>;
   /** Exporta a conversa (.txt ou .zip com mídia) pelo diálogo "Salvar como"; devolve o caminho ou null se cancelou. */
   saveExport: (chatJid: string, withMedia: boolean, defaultName: string) => Promise<string | null>;

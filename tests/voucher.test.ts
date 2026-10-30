@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { readVoucherAssets, renderVoucherPdf, voucherFileName, voucherHtml, voucherSchema } from "../server/voucher.ts";
+import { findBrowser, readVoucherAssets, renderVoucherPdf, voucherFileName, voucherHtml, voucherSchema } from "../server/voucher.ts";
 
 const dir = join(import.meta.dirname, "..", "voucher");
 const voucher = voucherSchema.parse({
@@ -34,7 +36,7 @@ test("voucher: template alterado falha em vez de gerar PDF errado", async () => 
 
 test("voucher: nome do arquivo e erro sem navegador", async () => {
   assert.equal(voucherFileName(voucher), "Voucher OS-2 + OS-1.pdf");
-  await assert.rejects(renderVoucherPdf(dir, voucher, null), /Edge ou Chrome não encontrado/);
+  await assert.rejects(renderVoucherPdf(dir, voucher, null), /Edge, Chrome ou Chromium não encontrado/);
 });
 
 test("voucher: chama o navegador em perfil temporário e lê o PDF gerado", async () => {
@@ -48,4 +50,15 @@ test("voucher: chama o navegador em perfil temporário e lê o PDF gerado", asyn
   assert.equal(pdf.body.toString(), "%PDF-1.4 teste");
   assert.ok(args.some((a) => a.startsWith("--user-data-dir=")));
   assert.match(args.at(-1)!, /^file:.*voucher\.html\?ids=%5B/);
+});
+
+test("voucher: no Linux acha o navegador no PATH, Chrome antes do Chromium", () => {
+  const a = mkdtempSync(join(tmpdir(), "voucher-a-"));
+  const b = mkdtempSync(join(tmpdir(), "voucher-b-"));
+  writeFileSync(join(a, "chromium"), "");
+  writeFileSync(join(b, "google-chrome-stable"), "");
+  assert.equal(findBrowser({ PATH: [a, b].join(delimiter) }, "linux"), join(b, "google-chrome-stable"));
+  assert.equal(findBrowser({ PATH: a }, "linux"), join(a, "chromium"));
+  assert.equal(findBrowser({ PATH: "" }, "linux"), null);
+  assert.equal(findBrowser({ PATH: "/snap/bin" }, "linux"), null);
 });

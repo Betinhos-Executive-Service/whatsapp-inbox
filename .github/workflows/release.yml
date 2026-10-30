@@ -1,5 +1,6 @@
 # Toda alteração na main vira versão nova: incrementa o PATCH, gera o instalador e publica
-# no GitHub Releases (os apps instalados avisam da atualização). O commit "release: vX"
+# no GitHub Releases (os apps instalados avisam da atualização). Depois, o job "linux" anexa
+# o AppImage da mesma versão (mesma tag) à release. O commit "release: vX"
 # feito aqui não dispara de novo: push com GITHUB_TOKEN não inicia workflows.
 name: release
 
@@ -19,6 +20,9 @@ jobs:
   release:
     if: ${{ !startsWith(github.event.head_commit.message, 'release:') }}
     runs-on: windows-latest
+    outputs:
+      # Vazio quando a main andou durante o build e esta execução não publicou nada.
+      version: ${{ steps.publish.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,6 +39,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - name: Publicar versão
+        id: publish
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,3 +48,25 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           pnpm release
+
+  linux:
+    needs: release
+    if: ${{ needs.release.outputs.version != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.version }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node node_modules/electron/install.js
+      # typecheck e testes já rodaram no job do Windows, no mesmo commit.
+      - name: Anexar AppImage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TZ: America/Sao_Paulo
+        run: pnpm release

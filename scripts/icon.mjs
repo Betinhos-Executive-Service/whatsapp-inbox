@@ -1,7 +1,8 @@
-// Gera dist/icon.ico sem arquivo externo: bloco de marca do design system
+// Gera dist/icon.ico (e o PNG do Linux) sem arquivo externo: bloco de marca do design system
 // (quadrado azul de ação com cantos de 11/40) e um balão de conversa branco.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
 
 const BLUE = [0x21, 0x59, 0xd2]; // --bt-color-action
 const WHITE = [0xff, 0xff, 0xff];
@@ -29,7 +30,8 @@ function sample(u, v) {
   return line(0.36, 0.67) || line(0.48, 0.56) ? BLUE : WHITE;
 }
 
-function image(size) {
+/** Pixels RGBA, de cima para baixo. */
+function rgba(size) {
   const ss = 4; // supersampling para bordas suaves
   const pixels = Buffer.alloc(size * size * 4);
   for (let y = 0; y < size; y++) {
@@ -42,14 +44,30 @@ function image(size) {
           r += c[0]; g += c[1]; b += c[2]; a++;
         }
       }
-      // DIB: linhas de baixo para cima, canais BGRA.
-      const i = ((size - 1 - y) * size + x) * 4;
+      const i = (y * size + x) * 4;
       if (a) {
-        pixels[i] = Math.round(b / a);
+        pixels[i] = Math.round(r / a);
         pixels[i + 1] = Math.round(g / a);
-        pixels[i + 2] = Math.round(r / a);
+        pixels[i + 2] = Math.round(b / a);
       }
       pixels[i + 3] = Math.round((a / (ss * ss)) * 255);
+    }
+  }
+  return pixels;
+}
+
+function image(size) {
+  const src = rgba(size);
+  const pixels = Buffer.alloc(src.length);
+  // DIB: linhas de baixo para cima, canais BGRA.
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const s = (y * size + x) * 4;
+      const d = ((size - 1 - y) * size + x) * 4;
+      pixels[d] = src[s + 2];
+      pixels[d + 1] = src[s + 1];
+      pixels[d + 2] = src[s];
+      pixels[d + 3] = src[s + 3];
     }
   }
   const header = Buffer.alloc(40);
@@ -81,6 +99,28 @@ export function writeIcon(path) {
   });
   mkdirSync(resolve(path, ".."), { recursive: true });
   writeFileSync(path, Buffer.concat([dir, ...images]));
+}
+
+/** PNG para Linux (janela, bandeja, notificação e o ícone do AppImage). */
+export function writePng(path, size = 512) {
+  const src = rgba(size);
+  const raw = Buffer.alloc((size * 4 + 1) * size);
+  for (let y = 0; y < size; y++) src.copy(raw, y * (size * 4 + 1) + 1, y * size * 4, (y + 1) * size * 4);
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc32(body), body.length + 4);
+    return out;
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(size, 0);
+  ihdr.writeUInt32BE(size, 4);
+  ihdr[8] = 8; // 8 bits por canal
+  ihdr[9] = 6; // RGBA
+  mkdirSync(resolve(path, ".."), { recursive: true });
+  writeFileSync(path, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]));
 }
 
 if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, "/")}`) writeIcon(resolve("dist/icon.ico"));

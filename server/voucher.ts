@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 
@@ -102,9 +102,20 @@ export function voucherFileName(voucher: Voucher): string {
   return `Voucher ${os.join(" + ")}.pdf`;
 }
 
-/** Edge (vem com o Windows) ou Chrome. VOUCHER_BROWSER força um caminho. */
-export function findBrowser(env: NodeJS.ProcessEnv = process.env): string | null {
+/**
+ * Linux: navegadores no PATH. Sem snap (/snap/bin e o chromium-browser do Ubuntu, que só chama o snap):
+ * o snap tem /tmp próprio e não acharia o voucher.
+ */
+const LINUX_BROWSERS = ["google-chrome-stable", "google-chrome", "microsoft-edge-stable", "microsoft-edge", "chromium"];
+
+/** Edge (vem com o Windows) ou Chrome; no Linux, Chrome, Edge ou Chromium. VOUCHER_BROWSER força um caminho. */
+export function findBrowser(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | null {
   if (env.VOUCHER_BROWSER) return existsSync(env.VOUCHER_BROWSER) ? env.VOUCHER_BROWSER : null;
+  if (platform !== "win32") {
+    const dirs = (env.PATH ?? "").split(delimiter).filter((d) => d && !d.startsWith("/snap/"));
+    for (const name of LINUX_BROWSERS) for (const dir of dirs) if (existsSync(join(dir, name))) return join(dir, name);
+    return null;
+  }
   const roots = [env["ProgramFiles(x86)"], env.ProgramFiles, env.LOCALAPPDATA].filter((r): r is string => !!r);
   const apps = [join("Microsoft", "Edge", "Application", "msedge.exe"), join("Google", "Chrome", "Application", "chrome.exe")];
   for (const app of apps) for (const root of roots) if (existsSync(join(root, app))) return join(root, app);
@@ -134,7 +145,7 @@ const runBrowser: PdfRun = (bin, args) =>
 
 /** Imprime o voucher em PDF num perfil temporário (não mexe no navegador aberto da pessoa). */
 export async function renderVoucherPdf(assetsDir: string, voucher: Voucher, browser: string | null = findBrowser(), run: PdfRun = runBrowser): Promise<{ body: Buffer; fileName: string }> {
-  if (!browser) throw new Error("Edge ou Chrome não encontrado neste PC para gerar o PDF do voucher.");
+  if (!browser) throw new Error("Edge, Chrome ou Chromium não encontrado neste computador para gerar o PDF do voucher.");
   const { html, ids } = voucherHtml(await readVoucherAssets(assetsDir), voucher);
   const dir = await mkdtemp(join(tmpdir(), "inbox-voucher-"));
   try {
