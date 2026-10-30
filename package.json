@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Inbox local e leve para gerir e classificar conversas do WhatsApp, com classificação Jev.",
   "productName": "WhatsApp Inbox",
+  "desktopName": "whatsapp-inbox.desktop",
   "main": "dist-electron/main.mjs",
   "author": "Betinhos Executive Service",
   "packageManager": "pnpm@9.15.9",
@@ -78,6 +79,24 @@
           ]
         }
       ]
+    },
+    "linux": {
+      "icon": "dist/icon.png",
+      "category": "Network",
+      "executableName": "whatsapp-inbox",
+      "syncDesktopName": true,
+      "synopsis": "Inbox do WhatsApp com classificação de conversas",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "appImage": {
+      "artifactName": "WhatsApp-Inbox.${ext}"
     },
     "nsis": {
       "include": "installer/installer.nsh",

@@ -266,7 +266,7 @@ export function useDialog(panel: React.RefObject<HTMLElement | null>, first: Rea
   }, [panel, first, onClose]);
 }
 
-/** Abre o arquivo dentro do app, sem baixar. Formatos que o app não mostra vão para o app padrão do Windows. */
+/** Abre o arquivo dentro do app, sem baixar. Formatos que o app não mostra vão para o app padrão do computador. */
 export function FileViewer({ m, onClose }: { m: Message; onClose: () => void }) {
   const media = m.media!;
   const src = mediaUrl(m);
@@ -342,7 +342,7 @@ export function FileViewer({ m, onClose }: { m: Message; onClose: () => void }) 
               <p>
                 <strong>{tooBig ? "Arquivo grande demais para mostrar aqui." : "Este tipo de arquivo não abre dentro do app."}</strong>
               </p>
-              <p className="hint">{bridge?.openFile ? "Abra no app padrão do Windows: o arquivo não vai para Downloads." : "Baixe o arquivo para abrir no computador."}</p>
+              <p className="hint">{bridge?.openFile ? "Abra no app padrão do computador: o arquivo não vai para Downloads." : "Baixe o arquivo para abrir no computador."}</p>
               {bridge?.openFile ? (
                 <button type="button" className="button button--primary" onClick={() => void openExternal()} disabled={opening} aria-busy={opening || undefined}>
                   {opening ? <LoaderCircle size={16} className="spin" aria-hidden /> : <ExternalLink size={16} aria-hidden />} Abrir no app padrão
@@ -857,7 +857,7 @@ type Rec = {
 
 function micError(error: unknown): string {
   const name = error instanceof DOMException ? error.name : "";
-  if (name === "NotAllowedError" || name === "SecurityError") return "O acesso ao microfone foi negado. Libere o microfone para o app nas configurações do Windows.";
+  if (name === "NotAllowedError" || name === "SecurityError") return "O acesso ao microfone foi negado. Libere o microfone para o app nas configurações do sistema.";
   if (name === "NotFoundError" || name === "OverconstrainedError") return "Nenhum microfone encontrado. Conecte um microfone e tente de novo.";
   if (name === "NotReadableError") return "O microfone está em uso por outro programa ou falhou ao abrir.";
   return "Microfone indisponível. Confira se ele está conectado e liberado para o app.";

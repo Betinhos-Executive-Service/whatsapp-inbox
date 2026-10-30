@@ -1,3 +1,4 @@
 - verificar-interface | ui/** | interface no navegador sem WhatsApp: lista, busca, status, conversa, notas, configurações e falha de conexão
 - verificar-servidor | server/**, tests/**, scripts/**, voucher/**, package.json, tsconfig.json | typecheck, testes e subida do servidor local
 - verificar-ambiente-cloud | scripts/cloud-setup.sh, scripts/testa-cloud-setup.sh, .claude/hooks/**, .claude/settings.json, .npmrc, .gitattributes, package.json, pnpm-lock.yaml, patches/**, CLAUDE.md | preparo da VM cloud num Linux limpo (WSL): cloud-setup.sh, hook SessionStart, idempotência, Electron sem binário, testes
+- verificar-app-linux | desktop/**, scripts/desktop.mjs, scripts/icon.mjs, scripts/testa-appimage.sh, .github/workflows/release.yml, package.json | AppImage no WSL: build, latest-linux.yml, MCP pelo .AppImage e app aberto

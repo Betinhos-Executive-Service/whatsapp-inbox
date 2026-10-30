@@ -6,6 +6,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nati
 import { spawn } from "node:child_process";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { startApp, type RunningApp } from "../server/app.ts";
 import { removeMcpFile, writeMcpFile } from "../server/mcp-file.ts";
 import type { Chat, Message, Reminder } from "../server/db.ts";
@@ -13,6 +14,7 @@ import { inQuietHours, type Prefs } from "../server/prefs.ts";
 import type { ConnectionState } from "../server/whatsapp.ts";
 import { addAccount, isRemovableDir, loadAccounts, MAX_ACCOUNTS, removeAccount, renameAccount, saveAccounts, setActive, type Account, type Registry } from "./accounts.ts";
 import { roundAvatar } from "./avatar.ts";
+import { MCP_SERVER_ARG, setAutostart } from "./linux.ts";
 import { mediaToTemp, safeFileName } from "./files.ts";
 import { isUrgent, notificationBody, notificationTitle, UnreadCounter } from "./notifications.ts";
 import type { RailAccount } from "./rail/rail.ts";
@@ -46,7 +48,10 @@ const byChat = new Map<string, Notification>();
 const transient = new Set<Notification>();
 const counter = new UnreadCounter();
 
-const iconPath = () => join(app.getAppPath(), "dist", "icon.ico");
+const linux = process.platform === "linux";
+// AppImage: caminho do arquivo .AppImage; o process.execPath fica numa montagem que muda a cada execução.
+const appImage = process.env.APPIMAGE;
+const iconPath = () => join(app.getAppPath(), "dist", linux ? "icon.png" : "icon.ico");
 const userData = () => app.getPath("userData");
 const mcpFile = () => join(userData(), "mcp.json");
 const chatKey = (inst: Instance, jid: string) => `${inst.account.id}:${jid}`;
@@ -82,7 +87,12 @@ function applyPrefs(prefs: Prefs) {
   for (const inst of instances.values()) inst.view.setBackgroundColor(windowBackground());
   // Empacotado só: em desenvolvimento registraria o electron.exe genérico.
   if (!app.isPackaged) return;
-  app.setLoginItemSettings({ openAtLogin: prefs.startWithWindows, args: prefs.startMinimized ? ["--hidden"] : [] });
+  if (!linux) return app.setLoginItemSettings({ openAtLogin: prefs.startWithWindows, args: prefs.startMinimized ? ["--hidden"] : [] });
+  try {
+    setAutostart(app.getPath("appData"), appImage ?? process.execPath, prefs.startWithWindows, prefs.startMinimized);
+  } catch (error) {
+    console.error("Falha ao configurar o início com o sistema:", error);
+  }
 }
 
 // ---- contas: área de cada uma, trilho e troca
@@ -195,8 +205,7 @@ async function startInstance(account: Account): Promise<Instance> {
         if (state.status === "conectado") warnDuplicate(inst);
         pushRail();
       },
-      // O Claude Code abre o próprio exe em modo Node para rodar o servidor MCP empacotado.
-      mcpEntry: { command: process.execPath, args: [join(app.getAppPath(), "dist-electron", "mcp.mjs")], env: { ELECTRON_RUN_AS_NODE: "1", INBOX_MCP_FILE: mcpFile() } },
+      mcpEntry: mcpEntry(),
       mcpFile: mcpFile(),
     });
     inst.connection = inst.app.connection();
@@ -497,7 +506,6 @@ function setupIpc() {
   };
   ipcMain.handle("media:copy-file", async (event, chatJid: unknown, id: unknown) => {
     const path = await mediaFile(event, chatJid, id);
-    if (process.platform !== "win32") throw new Error("Copiar arquivo só está disponível no Windows.");
     await copyFileToClipboard(path);
   });
   ipcMain.handle("media:open", async (event, chatJid: unknown, id: unknown) => {
@@ -631,14 +639,24 @@ function createWindow() {
     window?.hide();
     if (!trayHintShown && tray) {
       trayHintShown = true;
-      tray.displayBalloon({
-        iconType: "info",
-        title: PRODUCT,
-        content: "Continua aberto aqui na bandeja, recebendo mensagens. Para sair, use Sair no menu do ícone.",
-      });
+      const content = "Continua aberto aqui na bandeja, recebendo mensagens. Para sair, use Sair no menu do ícone.";
+      // O balão é só do Windows; no Linux o aviso vai como notificação.
+      if (linux) new Notification({ title: PRODUCT, body: content, icon: iconPath() }).show();
+      else tray.displayBalloon({ iconType: "info", title: PRODUCT, content });
     }
   });
   void window.loadFile(join(app.getAppPath(), "dist", "rail", "index.html"));
+}
+
+/**
+ * Como o Claude Code abre o servidor MCP empacotado. Windows: o próprio exe em modo Node.
+ * AppImage: o modo Node não serve (o AppRun pode pôr --no-sandbox antes dos argumentos e o Node
+ * recusa a opção), então o .AppImage abre o app em modo MCP.
+ */
+function mcpEntry() {
+  const env = { INBOX_MCP_FILE: mcpFile() };
+  if (appImage) return { command: appImage, args: [MCP_SERVER_ARG], env };
+  return { command: process.execPath, args: [join(app.getAppPath(), "dist-electron", "mcp.mjs")], env: { ...env, ELECTRON_RUN_AS_NODE: "1" } };
 }
 
 /**
@@ -646,6 +664,7 @@ function createWindow() {
  * O Electron só grava texto e imagem; o caminho vai por variável de ambiente, nunca no comando.
  */
 function copyFileToClipboard(path: string): Promise<void> {
+  if (linux) return copyFileToClipboardLinux(path);
   return new Promise((resolve, reject) => {
     const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Set-Clipboard -LiteralPath $env:INBOX_CLIPBOARD_FILE"], {
       env: { ...process.env, INBOX_CLIPBOARD_FILE: path },
@@ -655,6 +674,19 @@ function copyFileToClipboard(path: string): Promise<void> {
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     child.on("error", reject);
+    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`Não foi possível copiar o arquivo. ${stderr.trim()}`.trim()))));
+  });
+}
+
+/** Linux: text/uri-list (o que o gerenciador de arquivos cola) pelo wl-copy no Wayland ou xclip no X11. */
+function copyFileToClipboardLinux(path: string): Promise<void> {
+  const [cmd, ...args] = process.env.WAYLAND_DISPLAY ? ["wl-copy", "--type", "text/uri-list"] : ["xclip", "-selection", "clipboard", "-t", "text/uri-list"];
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ["pipe", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    child.stdin.end(`${pathToFileURL(path).href}\r\n`);
+    child.on("error", (error: NodeJS.ErrnoException) => reject(error.code === "ENOENT" ? new Error(`Para copiar arquivo no Linux, instale o ${cmd}.`) : error));
     child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`Não foi possível copiar o arquivo. ${stderr.trim()}`.trim()))));
   });
 }
@@ -718,7 +750,15 @@ function registerNotificationName() {
   set("IconUri", process.execPath);
 }
 
-if (!app.requestSingleInstanceLock()) {
+if (process.argv.includes(MCP_SERVER_ARG)) {
+  // Servidor MCP do Claude Code no AppImage: sem janela, sem trava de instância única; termina com o stdin.
+  app.disableHardwareAcceleration();
+  process.stdin.on("close", () => app.exit(0));
+  import(pathToFileURL(join(app.getAppPath(), "dist-electron", "mcp.mjs")).href).catch((error: unknown) => {
+    console.error("Falha ao iniciar o servidor MCP:", error);
+    app.exit(1);
+  });
+} else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.setAppUserModelId(APP_ID);

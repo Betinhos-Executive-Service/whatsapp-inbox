@@ -770,7 +770,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                   value={prefs.theme}
                   onChange={(id) => setPref("theme", id)}
                 />
-                <p className="hint">{prefs.theme === "system" ? "Acompanha o modo claro ou escuro do Windows." : "Vale só para este computador."}</p>
+                <p className="hint">{prefs.theme === "system" ? "Acompanha o modo claro ou escuro do sistema." : "Vale só para este computador."}</p>
               </section>
               <section className="surface stack">
                 <h3 className="eyebrow">Inicialização</h3>
@@ -778,7 +778,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                   checked={prefs.startWithWindows}
                   onChange={(v) => setPref("startWithWindows", v)}
                   disabled={!isDesktop}
-                  label="Abrir junto com o Windows"
+                  label="Abrir junto com o sistema"
                   hint={desktopOnly ?? "Assim as mensagens chegam e são classificadas mesmo antes de você abrir o app."}
                 />
                 <Toggle
@@ -822,7 +822,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
 
           {tab === "notificacoes" && (
             <section className="surface stack">
-              <h3 className="eyebrow">Notificações do Windows</h3>
+              <h3 className="eyebrow">Notificações do sistema</h3>
               <Toggle
                 checked={prefs.notifyEnabled}
                 onChange={(v) => setPref("notifyEnabled", v)}
