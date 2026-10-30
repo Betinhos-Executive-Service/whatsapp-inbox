@@ -1,7 +1,7 @@
-# Toda alteração na main vira versão nova: incrementa o PATCH, gera o instalador e publica
-# no GitHub Releases (os apps instalados avisam da atualização). Depois, o job "linux" anexa
-# o AppImage da mesma versão (mesma tag) à release. O commit "release: vX"
-# feito aqui não dispara de novo: push com GITHUB_TOKEN não inicia workflows.
+# Toda alteração na main vira versão nova: "version" incrementa o PATCH, envia o commit
+# "release: vX" e cria a release em rascunho; Windows, Linux e os testes rodam em paralelo
+# a partir desse commit; "publish" libera a release (os apps instalados avisam da atualização).
+# O commit "release: vX" feito aqui não dispara de novo: push com GITHUB_TOKEN não inicia workflows.
 name: release
 
 on:
@@ -17,17 +17,63 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  version:
     if: ${{ !startsWith(github.event.head_commit.message, 'release:') }}
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     outputs:
-      # Vazio quando a main andou durante o build e esta execução não publicou nada.
-      version: ${{ steps.publish.outputs.version }}
+      # Vazios quando a main andou antes do envio e esta execução não publica nada.
+      version: ${{ steps.prepare.outputs.version }}
+      sha: ${{ steps.prepare.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Preparar versão
+        id: prepare
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/release.mjs prepare
+
+  check:
+    needs: version
+    if: ${{ needs.version.outputs.version != '' }}
+    # Nos dois sistemas; em paralelo com os instaladores, fora do caminho mais longo.
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  installer:
+    needs: version
+    if: ${{ needs.version.outputs.version != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.sha }}
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -36,37 +82,37 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # O binário do Electron (electronDist) não vem no install do CI; baixa explicitamente.
       - run: node node_modules/electron/install.js
-      - run: pnpm typecheck
-      - run: pnpm test
-      - name: Publicar versão
-        id: publish
+      - name: Gerar e enviar instalador
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TZ: America/Sao_Paulo
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          pnpm release
+        run: pnpm release
 
-  linux:
-    needs: release
-    if: ${{ needs.release.outputs.version != '' }}
+  publish:
+    needs: [version, check, installer]
+    # Roda mesmo se o Linux falhar: o finish exige só o instalador do Windows.
+    if: ${{ !cancelled() && needs.version.outputs.version != '' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v${{ needs.release.outputs.version }}
-      - uses: pnpm/action-setup@v4
+          ref: ${{ needs.version.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: node node_modules/electron/install.js
-      # typecheck e testes já rodaram no job do Windows, no mesmo commit.
-      - name: Anexar AppImage
+      - name: Liberar versão
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TZ: America/Sao_Paulo
-        run: pnpm release
+        run: node scripts/release.mjs finish ${{ needs.version.outputs.version }}
+
+  # Não liberou (teste, Windows ou finish falhou): apaga o rascunho, que ainda não tem tag.
+  # Se só o Linux falhou, a versão já saiu e fica.
+  cleanup:
+    needs: [version, publish]
+    if: ${{ failure() && needs.version.outputs.version != '' && needs.publish.result != 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete "v${{ needs.version.outputs.version }}" --yes -R "${{ github.repository }}"
