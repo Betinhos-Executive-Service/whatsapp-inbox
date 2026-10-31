@@ -7,7 +7,7 @@ const dist = resolve(root, "dist");
 
 /**
  * Incrementa o PATCH da versão de build (não é versão Git) e devolve versão + data ISO.
- * `bump: false` mantém a versão gravada (AppImage da versão que o Windows já publicou).
+ * `bump: false` mantém a versão gravada (instaladores do CI, no commit "release: vX").
  */
 export async function bumpVersion({ bump = true } = {}) {
   const path = resolve(root, "package.json");

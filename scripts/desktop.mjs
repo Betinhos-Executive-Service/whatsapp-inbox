@@ -1,9 +1,8 @@
 // pnpm app      → compila e abre o app desktop sem instalar (teste local)
-// pnpm exe      → gera o instalador em release/ (sem publicar)
-// pnpm release  → nova versão no GitHub Releases; os apps instalados avisam e atualizam
-// No Linux, o mesmo comando gera AppImage; o release anexa à versão já publicada pelo Windows
-// (job "linux" do CI, no commit da tag), sem incrementar a versão.
-import { appendFileSync, statSync } from "node:fs";
+// pnpm exe      → gera o instalador deste sistema em release/ (sem publicar)
+// pnpm release  → (CI) gera o instalador deste sistema (Windows ou Linux) na versão já gravada e
+//                 o envia à release em rascunho criada por scripts/release.mjs prepare
+import { statSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { copyFile, rm } from "node:fs/promises";
 import { basename, resolve } from "node:path";
@@ -14,49 +13,16 @@ import { bumpVersion, copyHtml, root, uiOptions } from "./ui-build.mjs";
 const runOnly = process.argv.includes("--run");
 const release = process.argv.includes("--publish");
 const linux = process.platform === "linux";
-const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 
-if (release) {
-  // A versão publicada tem de corresponder a um commit no GitHub.
-  if (git("status", "--porcelain")) throw new Error("Há alterações sem commit. Faça o commit antes de publicar.");
-  if (!linux && git("rev-parse", "--abbrev-ref", "HEAD") !== "main") throw new Error("Publique a partir da branch main.");
+// Só o CI publica: à mão, o --clobber sobrescreveria os arquivos da versão já liberada.
+if (release && !process.env.GITHUB_ACTIONS) throw new Error("pnpm release só roda no workflow da main.");
+// A versão publicada tem de corresponder ao commit "release: vX" que o prepare enviou.
+if (release && execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim()) {
+  throw new Error("Há alterações sem commit. Faça o commit antes de publicar.");
 }
 
 const started = performance.now();
-const build = await bumpVersion({ bump: !(release && linux) });
-if (release && linux && git("rev-parse", "HEAD") !== git("rev-parse", `v${build.version}^{commit}`)) {
-  throw new Error(`Publique o Linux a partir da tag v${build.version}.`);
-}
-let pushed = Promise.resolve();
-if (release && !linux) {
-  git("add", "package.json");
-  git("commit", "-m", `release: v${build.version}`);
-  // O envio corre junto com a compilação; a release só é criada depois que ele termina.
-  pushed = new Promise((ok, fail) =>
-    spawn("git", ["push", "origin", "main"], { cwd: root, stdio: "inherit" }).on("exit", (code) =>
-      code === 0 ? ok() : fail(new Error(`git push falhou (código ${code}).`)),
-    ),
-  );
-  pushed.catch(() => {}); // a falha é tratada em confirmPush(), antes de gerar o instalador
-}
-
-/**
- * Se a main andou durante o build (outro merge chegou), a execução seguinte do CI já
- * inclui estas mudanças e publica a versão; esta encerra sem erro e sem instalador.
- */
-async function confirmPush() {
-  try {
-    await pushed;
-  } catch (error) {
-    const base = git("rev-parse", "HEAD~1");
-    git("fetch", "--quiet", "origin", "main");
-    const remote = git("rev-parse", "origin/main");
-    const advanced = remote !== base && git("merge-base", "HEAD~1", "origin/main") === base;
-    if (!advanced) throw error;
-    console.warn(`A main recebeu commits novos durante o build; v${build.version} fica para a próxima execução.`);
-    process.exit(0);
-  }
-}
+const build = await bumpVersion({ bump: !release });
 
 await rm(resolve(root, "dist"), { recursive: true, force: true });
 await rm(resolve(root, "dist-electron"), { recursive: true, force: true });
@@ -118,7 +84,6 @@ if (runOnly) {
   const electron = (await import("electron")).default;
   spawn(electron, ["."], { cwd: root, stdio: "inherit" }).on("exit", (code) => process.exit(code ?? 0));
 } else {
-  if (release) await confirmPush();
   const { build: pack } = await import("electron-builder");
   // O instalador e o latest.yml são gerados aqui; o envio ao GitHub é feito pelo gh (abaixo),
   // porque o envio do electron-builder não retoma quando a conexão cai no meio.
@@ -127,51 +92,40 @@ if (runOnly) {
   if (!release) {
     console.log(`Instalador pronto: ${installer}`);
   } else {
-    await publishRelease(build.version, files);
+    await uploadAssets(build.version, files);
   }
 }
 
 /**
- * Publica como rascunho, envia cada arquivo com novas tentativas, confere os tamanhos no
- * GitHub e só então libera a release. App instalado nunca enxerga uma versão incompleta.
- * No Linux só anexa o AppImage e o latest-linux.yml à release que o Windows já liberou.
+ * Envia cada arquivo com novas tentativas e confere os tamanhos no GitHub. A release ainda é
+ * rascunho; o scripts/release.mjs finish a libera quando Windows e Linux terminaram.
  */
-async function publishRelease(version, files) {
+async function uploadAssets(version, files) {
   const tag = `v${version}`;
   const repo = "Betinhos-Executive-Service/whatsapp-inbox";
   const gh = (...args) => execFileSync("gh", [...args, "-R", repo], { cwd: root, encoding: "utf8" }).trim();
-  const assets = [...files.filter((f) => /\.(exe|AppImage|blockmap)$/.test(f)), resolve(root, "release", linux ? "latest-linux.yml" : "latest.yml")];
-  // Linux: a release já está no ar (Windows); o AppImage entra nela e os apps Linux passam a ver a versão.
-  if (!linux) {
-    git("fetch", "--tags", "--quiet");
-    const previous = git("tag", "--list", "v*", "--sort=-v:refname").split(/\r?\n/).find((t) => t && t !== tag);
-    const changes = git("log", "--no-merges", "--pretty=- %s", previous ? `${previous}..HEAD` : "HEAD")
-      .split(/\r?\n/)
-      .filter((l) => l && !l.startsWith("- release:") && !l.startsWith("- chore:"))
-      .join("\n");
-    gh("release", "create", tag, "--draft", "--target", git("rev-parse", "HEAD"), "--title", tag, "--notes", changes || "Melhorias e correções.");
-  }
-  for (const file of assets) {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        gh("release", "upload", tag, file, "--clobber");
-        break;
-      } catch (error) {
-        if (attempt >= 5) throw new Error(`Falha ao enviar ${basename(file)} depois de 5 tentativas: ${error.message}`);
-        console.warn(`Envio de ${basename(file)} falhou (tentativa ${attempt}); tentando de novo…`);
-        await new Promise((r) => setTimeout(r, 3000 * attempt));
+  const send = async (list) => {
+    for (const file of list) {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          gh("release", "upload", tag, file, "--clobber");
+          break;
+        } catch (error) {
+          if (attempt >= 5) throw new Error(`Falha ao enviar ${basename(file)} depois de 5 tentativas: ${error.message}`);
+          console.warn(`Envio de ${basename(file)} falhou (tentativa ${attempt}); tentando de novo…`);
+          await new Promise((r) => setTimeout(r, 3000 * attempt));
+        }
       }
     }
-  }
-  const remote = JSON.parse(gh("release", "view", tag, "--json", "assets")).assets;
-  for (const file of assets) {
-    const name = basename(file);
-    const found = remote.find((a) => a.name === name);
-    if (!found || found.size !== statSync(file).size) throw new Error(`Arquivo ${name} não confere no GitHub${linux ? "" : "; a release ficou em rascunho"}.`);
-  }
-  if (linux) return console.log(`AppImage anexado à versão ${tag}.`);
-  gh("release", "edit", tag, "--draft=false", "--latest");
-  // No CI, o job do Linux usa esta versão para anexar o AppImage à mesma release.
-  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
-  console.log(`Versão ${tag} publicada: os apps instalados vão avisar da atualização.`);
+    const remote = JSON.parse(gh("release", "view", tag, "--json", "assets")).assets;
+    for (const file of list) {
+      const name = basename(file);
+      const found = remote.find((a) => a.name === name);
+      if (!found || found.size !== statSync(file).size) throw new Error(`Arquivo ${name} não confere no GitHub; a release ficou em rascunho.`);
+    }
+  };
+  // O latest*.yml vai só depois dos instaladores conferidos: o finish libera a versão ao vê-lo.
+  await send(files.filter((f) => /\.(exe|AppImage|blockmap)$/.test(f)));
+  await send([resolve(root, "release", linux ? "latest-linux.yml" : "latest.yml")]);
+  console.log(`Instalador ${linux ? "Linux" : "Windows"} enviado à versão ${tag} (rascunho).`);
 }
