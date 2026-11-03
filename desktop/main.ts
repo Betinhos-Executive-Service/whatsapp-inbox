@@ -618,6 +618,12 @@ function createWindow() {
     active()?.view.webContents.focus();
   });
   window.on("resize", layout);
+  // Linux (X11): maximizar, encaixar ou tela cheia nem sempre emite "resize", ou emite antes de o
+  // tamanho mudar, e a conta fica presa na largura antiga. Refaz o layout depois que o WM aplica.
+  if (linux) {
+    const later = () => setTimeout(layout, 100);
+    for (const event of ["resize", "resized", "maximize", "unmaximize", "restore", "show", "enter-full-screen", "leave-full-screen"] as const) window.on(event as "resize", later);
+  }
   // Ctrl+1…9 troca de conta, de qualquer lugar da janela.
   const shortcuts = (wc: WebContents) =>
     wc.on("before-input-event", (event, input) => {
