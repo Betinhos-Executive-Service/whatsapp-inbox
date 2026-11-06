@@ -58,7 +58,7 @@ Versão 7.0.0-rc14, sem patch novo:
 
 - `listContacts()`: consulta a tabela `contacts` com `saved_name` não nulo.
 - `clearSavedName(jid)`: zera `saved_name` em `contacts` e `chats`, porque `setNames` usa `coalesce` e não limpa. Devolve a conversa atualizada, e a camada do WhatsApp emite `chat` quando ela existe.
-- `Chat` e `Participant` ganham `saved: boolean`, calculado a partir de `saved_name`.
+- `Chat` ganha `saved: boolean`, calculado a partir de `saved_name`, sempre falso em grupo. Grupos também usam `saved_name` para o assunto. Perfil, participantes e cartões consultam a lista de contatos compartilhada da interface.
 
 Sobrenome não é coluna: ao editar, tudo depois da primeira palavra do `saved_name` vira sobrenome. O nome completo não muda quando o formulário é salvo sem alteração.
 
