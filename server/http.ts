@@ -6,7 +6,7 @@ import { extname, join, normalize } from "node:path";
 import { z } from "zod";
 import { claudeOptionsSchema, type ClaudeOptions } from "./claude.ts";
 import { deepseekOptionsSchema, type DeepSeekOptions } from "./deepseek.ts";
-import { STATUSES, type Store } from "./db.ts";
+import { STATUSES, type Contact, type Store } from "./db.ts";
 import { linkPreview } from "./link-preview.ts";
 import { albumKind } from "./media.ts";
 import { EXT_BY_TYPE, TYPE_BY_EXT } from "./mime.ts";
@@ -68,6 +68,10 @@ export type Api = {
   pin: (jid: string, id: string, seconds: number | null) => Promise<void>;
   /** Abre (ou começa) a conversa com um número ou JID; o número é conferido no WhatsApp. */
   openChat: (target: { phone?: string; jid?: string }) => Promise<unknown>;
+  checkContact: (phone: string) => Promise<{ jid: string | null; savedName: string | null }>;
+  /** Grava primeiro no WhatsApp; se a conta recusar, nada muda aqui. */
+  saveContact: (input: { phone: string; firstName: string; lastName?: string }) => Promise<Contact>;
+  deleteContact: (jid: string) => Promise<void>;
   setBlocked: (jid: string, blocked: boolean) => Promise<void>;
   leaveGroup: (jid: string) => Promise<void>;
   /** Apaga daqui e tenta apagar no celular; synced=false quando ficou só aqui. */
@@ -220,6 +224,12 @@ const openChatSchema = z.union([
   z.object({ phone: z.string().trim().min(1).max(40) }),
   z.object({ jid: z.string().regex(/^[\w.:-]+@(s\.whatsapp\.net|lid)$/, "Contato inválido.") }),
 ]);
+
+const contactSchema = z.object({
+  phone: z.string().trim().min(1, "Informe o número.").max(40),
+  firstName: z.string().trim().min(1, "Informe o nome.").max(100),
+  lastName: z.string().trim().max(100).optional(),
+});
 
 const participantJids = z.array(z.string().regex(/^[\w.:-]+@(s\.whatsapp\.net|lid)$/, "Participante inválido.")).min(1).max(256);
 const draftSchema = z.object({ text: z.string().max(10000).optional() });
@@ -426,6 +436,21 @@ export function createHandler(api: Api) {
     if (path === "/api/starred" && method === "GET") return json(res, 200, store.listStarred());
     if (path === "/api/stickers" && method === "GET") return json(res, 200, api.stickers());
     if (path === "/api/open-chat" && method === "POST") return json(res, 200, await api.openChat(parse(openChatSchema, await readJson(req))));
+    if (path === "/api/contacts" && method === "GET") return json(res, 200, store.listContacts());
+    if (path === "/api/contacts" && method === "POST") return json(res, 200, await api.saveContact(parse(contactSchema, await readJson(req))));
+    if (path === "/api/contacts/check" && method === "GET") {
+      const phone = url.searchParams.get("phone")?.trim();
+      if (!phone) throw new HttpError(400, "Informe o número.");
+      return json(res, 200, await api.checkContact(phone));
+    }
+    const contactMatch = path.match(/^\/api\/contacts\/([^/]+)$/);
+    if (contactMatch && method === "DELETE") {
+      const jid = decodeURIComponent(contactMatch[1]);
+      if (!/^\d+@s\.whatsapp\.net$/.test(jid)) throw new HttpError(400, "Contato inválido.");
+      await api.deleteContact(jid);
+      res.statusCode = 204;
+      return void res.end();
+    }
     if (path === "/api/groups" && method === "POST") {
       const { subject, participants } = parse(z.object({ subject: z.string().trim().min(1, "Dê um nome ao grupo.").max(100), participants: participantJids }), await readJson(req));
       return json(res, 201, await api.createGroup(subject, participants));

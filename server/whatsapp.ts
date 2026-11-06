@@ -1229,6 +1229,27 @@ export class WhatsApp extends EventEmitter<{
     return hit?.exists ? jidNormalizedUser(hit.jid) : null;
   }
 
+  /** Grava na conta e pede para ir à agenda do celular. Sem as chaves de sincronização, pede de novo e devolve o erro. */
+  async syncContact(jid: string, fullName: string, firstName: string): Promise<void> {
+    const sock = this.ready();
+    const lid = this.store.lidForPn(jid);
+    await this.withAppStateKey(sock, () => sock.addOrEditContact(jid, { fullName, firstName, saveOnPrimaryAddressbook: true, ...(lid ? { lidJid: lid } : {}) }));
+  }
+
+  async removeContact(jid: string): Promise<void> {
+    const sock = this.ready();
+    await this.withAppStateKey(sock, () => sock.removeContact(jid));
+  }
+
+  private async withAppStateKey(sock: WASocket, run: () => Promise<unknown>): Promise<void> {
+    try {
+      await run();
+    } catch (error) {
+      if ((error as { data?: { isMissingKey?: boolean } }).data?.isMissingKey) await this.requestAppStateKey(sock).catch(() => undefined);
+      throw error;
+    }
+  }
+
   /** Conversa de um participante (pode vir como LID): o número quando conhecido. */
   conversationOf(jid: string): string {
     return this.canonical(jid);

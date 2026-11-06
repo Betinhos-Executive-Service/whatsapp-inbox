@@ -8,11 +8,16 @@ import type { Coord, Nivel } from "./vigilancia/tipos.ts";
 export const STATUSES = ["aberta", "aguardando", "resolvida"] as const;
 export type Status = (typeof STATUSES)[number];
 
+/** Contato da agenda (nome salvo). A chave é o JID do telefone. */
+export type Contact = { jid: string; name: string; phone: string };
+
 export type Chat = {
   jid: string;
   name: string;
   phone: string | null;
   isGroup: boolean;
+  /** Número salvo na agenda (nunca em grupo). */
+  saved: boolean;
   lastAt: number;
   lastText: string | null;
   lastFromMe: boolean;
@@ -441,6 +446,7 @@ function toChat(r: Row): Chat {
     name: (r.saved_name as string) || (r.push_name as string) || (phone ? `+${phone}` : isGroup ? "Grupo sem nome" : "Contato sem número"),
     phone,
     isGroup,
+    saved: !isGroup && !!r.saved_name,
     lastAt: Number(r.last_at),
     lastText: (r.last_text as string) ?? null,
     lastFromMe: r.last_from_me === 1,
@@ -1292,6 +1298,26 @@ export class Store {
   contactName(jid: string): string | null {
     const r = this.q("select saved_name, push_name from contacts where jid = ?").get(jid) as Row | undefined;
     return (r?.saved_name as string) || (r?.push_name as string) || null;
+  }
+
+  /** Agenda: quem tem nome salvo, mesmo sem conversa. Grupos também usam saved_name e ficam de fora. */
+  listContacts(): Contact[] {
+    const rows = this.q("select jid, saved_name from contacts where saved_name is not null and saved_name <> '' and jid like '%@s.whatsapp.net'").all() as Row[];
+    return rows
+      .map((r) => ({ jid: String(r.jid), name: String(r.saved_name), phone: String(r.jid).split("@")[0] }))
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }));
+  }
+
+  savedName(jid: string): string | null {
+    const r = this.q("select saved_name from contacts where jid = ?").get(jid) as Row | undefined;
+    return (r?.saved_name as string) || null;
+  }
+
+  /** Tira da agenda; a conversa fica e o nome volta ao do perfil ou ao número. setNames não limpa nomes. */
+  clearSavedName(jid: string): Chat | null {
+    this.q("update contacts set saved_name = null where jid = ?").run(jid);
+    this.q("update chats set saved_name = null where jid = ?").run(jid);
+    return this.getChat(jid);
   }
 
   pnForLid(lid: string): string | null {
