@@ -4,6 +4,7 @@ import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { saveContact } from "./contacts.ts";
 import { Store, type Chat, type Label, type Message, type QuickReply, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { cacheMedia, loadMedia } from "./media.ts";
@@ -664,6 +665,24 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       }
       // Participante de grupo ou contato recebido: o número quando conhecido (o LID vira conversa também).
       return showChat(wa ? wa.conversationOf(target.jid!) : target.jid!);
+    },
+    checkContact: async (phone) => {
+      const jid = await connected().checkNumber(phoneDigits(phone));
+      return { jid, savedName: jid ? store.savedName(jid) : null };
+    },
+    saveContact: async ({ phone, firstName, lastName }) => {
+      const contact = await saveContact(
+        { resolve: (digits) => connected().checkNumber(digits), sync: (jid, full, first) => connected().syncContact(jid, full, first), store },
+        { digits: phoneDigits(phone), firstName, lastName },
+      );
+      const chat = store.getChat(contact.jid);
+      if (chat) broadcast("chat", chat);
+      return contact;
+    },
+    deleteContact: async (jid) => {
+      await connected().removeContact(jid);
+      const chat = store.clearSavedName(jid);
+      if (chat) broadcast("chat", chat);
     },
     setBlocked: (jid, blocked) => connected().setBlocked(jid, blocked),
     leaveGroup: async (jid) => {

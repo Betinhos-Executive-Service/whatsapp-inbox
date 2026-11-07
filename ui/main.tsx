@@ -56,7 +56,7 @@ import { ChatItemMenu, drafts, isMuted, useDraft, isSnoozed, MessageHits, Shortc
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
 import { Button, Menu, SearchBox, Select } from "./ds/index.ts";
-import { LocationDialog, MessageInfoDialog, NewChatDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
+import { LocationDialog, MessageInfoDialog, NewGroupDialog, PollDialog, StarredDialog, StickerDialog } from "./dialogs.tsx";
 import { CameraDialog } from "./camera.tsx";
 import { groupAlbums } from "./album.ts";
 import { toSticker } from "./sticker.ts";
@@ -99,7 +99,7 @@ import { WaInline, WaLive, WaText } from "./wa-format.tsx";
 import { firstLink, toggleWa } from "./wa-text.ts";
 import { LinkCard } from "./link-preview.tsx";
 import { ChatPeek, PEEK_DELAY } from "./hover-preview.tsx";
-import { ContactCards, ContactPicker } from "./contacts.tsx";
+import { ContactCards, ContactForm, ContactPicker, ContactsPanel, type ContactTarget } from "./contacts.tsx";
 import { SelectionBar } from "./selection.tsx";
 import { selectionText } from "./selection-text.ts";
 import { desktop, useAccount } from "./desktop.ts";
@@ -371,6 +371,8 @@ function ChatList(props: {
   onPatch: (jid: string, patch: ChatPatch) => void;
   onNewChat: () => void;
   onStarred: () => void;
+  /** Painel de contatos ("Nova conversa"), por cima da lista. */
+  panel?: ReactNode;
 }) {
   const account = useAccount();
   const [tabChoice, setTab] = useState<Tab>("todas");
@@ -514,7 +516,7 @@ function ChatList(props: {
             <h1 className="heading-page">Conversas</h1>
           </div>
           <div className="cluster">
-            <Button variant="ghost" aria-label="Nova conversa ou grupo" title="Nova conversa ou grupo" icon={<MessageSquarePlus size={18} aria-hidden />} disabled={props.connection.status !== "conectado"} onClick={props.onNewChat} />
+            <Button variant="ghost" aria-label="Nova conversa" title="Nova conversa" icon={<MessageSquarePlus size={18} aria-hidden />} disabled={props.connection.status !== "conectado"} onClick={props.onNewChat} />
             <Button variant="ghost" aria-label="Mensagens favoritas" title="Mensagens favoritas" icon={<Star size={18} aria-hidden />} onClick={props.onStarred} />
             {account && account.count < account.max && (
               <Button variant="ghost" aria-label="Adicionar conta do WhatsApp" title="Adicionar conta do WhatsApp" icon={<UserPlus size={18} aria-hidden />} onClick={() => void desktop()?.addAccount()} />
@@ -674,6 +676,7 @@ function ChatList(props: {
       </div>
       {peek && peekChat && <ChatPeek key={peek.jid} chat={peekChat} anchor={peek.rect} />}
       {menu && menuChat && <ChatItemMenu chat={menuChat} x={menu.x} y={menu.y} onChange={(patch) => props.onPatch(menuChat.jid, patch)} onClose={closeMenu} />}
+      {props.panel}
     </section>
   );
 }
@@ -826,7 +829,7 @@ function UnreadDivider({ count }: { count: number }) {
   );
 }
 
-const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onCopyText, rich, unreadMark, mentionNames }: {
+const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, loadingMore, chatName, canAct, targetId, hitId, onReply, onDelete, onCopy, onAuthor, onJump, onReact, onForward, onEdit, onRetry, onDiscard, onMenu, selected, onToggleSelect, onOpenContact, onSaveContact, onCopyText, rich, unreadMark, mentionNames }: {
   /** Nomes conhecidos (participantes do grupo), para "@Nome Sobrenome" destacar inteiro. */
   mentionNames?: readonly string[];
   /** Faixa "N mensagens não lidas" antes desta mensagem (fica até sair da conversa). */
@@ -862,6 +865,8 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   onToggleSelect: (m: Message) => void;
   /** "Conversar" no cartão de contato. */
   onOpenContact: (digits: string) => void;
+  /** "Salvar contato" no cartão de contato. */
+  onSaveContact: (target: ContactTarget) => void;
   onCopyText: (text: string) => void;
 }) {
   const parts = messages.map((m) => splitAuthor(m, isGroup));
@@ -994,7 +999,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                     {album ? <AlbumView items={album} onMenu={onMenu} /> : m.media && <MediaView m={m} caption={caption} />}
                     {link && <LinkCard url={link} />}
                     {m.contacts?.length ? (
-                      <ContactCards contacts={m.contacts} onOpen={onOpenContact} onCopy={onCopyText} />
+                      <ContactCards contacts={m.contacts} onOpen={onOpenContact} onCopy={onCopyText} onSave={onSaveContact} />
                     ) : (
                       (!m.media || caption) && <p className="bubble__text"><WaText text={caption} mentions={names} /></p>
                     )}
@@ -1063,7 +1068,9 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   );
 });
 
-function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, onOpen, quickReplies, onSetupAi, sendTyping, focus, privateReply, onPrivateReply }: {
+function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, onOpen, quickReplies, onSetupAi, sendTyping, focus, privateReply, onPrivateReply, onContact }: {
+  /** Salvar ou editar contato (formulário na raiz). */
+  onContact: (target: ContactTarget) => void;
   /** Resposta em particular vinda de um grupo: abre a conversa já citando a mensagem do grupo. */
   privateReply: PrivateReply | null;
   /** "Responder em particular" numa mensagem de grupo. */
@@ -2127,7 +2134,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           >
             <Avatar jid={chat.jid} name={chat.name} />
             <span className="chat-pane__name">
-              <span className="heading-card" role="heading" aria-level={2}>
+              <span key={chat.name} className="heading-card name-swap" role="heading" aria-level={2}>
                 {chat.name}
               </span>
               {presenceText ? (
@@ -2161,6 +2168,17 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         </div>
         {/* Ações rápidas ficam sempre na linha do perfil, mesmo quando a classificação desce. */}
         <div className="chat-pane__actions">
+          {!chat.isGroup && chat.phone && !chat.saved && (
+            <Button
+              variant="ghost"
+              size="compact"
+              aria-label="Salvar contato"
+              title={connected ? "Salvar contato" : "Conecte o WhatsApp para salvar."}
+              icon={<UserRoundPlus size={16} aria-hidden />}
+              disabled={!connected}
+              onClick={() => onContact({ phone: `+${chat.phone}`, name: chat.name.startsWith("+") ? "" : chat.name })}
+            />
+          )}
           <ClaudeAgentButton jid={chat.jid} available={!!ai?.claude.planFound} notify={notify} />
           <Button
             variant="secondary"
@@ -2274,6 +2292,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             selected={selected}
             onToggleSelect={toggleSelect}
             onOpenContact={openContact}
+            onSaveContact={onContact}
             onCopyText={copyText}
             unreadMark={unreadMark}
             mentionNames={mentionNames}
@@ -2295,7 +2314,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         )}
       </div>
       {notesOpen && <NotesPanel chat={chat} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
-      {side === "profile" && profileTarget && <ProfilePanel target={profileTarget} chat={chat} connected={connected} onChat={onChat} notify={notify} onClose={() => setSide(null)} />}
+      {side === "profile" && profileTarget && <ProfilePanel target={profileTarget} chat={chat} connected={connected} onChat={onChat} onContact={onContact} notify={notify} onClose={() => setSide(null)} />}
       </div>
       {menuAt && (
         <MessageMenu
@@ -2640,7 +2659,9 @@ function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [focus, setFocus] = useState<{ id: string; seq: number } | null>(null);
   const [privateReply, setPrivateReply] = useState<PrivateReply | null>(null);
-  const [dialog, setDialog] = useState<"new-chat" | "starred" | null>(null);
+  const [dialog, setDialog] = useState<"new-group" | "starred" | null>(null);
+  const [contactsOpen, setContactsOpen] = useState(false);
+  const [contactTarget, setContactTarget] = useState<ContactTarget | null>(null);
   const openChat = useCallback((jid: string | null) => {
     setFocus(null);
     setPrivateReply(null);
@@ -2948,8 +2969,22 @@ function App() {
             onSettings={() => setSettingsOpen(true)}
             loaded={loaded}
             onPatch={patchChat}
-            onNewChat={() => setDialog("new-chat")}
+            onNewChat={() => setContactsOpen(true)}
             onStarred={() => setDialog("starred")}
+            panel={
+              contactsOpen ? (
+                <ContactsPanel
+                  paused={!!contactTarget || dialog !== null}
+                  onClose={() => setContactsOpen(false)}
+                  onOpen={(target) => {
+                    setContactsOpen(false);
+                    openTarget(target);
+                  }}
+                  onNewContact={setContactTarget}
+                  onNewGroup={() => setDialog("new-group")}
+                />
+              ) : null
+            }
           />
           {current ? (
             <ChatView
@@ -2971,6 +3006,7 @@ function App() {
               sendTyping={!!state?.prefs.sendTyping}
               privateReply={privateReply}
               onPrivateReply={startPrivateReply}
+              onContact={setContactTarget}
               onSetupAi={() => {
                 setSettingsTab("ia");
                 setSettingsOpen(true);
@@ -3007,7 +3043,16 @@ function App() {
         </Suspense>
       )}
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
-      {dialog === "new-chat" && <NewChatDialog onClose={() => setDialog(null)} onOpen={openTarget} />}
+      {dialog === "new-group" && (
+        <NewGroupDialog
+          onClose={() => setDialog(null)}
+          onOpen={(chat) => {
+            setContactsOpen(false);
+            openTarget(chat);
+          }}
+        />
+      )}
+      {contactTarget && <ContactForm target={contactTarget} connected={online && connection.status === "conectado"} notify={push} onClose={() => setContactTarget(null)} />}
       {dialog === "starred" && <StarredDialog chats={chats} onClose={() => setDialog(null)} onOpenAt={openAt} />}
       <UpdateDialog
         onShowVersions={() => {

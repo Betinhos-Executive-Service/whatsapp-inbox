@@ -1,3 +1,5 @@
+import type { Contact, Store } from "./db.ts";
+
 /** Cartão de contato (vCard) enviado ou recebido no WhatsApp. */
 export type ContactCard = { name: string; phones: { number: string; wa: string | null }[] };
 
@@ -48,4 +50,22 @@ export function extractContacts(content: Content): ContactCard[] | null {
     return list.length ? list : null;
   }
   return null;
+}
+
+type SaveDeps = {
+  /** JID do número no WhatsApp; null se não tiver conta. */
+  resolve: (digits: string) => Promise<string | null>;
+  sync: (jid: string, fullName: string, firstName: string) => Promise<void>;
+  store: Pick<Store, "setNames">;
+};
+
+/** WhatsApp primeiro: se a conta recusar, nada muda aqui e o Inbox não mostra nome que a conta não tem. */
+export async function saveContact(deps: SaveDeps, input: { digits: string; firstName: string; lastName?: string }): Promise<Contact> {
+  const firstName = input.firstName.trim();
+  const fullName = [firstName, input.lastName?.trim()].filter(Boolean).join(" ");
+  const jid = await deps.resolve(input.digits);
+  if (!jid) throw new Error("Este número não tem WhatsApp.");
+  await deps.sync(jid, fullName, firstName);
+  deps.store.setNames(jid, { saved: fullName });
+  return { jid, name: fullName, phone: jid.split("@")[0] };
 }

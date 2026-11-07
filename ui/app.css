@@ -1664,3 +1664,57 @@ kbd {
 :root[data-no-status] .chat-item__meta { min-height: 0; padding-right: 0; }
 :root[data-no-status] .chat-item__meta:empty,
 :root[data-no-status][data-no-labels] .chat-item__meta:not(:has(> :not(.chat-item__labels))) { display: none; }
+
+/* ---- contatos: painel "Nova conversa" desliza sobre a lista; sai mais rápido do que entra */
+.contacts-panel {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; flex-direction: column; min-height: 0;
+  background-color: var(--bt-color-surface-neutral);
+  animation: contacts-in var(--bt-duration-slow) var(--bt-ease-drawer);
+}
+.contacts-panel[data-closing] { animation: contacts-out var(--bt-drawer-duration-enter) var(--bt-ease-drawer) forwards; pointer-events: none; }
+@keyframes contacts-in { from { transform: translateX(-100%); } }
+@keyframes contacts-out { to { transform: translateX(-100%); } }
+.contacts-panel__header { display: flex; align-items: center; gap: var(--bt-space-2); padding: var(--bt-space-3) var(--bt-space-3) var(--bt-space-1); }
+.contacts-panel__search { padding: var(--bt-space-2) var(--bt-space-3); }
+.contacts-panel__list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 var(--bt-space-2) var(--bt-space-3); }
+.contacts-panel__actions { display: flex; flex-direction: column; padding-bottom: var(--bt-space-1); border-bottom: var(--bt-border-width-default) solid var(--bt-color-border); }
+.contacts-panel__empty { display: flex; align-items: center; gap: var(--bt-space-2); padding: var(--bt-space-3) var(--bt-space-2); }
+.contacts-panel__letter { margin: var(--bt-space-3) var(--bt-space-2) var(--bt-space-1); font-size: var(--bt-font-size-12); font-weight: var(--bt-font-weight-bold); color: var(--bt-color-text-secondary); }
+.contacts-panel__group { list-style: none; margin: 0; padding: 0; }
+/* Agenda grande: só pinta as linhas visíveis. */
+.contacts-panel__item { display: flex; align-items: center; border-radius: var(--bt-radius-md); content-visibility: auto; contain-intrinsic-size: auto 52px; }
+.contacts-panel__row {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--bt-space-2-5); width: 100%;
+  padding: var(--bt-space-1-5) var(--bt-space-2); border: 0; border-radius: var(--bt-radius-md); background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+  transition: background-color var(--bt-duration-fast) ease;
+}
+.contacts-panel__row:focus-visible { outline: 0; box-shadow: inset 0 0 0 2px var(--bt-focus-border); }
+.contacts-panel__icon { background-color: var(--bt-color-action); color: var(--bt-color-surface); }
+.contacts-panel__text { display: flex; flex-direction: column; min-width: 0; }
+.contacts-panel__name { font-size: var(--bt-font-size-14); font-weight: var(--bt-font-weight-bold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contacts-panel__edit { flex: none; opacity: 0; transition: opacity var(--bt-duration-fast) ease; }
+.contacts-panel__item:focus-within .contacts-panel__edit { opacity: 1; }
+@media (hover: hover) and (pointer: fine) {
+  .contacts-panel__row:hover, .contacts-panel__item:hover { background-color: var(--bt-color-surface-soft); }
+  .contacts-panel__item:hover .contacts-panel__edit { opacity: 1; }
+}
+@media (hover: none) { .contacts-panel__edit { opacity: 1; } }
+
+/* ---- formulário de contato */
+.contact-form__delete { margin-right: auto; }
+.contact-form__existing { display: flex; flex-wrap: wrap; align-items: center; gap: var(--bt-space-1); margin: 0; }
+.contact-form__saved svg { animation: saved-check var(--bt-duration-normal) var(--bt-ease-out); }
+@keyframes saved-check { from { opacity: 0; transform: scale(.6); } }
+.contact-card__actions { flex-wrap: wrap; }
+
+/* Nome que mudou (contato salvo ou editado) troca suave; linha recém-salva pisca de leve. */
+.name-swap { animation: name-swap var(--bt-duration-fast) ease-out; }
+@keyframes name-swap { from { opacity: 0; } }
+.contact-saved { animation: contact-saved 1s ease-out; }
+@keyframes contact-saved { from { background-color: var(--bt-color-action-soft); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .contacts-panel, .contacts-panel[data-closing], .contact-saved, .contact-form__saved svg { animation: none; }
+}

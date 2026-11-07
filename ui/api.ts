@@ -14,11 +14,16 @@ export type DeepSeekOptions = {
   messageChars: number;
 } & Record<DeepSeekTask, { maxTokens: number; temperature: number }>;
 
+/** Contato da agenda (nome salvo). */
+export type Contact = { jid: string; name: string; phone: string };
+
 export type Chat = {
   jid: string;
   name: string;
   phone: string | null;
   isGroup: boolean;
+  /** Número salvo na agenda (nunca em grupo). */
+  saved: boolean;
   lastAt: number;
   lastText: string | null;
   lastFromMe: boolean;
@@ -326,6 +331,11 @@ export const api = {
   deleteChat: (jid: string) => request<{ synced: boolean }>("DELETE", chatPath(jid), {}),
   /** Conversa com um número (conferido no WhatsApp) ou com um contato/participante conhecido. */
   openChat: (target: { phone: string } | { jid: string }) => request<Chat>("POST", "/api/open-chat", target),
+  contacts: () => request<Contact[]>("GET", "/api/contacts"),
+  checkContact: (phone: string) => request<{ jid: string | null; savedName: string | null }>("GET", `/api/contacts/check?phone=${encodeURIComponent(phone)}`),
+  /** Grava primeiro na conta do WhatsApp; se ela recusar, nada muda aqui. */
+  saveContact: (input: { phone: string; firstName: string; lastName?: string }) => request<Contact>("POST", "/api/contacts", input),
+  deleteContact: (jid: string) => request<void>("DELETE", `/api/contacts/${encodeURIComponent(jid)}`, {}),
   createGroup: (subject: string, participants: string[]) => request<Chat>("POST", "/api/groups", { subject, participants }),
   updateParticipants: (jid: string, action: ParticipantAction, participants: string[]) =>
     request<ParticipantResult[]>("POST", `${chatPath(jid)}/participants`, { action, participants }),

@@ -1,4 +1,6 @@
-import { ArrowLeft, Ban, Camera, Check, Copy, Download, ImageOff, LoaderCircle, LogOut, MoreVertical, Pencil, Shield, ShieldOff, Timer, Trash2, UserMinus, UserRoundPlus, Users, X } from "lucide-react";
+import { ArrowLeft, Ban, Camera, Check, Copy, Download, ImageOff, LoaderCircle, LogOut, MoreVertical, Pencil, Shield, ShieldOff, Timer, Trash2, UserMinus, UserRoundPen, UserRoundPlus, Users, X } from "lucide-react";
+import { useContacts } from "./contact-list.ts";
+import type { ContactTarget } from "./contacts.tsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Chat, type Participant, type ParticipantAction, type ParticipantResult, type Profile } from "./api.ts";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
@@ -76,15 +78,18 @@ async function toGroupPhoto(file: Blob): Promise<string> {
 type Confirm = { title: string; text: string; action: string; run: () => Promise<void> };
 
 /** Painel lateral com foto, número, recado e, em grupo, descrição e participantes. */
-export function ProfilePanel({ target, chat, connected, onClose, onChat, notify }: {
+export function ProfilePanel({ target, chat, connected, onClose, onChat, onContact, notify }: {
   target: ProfileTarget;
   /** Conversa aberta: temporárias valem para ela. */
   chat: Chat;
   connected: boolean;
   onClose: () => void;
   onChat: (chat: Chat) => void;
+  /** Salvar ou editar contato (formulário na raiz). */
+  onContact: (target: ContactTarget) => void;
   notify: (kind: "error" | "success", text: string) => void;
 }) {
+  const { contacts } = useContacts();
   // Pilha: do grupo dá para abrir um participante e voltar.
   const [stack, setStack] = useState<ProfileTarget[]>([target]);
   const current = stack[stack.length - 1];
@@ -291,7 +296,7 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
             )}
           </span>
           <div className="profile__id">
-            <h4 className="heading-card profile__name">{group?.subject ?? current.name}</h4>
+            <h4 key={group?.subject ?? current.name} className="heading-card profile__name name-swap">{group?.subject ?? current.name}</h4>
             {current.phone && (
               <div className="profile__phone">
                 <span>{formatPhone(current.phone)}</span>
@@ -424,6 +429,24 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, notify 
 
         <MediaSection jid={current.jid} />
 
+        {!current.isGroup && current.phone && (
+          <section className="stack profile__section">
+            {(() => {
+              const saved = contacts?.find((c) => c.phone === current.phone);
+              return (
+                <Button
+                  variant="secondary"
+                  icon={saved ? <UserRoundPen size={16} aria-hidden /> : <UserRoundPlus size={16} aria-hidden />}
+                  disabled={!connected}
+                  title={connected ? undefined : "Conecte o WhatsApp para salvar."}
+                  onClick={() => onContact({ phone: `+${current.phone}`, name: saved?.name ?? (current.name.startsWith("+") ? "" : current.name), savedName: saved?.name ?? null })}
+                >
+                  {saved ? "Editar contato" : "Salvar contato"}
+                </Button>
+              );
+            })()}
+          </section>
+        )}
         {profile && !current.isGroup && connected && (
           <section className="stack profile__section">
             <Button variant={profile.blocked ? "secondary" : "danger"} icon={<Ban size={16} aria-hidden />} onClick={() => block(!profile.blocked)}>
