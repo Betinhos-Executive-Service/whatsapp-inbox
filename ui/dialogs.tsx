@@ -1,10 +1,10 @@
-import { CheckCheck, Crosshair, Info, ListChecks, LoaderCircle, MapPin, MessageSquarePlus, Plus, Star, Sticker, Trash2, UserRoundPlus, Users, X } from "lucide-react";
+import { CheckCheck, Crosshair, Info, ListChecks, LoaderCircle, MapPin, Plus, Star, Sticker, Trash2, UserRoundPlus, Users, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type Chat, type Message, type MessageInfo } from "./api.ts";
 import { Avatar } from "./avatar.tsx";
-import { Alert, Button, Dialog, Field, Input, SearchBox, SegmentedControl, Switch, Textarea } from "./ds/index.ts";
+import { Alert, Button, Dialog, Field, Input, SearchBox, Switch, Textarea } from "./ds/index.ts";
 import { formatTime, listTime, normalize } from "./format.ts";
-import { parseLocation, phoneDigits } from "./location.ts";
+import { parseLocation } from "./location.ts";
 
 /**
  * Caixa de formulário: fecha por X, Esc ou clique fora. Com alteração não salva, pergunta antes
@@ -385,34 +385,31 @@ export function StickerDialog({ onSend, onClose }: { onSend: (from: { chatJid: s
   );
 }
 
-/** Nova conversa por número ou novo grupo com contatos já conhecidos. */
-export function NewChatDialog({ onOpen, onClose }: { onOpen: (chat: Chat) => void; onClose: () => void }) {
-  const [mode, setMode] = useState<"contato" | "grupo">("contato");
-  const [phone, setPhone] = useState("");
+/** Novo grupo com contatos já conhecidos. A conversa com um número sai do painel de contatos. */
+export function NewGroupDialog({ onOpen, onClose }: { onOpen: (chat: Chat) => void; onClose: () => void }) {
   const [subject, setSubject] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const digits = phoneDigits(phone);
-  const ready = mode === "contato" ? !!digits : !!subject.trim() && picked.length > 0;
-  const dirty = !!phone.trim() || !!subject.trim() || picked.length > 0;
+  const ready = !!subject.trim() && picked.length > 0;
+  const dirty = !!subject.trim() || picked.length > 0;
   const submit = async () => {
     if (!ready || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const chat = mode === "contato" ? await api.openChat({ phone }) : await api.createGroup(subject.trim(), picked);
+      const chat = await api.createGroup(subject.trim(), picked);
       onOpen(chat);
       onClose();
     } catch (e) {
-      setError(`${mode === "contato" ? "Não foi possível abrir a conversa." : "Grupo não criado."} ${(e as Error).message}`);
+      setError(`Grupo não criado. ${(e as Error).message}`);
       setBusy(false);
     }
   };
   return (
     <FormModal
-      title={mode === "contato" ? "Nova conversa" : "Novo grupo"}
-      icon={mode === "contato" ? <MessageSquarePlus size={18} aria-hidden /> : <Users size={18} aria-hidden />}
+      title="Novo grupo"
+      icon={<Users size={18} aria-hidden />}
       dirty={dirty}
       busy={busy}
       onClose={onClose}
@@ -422,49 +419,15 @@ export function NewChatDialog({ onOpen, onClose }: { onOpen: (chat: Chat) => voi
             Cancelar
           </Button>
           <Button variant="primary" loading={busy} disabled={!ready} onClick={() => void submit()}>
-            {mode === "contato" ? "Abrir conversa" : picked.length ? `Criar grupo com ${picked.length}` : "Criar grupo"}
+            {picked.length ? `Criar grupo com ${picked.length}` : "Criar grupo"}
           </Button>
         </>
       }
     >
-      <SegmentedControl
-        aria-label="Tipo de conversa"
-        fullWidth
-        size="compact"
-        value={mode}
-        onChange={(v) => {
-          setMode(v);
-          setError(null);
-        }}
-        options={[
-          { value: "contato", label: "Com um número" },
-          { value: "grupo", label: "Grupo" },
-        ]}
-      />
-      {mode === "contato" ? (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void submit();
-          }}
-        >
-          <Field
-            label="Número do WhatsApp"
-            required
-            hint="DDD e número. Para fora do Brasil, comece com + e o código do país."
-            error={phone.trim() && !digits ? "Número incompleto ou com dígitos demais." : undefined}
-          >
-            <Input value={phone} inputMode="tel" autoComplete="off" placeholder="(11) 99999-0000" onChange={(e) => setPhone(e.target.value)} />
-          </Field>
-        </form>
-      ) : (
-        <>
-          <Field label="Nome do grupo" required>
-            <Input value={subject} maxLength={100} placeholder="Ex.: Evento 12/10 · Motoristas" onChange={(e) => setSubject(e.target.value)} />
-          </Field>
-          <ContactPicker label="Participantes" selected={picked} onToggle={(c) => setPicked((list) => (list.includes(c.jid) ? list.filter((j) => j !== c.jid) : [...list, c.jid]))} />
-        </>
-      )}
+      <Field label="Nome do grupo" required>
+        <Input value={subject} maxLength={100} placeholder="Ex.: Evento 12/10 · Motoristas" onChange={(e) => setSubject(e.target.value)} />
+      </Field>
+      <ContactPicker label="Participantes" selected={picked} onToggle={(c) => setPicked((list) => (list.includes(c.jid) ? list.filter((j) => j !== c.jid) : [...list, c.jid]))} />
       {error && (
         <Alert tone="danger" role="alert">
           {error}
