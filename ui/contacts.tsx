@@ -91,7 +91,7 @@ export function ContactPicker({ to, onClose, onDone }: { to: Chat; onClose: () =
   );
 }
 
-type Check = { state: "idle" | "checking" | "error" } | { state: "missing" } | { state: "ok"; savedName: string | null };
+type NumberCheck = { state: "idle" | "checking" | "error" } | { state: "missing" } | { state: "ok"; savedName: string | null };
 
 /** Novo contato ou edição, como no WhatsApp: grava na conta primeiro; o número não muda depois de salvo. */
 export function ContactForm({ target, connected, onClose, notify }: {
@@ -105,7 +105,7 @@ export function ContactForm({ target, connected, onClose, notify }: {
   const [firstName, setFirstName] = useState(initial.firstName);
   const [lastName, setLastName] = useState(initial.lastName);
   const [phone, setPhone] = useState(target.phone ?? "");
-  const [check, setCheck] = useState<Check>({ state: "idle" });
+  const [check, setCheck] = useState<NumberCheck>({ state: "idle" });
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
