@@ -194,10 +194,18 @@ function ConnectionPill({ connection, online }: { connection: Connection; online
     reconectando: ["warning", "Reconectando"],
     desconectado: ["danger", "Desconectado"],
   };
+  if (connection.status === "conectado" && connection.syncing) {
+    return (
+      <span className="pill pill--neutral" role="status" title="Recebendo as mensagens que chegaram enquanto o app esteve fechado">
+        <LoaderCircle className="spin" size={14} aria-hidden /> Atualizando
+      </span>
+    );
+  }
   const [tone, label] = map[connection.status];
+  const busy = connection.status === "reconectando" || connection.status === "iniciando";
   return (
-    <span className={`pill pill--${tone}`}>
-      <span className="pill__dot" aria-hidden /> {label}
+    <span className={`pill pill--${tone}`} role="status">
+      {busy ? <LoaderCircle className="spin" size={14} aria-hidden /> : <span className="pill__dot" aria-hidden />} {label}
     </span>
   );
 }
@@ -780,6 +788,18 @@ function authorTone(name: string): number {
   return h % AUTHOR_TONES;
 }
 
+/**
+ * Fim das últimas conversas abertas, para reabrir sem esperar o servidor: a tela mostra o que já
+ * tinha e troca pela versão do servidor assim que ela chega. Só guarda o fim (não a vista da busca).
+ */
+const TAIL_CACHE_SIZE = 30;
+const tailCache = new Map<string, Message[]>();
+function cacheTail(jid: string, list: Message[]) {
+  tailCache.delete(jid);
+  tailCache.set(jid, list.filter((m) => !m.pending).slice(-120));
+  if (tailCache.size > TAIL_CACHE_SIZE) tailCache.delete(tailCache.keys().next().value!);
+}
+
 /** Junta o fim recarregado do servidor sem perder bolhas otimistas pendentes. */
 function mergeTail(list: Message[], fresh: Message[]): Message[] {
   const known = new Set(list.map((x) => x.id));
@@ -1278,12 +1298,31 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
 
   useEffect(() => {
     let alive = true;
-    setMessages(null);
+    // Sem não lidas, reabre na hora com o que já tinha; com não lidas, a faixa precisa da versão do servidor.
+    const cached = !focus && unreadAtOpen <= 0 ? tailCache.get(chat.jid) : undefined;
+    setMessages(cached ?? null);
+    if (cached) setHasMore(cached.length >= 80);
     stickToBottom.current = !focus;
     atLatest.current = !focus;
     (focus ? api.messagesAround(chat.jid, focus.id) : api.messages(chat.jid))
       .then((list) => {
         if (!alive) return;
+        if (cached) {
+          // Mantém o que foi carregado acima (Carregar anteriores) e as bolhas que estão saindo agora.
+          setMessages((now) => {
+            if (!now) return list;
+            const firstAt = list[0]?.at ?? Infinity;
+            const lastAt = list.at(-1)?.at ?? -Infinity;
+            const fresh = new Set(list.map((x) => x.id));
+            const kept = now.filter((x) => !x.pending && !fresh.has(x.id));
+            // Acima: "Carregar anteriores" feito antes da resposta; abaixo: chegou pelo SSE depois dela.
+            const older = kept.filter((x) => x.at < firstAt);
+            const newer = kept.filter((x) => x.at > lastAt);
+            return [...older, ...list, ...newer, ...now.filter((x) => x.pending)];
+          });
+          setHasMore((more) => more || list.length >= 80);
+          return;
+        }
         // Abre já rolado e destacado na mensagem achada (ver o useLayoutEffect abaixo).
         pendingFocus.current = focus?.id ?? null;
         if (!focus && unreadAtOpen > 0) {
@@ -1355,6 +1394,34 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       window.removeEventListener("inbox:update", onUpdate);
       window.removeEventListener("inbox:remove", onRemove);
     };
+  }, [chat.jid]);
+
+  // Guarda o fim desta conversa para a próxima abertura (não a vista em volta de uma busca).
+  useEffect(() => {
+    if (messages && atLatest.current) cacheTail(chat.jid, messages);
+  }, [chat.jid, messages]);
+
+  // O app voltou (servidor reiniciado, WhatsApp reconectado, histórico novo): relê o fim desta conversa.
+  // Mensagens que entram pelo histórico não chegam uma a uma pelo SSE.
+  useEffect(() => {
+    const onResync = () => {
+      if (!atLatest.current) return;
+      api.messages(chat.jid).then(
+        (fresh) => {
+          const el = scroller.current;
+          stickToBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+          setMessages((list) => {
+            if (!list) return list;
+            // Também troca as que mudaram (apagada, editada, tique de leitura) enquanto o app esteve fora.
+            const byId = new Map(fresh.map((x) => [x.id, x]));
+            return mergeTail(list.map((x) => byId.get(x.id) ?? x), fresh);
+          });
+        },
+        () => undefined,
+      );
+    };
+    window.addEventListener("inbox:resync", onResync);
+    return () => window.removeEventListener("inbox:resync", onResync);
   }, [chat.jid]);
 
   useLayoutEffect(() => {
@@ -2744,16 +2811,40 @@ function App() {
     [chats, upsert, openChat, push],
   );
 
+  // Um pedido por vez: o histórico chega em vários lotes e cada um pede "reload"; os que chegam
+  // durante um pedido viram um só no fim. Ao terminar, a conversa aberta relê o fim (inbox:resync).
+  const reloading = useRef<"idle" | "busy" | "again">("idle");
   const reload = useCallback(() => {
+    if (reloading.current !== "idle") {
+      reloading.current = "again";
+      return;
+    }
+    reloading.current = "busy";
     api
       .chats()
       .then((list) => {
         queued.current.clear(); // a lista nova já traz o estado atual
         setChats(new Map(list.map((c) => [c.jid, c])));
         setLoaded(true);
+        window.dispatchEvent(new Event("inbox:resync"));
       })
-      .catch((e) => push("error", `Não foi possível carregar as conversas. ${e.message}`));
+      .catch((e) => push("error", `Não foi possível carregar as conversas. ${e.message}`))
+      .finally(() => {
+        const again = reloading.current === "again";
+        reloading.current = "idle";
+        if (again) reloadSoon();
+      });
   }, [push]);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+  /** Rajada de "reload" (lotes do histórico, agenda, etiquetas) vira um pedido só. */
+  const reloadSoon = useCallback(() => {
+    reloadTimer.current ??= setTimeout(() => {
+      reloadTimer.current = null;
+      reloadRef.current();
+    }, 300);
+  }, []);
 
   useEffect(() => {
     reload();
@@ -2770,7 +2861,7 @@ function App() {
     });
     es.addEventListener("chat", (e) => upsert(JSON.parse((e as MessageEvent).data)));
     es.addEventListener("reload", () => {
-      reload();
+      reloadSoon();
       api.state().then(setState).catch(() => undefined);
     });
     es.addEventListener("agent", (e) => window.dispatchEvent(new CustomEvent("inbox:agent", { detail: JSON.parse((e as MessageEvent).data) })));
@@ -2800,7 +2891,7 @@ function App() {
       window.dispatchEvent(new CustomEvent("inbox:remove", { detail: { chatJid, id } }));
     });
     return () => es.close();
-  }, [reload, upsert]);
+  }, [reload, reloadSoon, upsert]);
 
   // Volta a carregar a lista quando o servidor volta (ex.: depois de reiniciar o app).
   const wasOnline = useRef(true);
@@ -2817,6 +2908,14 @@ function App() {
   const current = selected ? (chats.get(selected) ?? null) : null;
   const connection: Connection = state?.connection ?? { status: "iniciando", qr: null, me: null, error: null };
   const showConnect = connection.status === "qr" && !skipConnect;
+
+  // Fim da fila offline: relê a lista e a conversa aberta, caso algo tenha entrado sem aviso.
+  const syncing = connection.status === "conectado" && !!connection.syncing;
+  const wasSyncing = useRef(false);
+  useEffect(() => {
+    if (wasSyncing.current && !syncing) reloadSoon();
+    wasSyncing.current = syncing;
+  }, [syncing, reloadSoon]);
 
   useEffect(() => {
     if (connection.status !== "conectado") return;

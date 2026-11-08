@@ -258,6 +258,8 @@ export type Connection = {
   qr: string | null;
   me: string | null;
   error: string | null;
+  /** Conectado, mas o WhatsApp ainda entrega o que chegou enquanto o app esteve fora. */
+  syncing?: boolean;
 };
 export type Prefs = {
   notifyEnabled: boolean;

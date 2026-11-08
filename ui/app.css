@@ -395,7 +395,9 @@ ul, ol { margin: 0; padding: 0; }
 .classify__ai--error { color: var(--bt-color-danger); font-weight: var(--bt-font-weight-semibold); }
 
 .messages { flex: 1; min-height: 0; overflow-y: auto; padding: var(--bt-space-4) var(--bt-space-5); display: flex; flex-direction: column; gap: var(--bt-space-1-5); }
-.messages__loading { margin: auto; display: flex; align-items: center; gap: var(--bt-space-2); color: var(--bt-color-text-secondary); }
+.messages__loading { margin: auto; display: flex; align-items: center; gap: var(--bt-space-2); color: var(--bt-color-text-secondary); animation: loading-in 200ms ease-out 250ms both; }
+/* Conversa que carrega rápido não pisca o aviso de carregando. */
+@keyframes loading-in { from { opacity: 0; } }
 .messages__more { align-self: center; margin-bottom: var(--bt-space-2); }
 .message-row { display: flex; flex-direction: column; }
 .message-row--cont { margin-top: calc(-1 * var(--bt-space-1)); }
