@@ -54,7 +54,11 @@ import {
 } from "./text.ts";
 
 export type ConnectionStatus = "iniciando" | "qr" | "conectado" | "reconectando" | "desconectado";
-export type ConnectionState = { status: ConnectionStatus; qr: string | null; me: string | null; error: string | null };
+/** `syncing`: conectado, mas o WhatsApp ainda entrega o que chegou enquanto o app esteve fora. */
+export type ConnectionState = { status: ConnectionStatus; qr: string | null; me: string | null; error: string | null; syncing?: boolean };
+
+/** Sem o aviso de fim da fila offline, "Atualizando" some sozinho depois disto. */
+const SYNC_MAX_MS = 90_000;
 
 /** Mensagem com até 2 min de idade conta como "ao vivo" (ver `isLiveArrival`): mexe em não lidas e status. */
 const LIVE_WINDOW_MS = 2 * 60 * 1000;
@@ -192,6 +196,8 @@ export class WhatsApp extends EventEmitter<{
   private blocked = new Set<string>();
   private retries = 0;
   private stopped = false;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly store: Store;
   private readonly authDir: string;
 
@@ -651,7 +657,8 @@ export class WhatsApp extends EventEmitter<{
 
   async start(): Promise<void> {
     this.stopped = false;
-    this.setState({ status: this.retries ? "reconectando" : "iniciando", qr: null, error: null });
+    this.retryTimer = null;
+    this.setState({ status: this.retries ? "reconectando" : "iniciando", qr: null, error: null, syncing: false });
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     // Sessão salva de outro número (ex.: data/auth trocado): separa antes de qualquer evento.
     if (state.creds.me?.id) this.checkAccount(jidNormalizedUser(state.creds.me.id));
@@ -696,7 +703,11 @@ export class WhatsApp extends EventEmitter<{
         this.retries = 0;
         const me = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
         this.checkAccount(me);
-        this.setState({ status: "conectado", qr: null, error: null, me });
+        // Até o WhatsApp avisar que a fila offline acabou, a tela mostra "Atualizando".
+        this.setState({ status: "conectado", qr: null, error: null, me, syncing: true });
+        if (this.syncTimer) clearTimeout(this.syncTimer);
+        this.syncTimer = setTimeout(() => this.endSync(sock), SYNC_MAX_MS);
+        this.syncTimer.unref?.();
         // Depois do histórico inicial; numa reconexão recente é só uma consulta à configuração.
         setTimeout(() => void this.backfillContacts(sock), 20000);
         setTimeout(() => void this.syncArchives(sock), 25000);
@@ -708,9 +719,11 @@ export class WhatsApp extends EventEmitter<{
           .then((list) => (this.blocked = new Set(list.filter((j): j is string => !!j).map((j) => this.canonical(j)))))
           .catch(() => undefined);
       }
+      if (u.receivedPendingNotifications) this.endSync(sock);
       if (u.connection === "close") {
         if (this.sock !== sock) return;
         this.sock = null;
+        if (this.syncTimer) clearTimeout(this.syncTimer);
         this.failPending("A conexão com o WhatsApp caiu antes da confirmação.");
         const code = (u.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
         if (this.stopped) return;
@@ -724,8 +737,8 @@ export class WhatsApp extends EventEmitter<{
         }
         this.retries++;
         const wait = Math.min(30000, 1000 * 2 ** Math.min(this.retries - 1, 5));
-        this.setState({ status: "reconectando", error: u.lastDisconnect?.error?.message ?? null });
-        setTimeout(() => void this.start().catch((e) => this.setState({ status: "desconectado", error: String(e) })), wait);
+        this.setState({ status: "reconectando", error: u.lastDisconnect?.error?.message ?? null, syncing: false });
+        this.retryTimer = setTimeout(() => void this.start().catch((e) => this.setState({ status: "desconectado", error: String(e) })), wait);
       }
     });
 
@@ -864,6 +877,29 @@ export class WhatsApp extends EventEmitter<{
           .catch(() => undefined);
       }
     });
+  }
+
+  private endSync(sock: WASocket) {
+    if (this.sock !== sock) return;
+    if (this.syncTimer) clearTimeout(this.syncTimer);
+    this.syncTimer = null;
+    if (this.state.syncing) this.setState({ syncing: false });
+  }
+
+  /**
+   * O computador voltou da suspensão: a conexão antiga costuma estar morta sem aviso e só cairia no
+   * próximo keepalive (até um minuto sem mensagens). Reconecta já; se já esperava para reconectar, não espera mais.
+   */
+  wake(): void {
+    if (this.stopped) return;
+    if (this.sock) {
+      this.sock.end(new Error("O computador voltou da suspensão."));
+      return;
+    }
+    if (!this.retryTimer) return;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    void this.start().catch((e) => this.setState({ status: "desconectado", error: String(e) }));
   }
 
   private applyContact(c: { id?: string; lid?: string; phoneNumber?: string; name?: string; notify?: string; verifiedName?: string; imgUrl?: string | null }) {
@@ -1669,6 +1705,8 @@ export class WhatsApp extends EventEmitter<{
 
   async stop(): Promise<void> {
     this.stopped = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.syncTimer) clearTimeout(this.syncTimer);
     this.sock?.end(undefined);
     this.sock = null;
   }

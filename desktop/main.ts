@@ -2,7 +2,7 @@
 // próprio Electron, mostra cada conta numa área própria da mesma janela e mantém tudo rodando
 // na bandeja quando a janela é fechada. Cada conta é uma instância separada (dados, auth e
 // configurações próprios); a troca de conta só alterna qual área aparece.
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, shell, Tray, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, shell, Tray, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { spawn } from "node:child_process";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -795,6 +795,10 @@ if (process.argv.includes(MCP_SERVER_ARG)) {
     }
     setupIpc();
     createWindow();
+    // Depois da suspensão a conexão com o WhatsApp costuma estar morta sem aviso: reconecta já.
+    powerMonitor.on("resume", () => {
+      for (const inst of instances.values()) inst.app?.wake();
+    });
     tray = new Tray(nativeImage.createFromPath(iconPath()));
     tray.setToolTip(PRODUCT);
     tray.on("click", showWindow);

@@ -76,6 +76,8 @@ export type RunningApp = {
   markRead: (jid: string) => Promise<void>;
   avatar: (jid: string) => Promise<Buffer | null>;
   connection: () => ConnectionState;
+  /** Volta da suspensão do computador: reconecta o WhatsApp na hora. */
+  wake: () => void;
   logout: () => Promise<void>;
   exportSettings: () => SettingsSnapshot;
   importSettings: (snapshot: SettingsSnapshot) => void;
@@ -1022,6 +1024,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     markRead,
     avatar,
     connection: () => (wa?.state ?? bootingState),
+    wake: () => wa?.wake(),
     logout: () => connected().logout(),
     exportSettings: () => ({
       settings: store.listSettings().filter(([key]) => !PER_NUMBER_SETTINGS.has(key) && !key.startsWith("poll_lid")),
