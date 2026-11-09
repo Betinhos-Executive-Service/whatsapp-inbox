@@ -303,6 +303,18 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, onConta
                 <CopyButton text={`+${current.phone}`} label="Copiar número" />
               </div>
             )}
+            {!current.isGroup && current.phone && contacts && !contacts.some((c) => c.phone === current.phone) && (
+              <Button
+                variant="secondary"
+                size="compact"
+                icon={<UserRoundPlus size={14} aria-hidden />}
+                disabled={!connected}
+                title={connected ? undefined : "Conecte o WhatsApp para salvar."}
+                onClick={() => onContact({ phone: `+${current.phone}`, name: current.name.startsWith("+") ? "" : current.name, savedName: null })}
+              >
+                Salvar contato
+              </Button>
+            )}
             {current.isGroup && group && <span className="hint">Grupo · {group.size} participantes</span>}
             {profile?.blocked && (
               <span className="badge badge--danger">
