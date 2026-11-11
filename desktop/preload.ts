@@ -17,6 +17,12 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("app:open-chat", listener);
     return () => ipcRenderer.removeListener("app:open-chat", listener);
   },
+  takeLink: () => ipcRenderer.invoke("app:take-link"),
+  onLink: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("app:link", listener);
+    return () => ipcRenderer.removeListener("app:link", listener);
+  },
   accountInfo: () => ipcRenderer.invoke("account:info"),
   renameAccount: (name: string) => ipcRenderer.invoke("account:rename", name),
   addAccount: () => ipcRenderer.invoke("account:add"),

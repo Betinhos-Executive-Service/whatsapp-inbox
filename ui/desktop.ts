@@ -32,6 +32,10 @@ export type DesktopBridge = {
   saveExport: (chatJid: string, withMedia: boolean, defaultName: string) => Promise<string | null>;
   onOpenChat: (cb: (jid: string) => void) => () => void;
   onOpenSettings: (cb: (tab?: string) => void) => () => void;
+  /** Link "abrir conversa" (whatsapp://send) esperando esta conta; null se não há. */
+  takeLink: () => Promise<{ phone: string; text: string } | null>;
+  /** Avisa que chegou um link: a página busca com takeLink. */
+  onLink: (cb: () => void) => () => void;
   accountInfo: () => Promise<AccountInfo | null>;
   renameAccount: (name: string) => Promise<AccountInfo | null>;
   addAccount: () => Promise<void>;
