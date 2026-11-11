@@ -19,6 +19,7 @@ import { mediaToTemp, safeFileName } from "./files.ts";
 import { isUrgent, notificationBody, notificationTitle, UnreadCounter } from "./notifications.ts";
 import type { RailAccount } from "./rail/rail.ts";
 import { setupUpdates } from "./updates.ts";
+import { LINK_SCHEMES, linkFromArgv, type WaLink } from "./wa-link.ts";
 
 const PRODUCT = "WhatsApp Inbox";
 const RAIL_WIDTH = 72;
@@ -203,6 +204,7 @@ async function startInstance(account: Account): Promise<Instance> {
       onConnection: (state) => {
         inst.connection = state;
         if (state.status === "conectado") warnDuplicate(inst);
+        if (linkReady(inst)) inst.view.webContents.send("app:link");
         pushRail();
       },
       mcpEntry: mcpEntry(),
@@ -365,6 +367,26 @@ function openChat(inst: Instance, jid: string) {
   showWindow();
   inst.view.webContents.send("app:open-chat", jid);
   clearChat(inst, jid);
+}
+
+// ---- links "abrir conversa" (whatsapp://send?phone=...&text=...)
+
+/**
+ * Link esperando a página da conta buscar: ela pode ainda estar carregando e, com o app aberto
+ * pelo próprio link, o WhatsApp ainda não conectou (sem conexão não dá para achar o número).
+ */
+let pendingLink: { account: string; link: WaLink } | null = null;
+
+const linkReady = (inst: Instance) => pendingLink?.account === inst.account.id && inst.connection?.status === "conectado";
+
+/** Abre o link na conta ativa: a página abre a conversa e põe o texto como rascunho, sem enviar. */
+function openLink(link: WaLink) {
+  const inst = active() ?? instances.values().next().value;
+  if (!inst) return;
+  pendingLink = { account: inst.account.id, link };
+  activate(inst.account.id);
+  showWindow();
+  if (linkReady(inst)) inst.view.webContents.send("app:link");
 }
 
 /** Com mais de uma conta, o toast diz de qual conta veio. */
@@ -532,6 +554,13 @@ function setupIpc() {
     }
     await writeFile(filePath, Buffer.from(await res.arrayBuffer()));
     return filePath;
+  });
+  ipcMain.handle("app:take-link", (event) => {
+    const inst = senderInstance(event);
+    if (!inst || !pendingLink || !linkReady(inst)) return null;
+    const { link } = pendingLink;
+    pendingLink = null;
+    return link;
   });
   ipcMain.handle("account:info", (event) => {
     const inst = senderInstance(event);
@@ -769,7 +798,13 @@ if (process.argv.includes(MCP_SERVER_ARG)) {
 } else {
   app.setAppUserModelId(APP_ID);
   registerNotificationName();
-  app.on("second-instance", showWindow);
+  app.on("second-instance", (_event, argv) => {
+    const link = linkFromArgv(argv);
+    if (link && instances.size) openLink(link);
+    else showWindow();
+  });
+  // Empacotado só: em desenvolvimento registraria o electron.exe genérico. O instalador também registra.
+  if (app.isPackaged) for (const scheme of LINK_SCHEMES) app.setAsDefaultProtocolClient(scheme);
   app.on("window-all-closed", () => {
     // Fica na bandeja: não encerra quando a janela some.
   });
@@ -811,6 +846,9 @@ if (process.argv.includes(MCP_SERVER_ARG)) {
       return;
     }
     activate(registry.active);
+    // App aberto por um link (não estava rodando): abre a conversa já na primeira janela.
+    const startLink = linkFromArgv(process.argv);
+    if (startLink) openLink(startLink);
     updates = setupUpdates({
       send: sendToAll,
       trusted: (event) => !!senderInstance(event),

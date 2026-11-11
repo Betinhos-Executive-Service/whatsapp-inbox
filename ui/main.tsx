@@ -1354,6 +1354,21 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
     if (!editing) drafts.set(chat.jid, draft);
   }, [chat.jid, draft, editing]);
+  // Rascunho trocado de fora (link "abrir conversa" com a conversa já aberta): a caixa acompanha.
+  // O que a própria caixa gravou (só espaços vira "") não volta para ela.
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  useEffect(
+    () =>
+      drafts.subscribe(chat.jid, () => {
+        const stored = drafts.get(chat.jid);
+        const own = draftRef.current.trim() ? draftRef.current : "";
+        if (!editingRef.current && stored !== own) setDraft(stored);
+      }),
+    [chat.jid],
+  );
 
   // Mensagem nova chegando nesta conversa (SSE) vira evento no window.
   useEffect(() => {
@@ -3003,6 +3018,29 @@ function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, chats, openChat, upsert, push, patchChat]);
+
+  // Link "abrir conversa" (whatsapp://send?phone=...&text=...): abre a conversa do número com o
+  // texto como rascunho. Nunca envia: quem confere e manda é a pessoa.
+  useEffect(() => {
+    const bridge = desktop();
+    if (!bridge) return;
+    const take = () =>
+      void bridge.takeLink().then((link) => {
+        if (!link) return;
+        setSkipConnect(true);
+        api
+          // O link sempre traz o DDI: com "+", o servidor não acrescenta o 55 a números de 10 ou 11 dígitos.
+          .openChat({ phone: `+${link.phone}` })
+          .then((chat) => {
+            if (link.text) drafts.set(chat.jid, link.text);
+            upsert(chat);
+            openChat(chat.jid);
+          })
+          .catch((e: Error) => push("error", `Não foi possível abrir a conversa do link. ${e.message}`));
+      });
+    take();
+    return bridge.onLink(take);
+  }, [upsert, openChat, push]);
 
   // Clique na notificação abre a conversa; "Configurações" na bandeja abre o painel.
   useEffect(() => {

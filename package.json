@@ -56,6 +56,15 @@
     "productName": "WhatsApp Inbox",
     "electronDist": "node_modules/electron/dist",
     "npmRebuild": false,
+    "protocols": [
+      {
+        "name": "Abrir conversa no WhatsApp Inbox",
+        "schemes": [
+          "whatsapp",
+          "whatsapp-inbox"
+        ]
+      }
+    ],
     "electronLanguages": [
       "pt-BR",
       "en-US"
