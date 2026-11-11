@@ -3029,7 +3029,8 @@ function App() {
         if (!link) return;
         setSkipConnect(true);
         api
-          .openChat({ phone: link.phone })
+          // O link sempre traz o DDI: com "+", o servidor não acrescenta o 55 a números de 10 ou 11 dígitos.
+          .openChat({ phone: `+${link.phone}` })
           .then((chat) => {
             if (link.text) drafts.set(chat.jid, link.text);
             upsert(chat);

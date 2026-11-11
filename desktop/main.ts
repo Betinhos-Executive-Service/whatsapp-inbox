@@ -204,6 +204,7 @@ async function startInstance(account: Account): Promise<Instance> {
       onConnection: (state) => {
         inst.connection = state;
         if (state.status === "conectado") warnDuplicate(inst);
+        if (linkReady(inst)) inst.view.webContents.send("app:link");
         pushRail();
       },
       mcpEntry: mcpEntry(),
@@ -370,8 +371,13 @@ function openChat(inst: Instance, jid: string) {
 
 // ---- links "abrir conversa" (whatsapp://send?phone=...&text=...)
 
-/** Link esperando a página da conta buscar (ela pode ainda estar carregando). */
+/**
+ * Link esperando a página da conta buscar: ela pode ainda estar carregando e, com o app aberto
+ * pelo próprio link, o WhatsApp ainda não conectou (sem conexão não dá para achar o número).
+ */
 let pendingLink: { account: string; link: WaLink } | null = null;
+
+const linkReady = (inst: Instance) => pendingLink?.account === inst.account.id && inst.connection?.status === "conectado";
 
 /** Abre o link na conta ativa: a página abre a conversa e põe o texto como rascunho, sem enviar. */
 function openLink(link: WaLink) {
@@ -380,7 +386,7 @@ function openLink(link: WaLink) {
   pendingLink = { account: inst.account.id, link };
   activate(inst.account.id);
   showWindow();
-  inst.view.webContents.send("app:link");
+  if (linkReady(inst)) inst.view.webContents.send("app:link");
 }
 
 /** Com mais de uma conta, o toast diz de qual conta veio. */
@@ -551,7 +557,7 @@ function setupIpc() {
   });
   ipcMain.handle("app:take-link", (event) => {
     const inst = senderInstance(event);
-    if (!inst || pendingLink?.account !== inst.account.id) return null;
+    if (!inst || !pendingLink || !linkReady(inst)) return null;
     const { link } = pendingLink;
     pendingLink = null;
     return link;
