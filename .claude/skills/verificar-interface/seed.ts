@@ -58,4 +58,9 @@ for (let i = 0; i < 60; i++) {
   s.addMessage(m(jid, `Obrigado pelo atendimento de ontem (${i + 1})`, 3000 + i * 60), false);
   s.setNames(jid, { saved: `Cliente ${i + 1}` });
 }
+// Apagada para todos com o original guardado: o Carlos mostra "Ver mensagem". Por último e com id
+// próprio, para não deslocar os ids das anteriores; fora do "ao vivo" para não mexer nas não lidas.
+const carlos = "5511990000002@s.whatsapp.net";
+s.addMessage({ ...m(carlos, "Na verdade somos 4 pessoas e 5 malas.", 90), id: "seed-apagada" }, false);
+s.markRevoked(carlos, "seed-apagada");
 console.log(`Banco de teste em ${join(dataDir, "inbox.db")}`);

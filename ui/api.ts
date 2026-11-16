@@ -196,6 +196,8 @@ export type Message = {
   contacts: ContactCard[] | null;
   /** Apagada para todos. */
   deleted: boolean;
+  /** Só na apagada para todos: o que ela dizia (vem do servidor; mensagens apagadas antes da v0.0.130 não têm). */
+  original?: Pick<Message, "text" | "kind" | "media">;
   /** Autor em grupo (JID do participante), para abrir o perfil. */
   sender: string | null;
   /** Só nas enviadas: 1 pendente, 2 enviada, 3 entregue, 4 lida, 5 ouvida. */

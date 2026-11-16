@@ -816,6 +816,31 @@ function insertByTime(list: Message[], m: Message): Message[] {
   return [...list.slice(0, i), m, ...list.slice(i)];
 }
 
+/** Apagada para todos: o aviso e, se o conteúdo ficou guardado, "Ver mensagem" mostra o que ela dizia. */
+function DeletedContent({ m, isGroup, names }: { m: Message; isGroup: boolean; names: string[] }) {
+  const [open, setOpen] = useState(false);
+  const shown = m.original ? { ...m, ...m.original, deleted: false } : null;
+  const caption = shown ? captionOf(shown, splitAuthor(shown, isGroup).body) : "";
+  return (
+    <>
+      <p className="bubble__text bubble__text--deleted">
+        <Ban size={14} aria-hidden /> {m.fromMe ? "Você apagou esta mensagem" : "Esta mensagem foi apagada"}
+        {shown && (
+          <button type="button" className="bubble__retry" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+            {open ? "Ocultar" : "Ver mensagem"}
+          </button>
+        )}
+      </p>
+      {open && shown && (
+        <div className="bubble__original">
+          {shown.media && <MediaView m={shown} caption={caption} />}
+          {(!shown.media || caption) && <p className="bubble__text"><WaText text={caption} mentions={names} /></p>}
+        </div>
+      )}
+    </>
+  );
+}
+
 /** Memo: digitar no campo de mensagem não redesenha o histórico inteiro. */
 /** Texto exibido da mensagem (legenda, sem "[Imagem]" nem o nome do arquivo). */
 function captionOf(m: Message, body: string): string {
@@ -936,9 +961,9 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
               className="message-line"
               onDoubleClick={(e) => {
                 // Duplo clique na bolha entra no modo de resposta, como no WhatsApp. Ignora
-                // controles (botões, links, mídia), bolhas ainda não confirmadas pelo servidor
-                // e o modo de seleção (ali o clique marca/desmarca).
-                if (selected || m.pending || !canAct) return;
+                // controles (botões, links, mídia), bolhas ainda não confirmadas pelo servidor,
+                // apagadas e o modo de seleção (ali o clique marca/desmarca).
+                if (selected || m.pending || m.deleted || !canAct) return;
                 if ((e.target as HTMLElement).closest("button, a, audio, video, input, textarea")) return;
                 window.getSelection()?.removeAllRanges();
                 onReply(m);
@@ -1009,9 +1034,7 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
                   </button>
                 )}
                 {m.deleted ? (
-                  <p className="bubble__text bubble__text--deleted">
-                    <Ban size={14} aria-hidden /> {m.fromMe ? "Você apagou esta mensagem" : "Esta mensagem foi apagada"}
-                  </p>
+                  <DeletedContent m={m} isGroup={isGroup} names={names} />
                 ) : richView ? (
                   <RichContent m={m} canAct={canAct} actions={rich} />
                 ) : (
