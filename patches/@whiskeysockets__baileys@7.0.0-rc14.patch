@@ -13,3 +13,16 @@ index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..6749c3cd188c57563af306ff3d50bca1
              if (mediaType) {
                  extraAttrs['mediatype'] = mediaType;
              }
+diff --git a/lib/Utils/chat-utils.js b/lib/Utils/chat-utils.js
+index c30265d..f3aa4d5 100644
+--- a/lib/Utils/chat-utils.js
++++ b/lib/Utils/chat-utils.js
+@@ -709,6 +709,8 @@ export const processSyncAction = (syncAction, ev, me, initialSyncOpts, logger) =
+             {
+                 id,
+                 unreadCount: isNullUpdate ? null : !!markReadAction?.read ? 0 : -1,
++                // Até qual mensagem vale o "marcar como lida": a releitura completa do estado traz ações antigas.
++                markedReadUpTo: toNumber(markReadAction?.messageRange?.lastMessageTimestamp) || undefined,
+                 conditional: getChatUpdateConditional(id, markReadAction?.messageRange)
+             }
+         ]);

@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@whiskeysockets/baileys@7.0.0-rc14':
-    hash: usohr2c5fm2pp36yq35l3hr64m
+    hash: jbcqjo6wjp6r432vsn3dyyyubm
     path: patches/@whiskeysockets__baileys@7.0.0-rc14.patch
 
 importers:
@@ -21,7 +21,7 @@ importers:
         version: 0.6.0
       '@whiskeysockets/baileys':
         specifier: 7.0.0-rc14
-        version: 7.0.0-rc14(patch_hash=usohr2c5fm2pp36yq35l3hr64m)
+        version: 7.0.0-rc14(patch_hash=jbcqjo6wjp6r432vsn3dyyyubm)
       electron-updater:
         specifier: 6.8.9
         version: 6.8.9
@@ -2221,7 +2221,7 @@ snapshots:
 
   '@typesafe-ai/sdk@0.6.0': {}
 
-  '@whiskeysockets/baileys@7.0.0-rc14(patch_hash=usohr2c5fm2pp36yq35l3hr64m)':
+  '@whiskeysockets/baileys@7.0.0-rc14(patch_hash=jbcqjo6wjp6r432vsn3dyyyubm)':
     dependencies:
       '@cacheable/node-cache': 1.7.6
       '@hapi/boom': 9.1.4
