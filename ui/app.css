@@ -1188,6 +1188,7 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 /* ---- mensagem apagada */
 .bubble__text--deleted { display: inline-flex; align-items: center; gap: var(--bt-space-1-5); font-style: italic; color: var(--bt-color-text-secondary); }
 .bubble--deleted { background-color: var(--bt-color-surface-neutral); }
+.bubble__original { margin-top: var(--bt-space-1-5); padding-left: var(--bt-space-2); border-left: 2px solid var(--bt-color-border); opacity: 0.75; }
 
 /* ---- menção */
 .mention-item { align-items: center; }

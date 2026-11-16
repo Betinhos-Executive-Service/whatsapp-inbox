@@ -155,6 +155,8 @@ export type Message = {
   quoted: QuotedRef | null;
   /** Apagada para todos (o texto vira "Mensagem apagada"). */
   deleted: boolean;
+  /** Só na apagada para todos: o que ela dizia, para "Ver mensagem" na tela (a IA, o MCP e a exportação usam `text`). */
+  original?: Pick<Message, "text" | "kind" | "media">;
   /** Autor em grupo (JID bruto do participante), para abrir o perfil. */
   sender: string | null;
   /** Só nas enviadas: 1 pendente, 2 no servidor, 3 entregue, 4 lida, 5 ouvida (proto.WebMessageInfo.Status). */
@@ -563,13 +565,15 @@ function toMessage(r: Row, reactions: Message["reactions"] = [], poll: PollResul
     }
   }
   const deleted = r.deleted_at != null;
+  // Apagadas antes desta versão perderam o conteúdo (kind 'deleted').
+  const original = deleted && r.kind !== "deleted" ? { text: String(r.text), kind: String(r.kind), media } : null;
   return {
     chatJid: String(r.chat_jid),
     id: String(r.id),
     fromMe: r.from_me === 1,
     at: Number(r.at),
-    text: String(r.text),
-    kind: String(r.kind),
+    text: deleted ? DELETED_TEXT : String(r.text),
+    kind: deleted ? "deleted" : String(r.kind),
     media: deleted ? null : media,
     quoted: deleted ? null : quoted,
     deleted,
@@ -582,6 +586,7 @@ function toMessage(r: Row, reactions: Message["reactions"] = [], poll: PollResul
     poll: deleted ? null : poll,
     starred: r.starred === 1,
     forwarded: deleted ? 0 : r.forwarded === 2 ? 2 : r.forwarded === 1 ? 1 : 0,
+    ...(original && { original }),
   };
 }
 
@@ -1081,7 +1086,10 @@ export class Store {
 
   /** Chave da mensagem no WhatsApp: para citar (responder) ou apagar. */
   messageKey(jid: string, id: string): MessageKeyRef | null {
-    const r = this.q("select id, raw_jid, from_me, participant, text, at from messages where chat_jid = ? and id = ?").get(jid, id) as Row | undefined;
+    // Apagada para todos: a citação leva o aviso, nunca o conteúdo guardado para "Ver mensagem".
+    const r = this
+      .q("select id, raw_jid, from_me, participant, case when deleted_at is null then text else ? end as text, at from messages where chat_jid = ? and id = ?")
+      .get(DELETED_TEXT, jid, id) as Row | undefined;
     if (!r) return null;
     return { id: String(r.id), rawJid: String(r.raw_jid), fromMe: r.from_me === 1, participant: (r.participant as string) ?? null, text: String(r.text), at: Number(r.at) };
   }
@@ -1092,12 +1100,12 @@ export class Store {
     return r ? this.messageKey(jid, String(r.id)) : null;
   }
 
-  /** Apagada para todos: some o conteúdo, fica o aviso. Devolve a mensagem atualizada. */
+  /** Apagada para todos: o conteúdo fica guardado (para "Ver mensagem"), a tela mostra o aviso. Devolve a mensagem atualizada. */
   markRevoked(jid: string, id: string): Message | null {
     return this.tx(() => {
       const changed = this
-        .q("update messages set text = ?, kind = 'deleted', media = null, quoted = null, deleted_at = ? where chat_jid = ? and id = ? and deleted_at is null")
-        .run(DELETED_TEXT, Date.now(), jid, id).changes;
+        .q("update messages set deleted_at = ? where chat_jid = ? and id = ? and deleted_at is null")
+        .run(Date.now(), jid, id).changes;
       if (!changed) return null;
       this.refreshLast(jid);
       return this.getMessage(jid, id);
@@ -1126,7 +1134,7 @@ export class Store {
 
   /** Recalcula a prévia da conversa a partir da mensagem mais recente que sobrou. */
   private refreshLast(jid: string) {
-    const r = this.q("select at, text, from_me from messages where chat_jid = ? order by at desc, rowid desc limit 1").get(jid) as Row | undefined;
+    const r = this.q("select at, case when deleted_at is null then text else ? end as text, from_me from messages where chat_jid = ? order by at desc, rowid desc limit 1").get(DELETED_TEXT, jid) as Row | undefined;
     if (r) this.q("update chats set last_at = ?, last_text = ?, last_from_me = ? where jid = ?").run(Number(r.at), String(r.text), Number(r.from_me), jid);
     else this.q("update chats set last_text = null, last_from_me = 0 where jid = ?").run(jid);
   }
@@ -1294,7 +1302,7 @@ export class Store {
   /** A prévia da conversa acompanha a mudança quando ela é a última mensagem. */
   private refreshPreview(chatJid: string, id: string, text: string) {
     this
-      .q("update chats set last_text = ? where jid = ? and last_at = (select at from messages where chat_jid = ? and id = ?)")
+      .q("update chats set last_text = ? where jid = ? and last_at = (select at from messages where chat_jid = ? and id = ? and deleted_at is null)")
       .run(text, chatJid, chatJid, id);
   }
 
@@ -1436,7 +1444,7 @@ export class Store {
    */
   recordLabelExample(jid: string, label: string): void {
     const texts = (this
-      .q("select text from messages where chat_jid = ? and kind = 'text' order by at desc, rowid desc limit 8")
+      .q("select text from messages where chat_jid = ? and kind = 'text' and deleted_at is null order by at desc, rowid desc limit 8")
       .all(jid) as Row[]).map((r) => String(r.text)).reverse();
     const snippet = texts.join(" / ").slice(-600);
     if (!snippet) return;

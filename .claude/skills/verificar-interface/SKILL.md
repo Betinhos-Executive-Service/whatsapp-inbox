@@ -25,7 +25,8 @@ description: "Verifica a interface do WhatsApp Inbox no navegador, sem WhatsApp:
 5. Abrir a Mariana → 3 mensagens, composer com "Conecte o WhatsApp para responder.". Clicar "Resolvida" no cabeçalho → PATCH `/api/chats/<jid>` 200 e contadores mudam (Abertas −1, Resolvidas +1).
 6. Notas (botão "Notas e lembretes") → digitar na nota → status "Salvando…" e depois "Salva". Clicar "Em 1 hora" com texto no lembrete → toast "Lembrete criado para Hoje HH:MM." e o lembrete na lista.
 7. Configurações (engrenagem) → marcar uma opção e clicar fora → "Descartar alterações?" com "Continuar editando" e "Descartar". Esc fecha sem alteração.
-8. Console: `read_console_messages` com `onlyErrors` → só os 404 de `/api/photo/...` (contato sem foto, conhecido) são aceitos.
+8. Mensagem apagada: abrir o Carlos → bolha "Esta mensagem foi apagada" com o botão "Ver mensagem"; clicar → aparece "Na verdade somos 4 pessoas e 5 malas." atenuado e o botão vira "Ocultar". A prévia na lista continua "Mensagem apagada"; duplo clique na bolha não abre resposta.
+9. Console: `read_console_messages` com `onlyErrors` → só os 404 de `/api/photo/...` (contato sem foto, conhecido) são aceitos.
 
 ## Casos de borda
 - **Servidor fora do ar** (falha de conexão): com o painel Notas aberto, parar o servidor (`preview_stop` e conferir a porta 38291 livre) e digitar na nota. Esperado: status vermelho "Não salva" (title "Saia do campo para tentar de novo.") sem quebrar o título "Nota interna" em duas linhas, toast "Nota não salva. Sem comunicação com o WhatsApp Inbox. Confira se o app está aberto e tente de novo." (nunca "Failed to fetch"), selo "App desligado" e o texto preservado. Subir o servidor de novo, tirar o foco do campo → status "Salva" e `GET /api/chats` traz a nota.

@@ -50,8 +50,13 @@ test("mensagem guarda a citação; apagar para todos troca o texto; apagar para 
   assert.equal(revoked.deleted, true);
   assert.equal(revoked.text, DELETED_TEXT);
   assert.equal(revoked.quoted, null);
+  assert.equal(revoked.kind, "deleted");
+  assert.equal(revoked.original?.text, "segunda", "o original fica guardado para Ver mensagem");
   assert.equal(s.getChat(PN)?.lastText, DELETED_TEXT);
   assert.equal(s.markRevoked(PN, "b"), null, "segunda revogação não muda nada");
+  assert.equal(s.messageKey(PN, "b")?.text, DELETED_TEXT, "responder a uma apagada não reenvia o conteúdo na citação");
+  s.setAudioPreview(PN, "b", "Áudio: vazou");
+  assert.equal(s.getChat(PN)?.lastText, DELETED_TEXT, "prévia de áudio/edição não volta numa apagada");
 
   assert.equal(s.deleteMessage(PN, "b"), true);
   assert.equal(s.getChat(PN)?.lastText, "primeira");
