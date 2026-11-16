@@ -40,6 +40,8 @@ export type DesktopBridge = {
   renameAccount: (name: string) => Promise<AccountInfo | null>;
   addAccount: () => Promise<void>;
   onAccount: (cb: (info: AccountInfo) => void) => () => void;
+  /** Traz a janela para a frente (ex.: depois de soltar um arquivo vindo do Explorer). */
+  focusWindow?: () => void;
 };
 
 declare global {

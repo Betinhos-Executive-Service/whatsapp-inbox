@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld("desktop", {
   accountInfo: () => ipcRenderer.invoke("account:info"),
   renameAccount: (name: string) => ipcRenderer.invoke("account:rename", name),
   addAccount: () => ipcRenderer.invoke("account:add"),
+  focusWindow: () => ipcRenderer.send("app:focus"),
   onAccount: (callback: (info: unknown) => void) => {
     const listener = (_event: unknown, info: unknown) => callback(info);
     ipcRenderer.on("app:account", listener);
