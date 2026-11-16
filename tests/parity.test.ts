@@ -115,3 +115,30 @@ test("prazos do WhatsApp para editar e apagar mensagem enviada", () => {
   assert.match(sentChangeError({ ...mine, at: now - REVOKE_WINDOW_MS - 1 }, "revoke", now) ?? "", /60 horas/);
   assert.match(sentChangeError({ ...mine, deletedAt: now }, "revoke", now) ?? "", /já foi apagada/);
 });
+
+test("markReadElsewhere: lida no celular zera até a mensagem lida e mantém as mais novas", () => {
+  const s = new Store(":memory:");
+  const now = Date.now();
+  s.addMessage(msg({ id: "a", at: now }), true);
+  s.addMessage(msg({ id: "b", at: now + 1000 }), true);
+  s.addMessage(msg({ id: "c", at: now + 2000 }), true);
+  s.updateChat(PN, { markedUnread: true });
+  assert.equal(s.markReadElsewhere(PN, ["b"]), true);
+  assert.equal(s.getChat(PN)?.unread, 1);
+  assert.equal(s.getChat(PN)?.markedUnread, false);
+  // O recibo seguinte (só "c") zera; repetir não muda nada.
+  assert.equal(s.markReadElsewhere(PN, ["c"]), true);
+  assert.equal(s.getChat(PN)?.unread, 0);
+  assert.equal(s.markReadElsewhere(PN, ["c"]), false);
+});
+
+test("markReadElsewhere: só ids desconhecidos zeram a conversa inteira; misturados valem os conhecidos", () => {
+  const s = new Store(":memory:");
+  const now = Date.now();
+  s.addMessage(msg({ id: "a", at: now }), true);
+  s.addMessage(msg({ id: "b", at: now + 1000 }), true);
+  assert.equal(s.markReadElsewhere(PN, ["a", "fora-do-banco"]), true);
+  assert.equal(s.getChat(PN)?.unread, 1);
+  assert.equal(s.markReadElsewhere(PN, ["fora-do-banco"]), true);
+  assert.equal(s.getChat(PN)?.unread, 0);
+});

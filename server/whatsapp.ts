@@ -89,6 +89,8 @@ const ACK_TIMEOUT_MS = 20_000;
 const ABANDONED_TTL_MS = 10 * 60_000;
 /** Status "chegou ao servidor" (um tique), o mesmo número do WhatsApp. */
 const SERVER_ACK = proto.WebMessageInfo.Status.SERVER_ACK;
+/** Status "lida" (tique azul); no recibo de outro aparelho meu ("read-self") quer dizer que li lá. */
+const READ = proto.WebMessageInfo.Status.READ;
 /** Erros do ack em texto para a pessoa; os demais ficam só com o código. */
 const ackError = (code: string): string =>
   code === "463"
@@ -170,6 +172,8 @@ export class WhatsApp extends EventEmitter<{
   /** Mensagem existente mudou: apagada para todos, editada, reação ou status de entrega. */
   update: [{ message: Message; chat: Chat }];
   chat: [Chat];
+  /** Conversa lida em outro aparelho da conta (o celular): a tela zera o contador e o app tira a notificação. */
+  read: [Chat];
   /** Contato digitando, gravando áudio, online ou offline (com "visto por último" quando ele deixa ver); null = parou. */
   presence: [{ jid: string } & Presence];
   /** Mensagem que o WhatsApp não confirmou saiu da conversa (a tela tira a bolha). */
@@ -781,10 +785,8 @@ export class WhatsApp extends EventEmitter<{
         if (u.unreadCount === -1 && !current.markedUnread) {
           this.store.updateChat(jid, { markedUnread: true });
           changed = true;
-        } else if (u.unreadCount === 0 && (current.markedUnread || current.unread > 0)) {
-          this.store.clearMarkedUnread(jid);
-          this.store.markRead(jid);
-          changed = true;
+        } else if (u.unreadCount === 0) {
+          this.readElsewhere(jid, []);
         }
         // Fixar vem com o horário em que foi fixada; null = desafixada.
         if (u.pinned !== undefined && !!u.pinned !== !!current.pinnedAt) {
@@ -827,9 +829,14 @@ export class WhatsApp extends EventEmitter<{
     });
     // Recibos das minhas mensagens (entregue, lida, ouvida), estrela dada no celular e edição.
     sock.ev.on("messages.update", (list) => {
+      const readElsewhere = new Map<string, string[]>();
       for (const { key, update } of list) {
         if (!key.id || !isConversation(key.remoteJid)) continue;
         const chatJid = this.canonical(key.remoteJid, key.remoteJidAlt);
+        // Recibo de leitura de mensagem recebida = outro aparelho meu (o celular) leu a conversa.
+        if (!key.fromMe && typeof update.status === "number" && update.status >= READ) {
+          readElsewhere.set(chatJid, [...(readElsewhere.get(chatJid) ?? []), key.id]);
+        }
         let message: Message | null = null;
         const edited = editedText(update);
         if (edited !== null) {
@@ -840,6 +847,7 @@ export class WhatsApp extends EventEmitter<{
         if (typeof update.starred === "boolean") message = this.store.setStarred(chatJid, key.id, update.starred) ?? message;
         if (message) this.emit("update", { message, chat: this.store.getChat(chatJid)! });
       }
+      for (const [chatJid, ids] of readElsewhere) this.readElsewhere(chatJid, ids);
     });
     // Etiquetas do WhatsApp Business: definições e associações mudadas no celular (e o eco das nossas).
     sock.ev.on("labels.edit", (label) => {
@@ -855,6 +863,11 @@ export class WhatsApp extends EventEmitter<{
     sock.ev.on("message-receipt.update", (list) => {
       for (const { key, receipt } of list) {
         const remote = key.remoteJid;
+        // Em grupo, a leitura feita no celular chega como recibo com o meu próprio número.
+        if (key.id && remote && isJidGroup(remote) === true && receipt.readTimestamp && this.isMe(receipt.userJid)) {
+          this.readElsewhere(this.canonical(remote), [key.id]);
+          continue;
+        }
         if (!key.id || !key.fromMe || !remote || isJidGroup(remote) !== true || !receipt.userJid || this.isMe(receipt.userJid)) continue;
         const chatJid = this.canonical(remote);
         const ms = (v: unknown) => (v ? Number(v) * 1000 : null);
@@ -1214,6 +1227,12 @@ export class WhatsApp extends EventEmitter<{
     await this.ready().sendMessage(jid, seconds ? { pin: key, type: proto.PinInChat.Type.PIN_FOR_ALL, time: seconds as 86400 } : { pin: key, type: proto.PinInChat.Type.UNPIN_FOR_ALL });
     const chat = this.store.setPin(jid, id, seconds ? Date.now() + seconds * 1000 : null);
     if (chat) this.emit("chat", chat);
+  }
+
+  private readElsewhere(chatJid: string, ids: string[]): void {
+    if (!this.store.markReadElsewhere(chatJid, ids)) return;
+    const chat = this.store.getChat(chatJid);
+    if (chat) this.emit("read", chat);
   }
 
   /** Últimas mensagens da conversa: o WhatsApp exige ao arquivar ou marcar como lida/não lida. */

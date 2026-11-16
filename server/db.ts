@@ -778,6 +778,28 @@ export class Store {
     return keys.map((k) => ({ id: String(k.id), rawJid: String(k.raw_jid), participant: (k.participant as string) ?? null }));
   }
 
+  /**
+   * Lida em outro aparelho da conta (recibo "read-self" do celular): zera as não lidas até a mais nova das lidas e
+   * tira a marca de não lida. Sem ids, ou sem nenhum deles no banco, zera a conversa inteira. Devolve se mudou algo.
+   */
+  markReadElsewhere(jid: string, ids: string[]): boolean {
+    const chat = this.q("select unread, marked_unread from chats where jid = ?").get(jid) as Row | undefined;
+    if (!chat || (!Number(chat.unread) && chat.marked_unread !== 1)) return false;
+    const found = ids.length
+      ? (this.q(`select max(at) as at from messages where chat_jid = ? and id in (${ids.map(() => "?").join(",")})`).get(jid, ...ids) as Row)
+      : null;
+    const upTo = found?.at != null ? Number(found.at) : null;
+    this.tx(() => {
+      if (upTo === null) this.markRead(jid);
+      else {
+        this.q("update messages set unread = 0 where chat_jid = ? and unread = 1 and at <= ?").run(jid, upTo);
+        this.q("update chats set unread = (select count(*) from messages where chat_jid = ? and unread = 1) where jid = ?").run(jid, jid);
+      }
+      this.clearMarkedUnread(jid);
+    });
+    return true;
+  }
+
   saveClassification(
     jid: string,
     result: { label: string; confidence: number; needsReply: number; urgent: number; priority?: "alta" | "media" | "baixa" | null; reason?: string | null },
