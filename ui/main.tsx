@@ -1460,8 +1460,13 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
   }, [messages]);
 
+  // Abrir lê a conversa; com ela aberta, só mensagem nova lê de novo. Marcada como não lida no celular enquanto
+  // aberta, fica marcada (ler na hora desfaria a marca no celular).
+  const openedJid = useRef<string | null>(null);
   useEffect(() => {
-    if (chat.unread <= 0 && !chat.markedUnread) return;
+    const opened = openedJid.current !== chat.jid;
+    openedJid.current = chat.jid;
+    if (chat.unread <= 0 && !(opened && chat.markedUnread)) return;
     onChat({ ...chat, unread: 0, markedUnread: false });
     api.read(chat.jid).then(onChat).catch(() => undefined);
   }, [chat.jid, chat.unread, chat.markedUnread, onChat]);

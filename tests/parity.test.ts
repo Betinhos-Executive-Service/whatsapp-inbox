@@ -132,6 +132,26 @@ test("markReadElsewhere: lida no celular zera até a mensagem lida e mantém as 
   assert.equal(s.markReadElsewhere(PN, ["c"]), false);
 });
 
+test("markReadElsewhere: o horário do 'marcar como lida' preserva as mensagens que chegaram depois", () => {
+  const s = new Store(":memory:");
+  const now = Date.now();
+  s.addMessage(msg({ id: "a", at: now }), true);
+  s.addMessage(msg({ id: "b", at: now + 5000 }), true);
+  assert.equal(s.markReadElsewhere(PN, [], now + 999), true);
+  assert.equal(s.getChat(PN)?.unread, 1);
+  // A mesma ação relida na reconexão não muda nada: não avisa "lida" (o app apagaria a notificação de "b").
+  assert.equal(s.markReadElsewhere(PN, [], now + 999), false);
+});
+
+test("markReadElsewhere: 'marcar como lida' sem horário só tira a marca", () => {
+  const s = new Store(":memory:");
+  s.addMessage(msg({ id: "a", at: Date.now() }), true);
+  s.updateChat(PN, { markedUnread: true });
+  assert.equal(s.markReadElsewhere(PN, [], 0), true);
+  assert.equal(s.getChat(PN)?.unread, 1);
+  assert.equal(s.getChat(PN)?.markedUnread, false);
+});
+
 test("markReadElsewhere: só ids desconhecidos zeram a conversa inteira; misturados valem os conhecidos", () => {
   const s = new Store(":memory:");
   const now = Date.now();

@@ -29,6 +29,7 @@ description: "Verifica a interface do WhatsApp Inbox no navegador, sem WhatsApp:
 
 ## Casos de borda
 - **Servidor fora do ar** (falha de conexão): com o painel Notas aberto, parar o servidor (`preview_stop` e conferir a porta 38291 livre) e digitar na nota. Esperado: status vermelho "Não salva" (title "Saia do campo para tentar de novo.") sem quebrar o título "Nota interna" em duas linhas, toast "Nota não salva. Sem comunicação com o WhatsApp Inbox. Confira se o app está aberto e tente de novo." (nunca "Failed to fetch"), selo "App desligado" e o texto preservado. Subir o servidor de novo, tirar o foco do campo → status "Salva" e `GET /api/chats` traz a nota.
+- **Marcada como não lida com a conversa aberta** (simula o celular): com a Mariana aberta, `fetch('/api/chats/<jid>', {method:'PATCH', body:'{"markedUnread":true}'})` → o ponto azul aparece na linha e a marca continua (`GET /api/chats` traz `markedUnread: true`). Abrir outra conversa e voltar → a marca sai. Marcada antes de abrir → abrir tira a marca.
 - Volume: rolar até "Mostrar mais" (60+ conversas).
 - Larguras: 1024 (painel Notas sobrepõe a conversa), 768 (Notas em tela cheia), 375.
 

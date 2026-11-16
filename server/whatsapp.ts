@@ -27,6 +27,7 @@ import pino from "pino";
 import QRCode from "qrcode";
 import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
 import type { DeliveryEntry } from "./delivery-log.ts";
+import { caseSafeAppStateKeys } from "./app-state-keys.ts";
 import { buildVcard, extractContacts } from "./contacts.ts";
 import { arrivalAt, chronological, isLiveArrival } from "./history.ts";
 import { sendPreview } from "./link-preview.ts";
@@ -202,6 +203,10 @@ export class WhatsApp extends EventEmitter<{
   private stopped = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Chaves de sincronização já pedidas ao celular nesta conexão; `keysToAsk` espera o lote. */
+  private askedKeys = new Set<string>();
+  private keysToAsk = new Set<string>();
+  private keyTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly store: Store;
   private readonly authDir: string;
 
@@ -662,6 +667,10 @@ export class WhatsApp extends EventEmitter<{
   async start(): Promise<void> {
     this.stopped = false;
     this.retryTimer = null;
+    this.askedKeys.clear();
+    this.keysToAsk.clear();
+    if (this.keyTimer) clearTimeout(this.keyTimer);
+    this.keyTimer = null;
     this.setState({ status: this.retries ? "reconectando" : "iniciando", qr: null, error: null, syncing: false });
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     // Sessão salva de outro número (ex.: data/auth trocado): separa antes de qualquer evento.
@@ -670,7 +679,7 @@ export class WhatsApp extends EventEmitter<{
     const version = await this.waVersion();
     const sock = makeWASocket({
       ...(version ? { version } : {}),
-      auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
+      auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(caseSafeAppStateKeys(state.keys, (ids) => this.askKeys(ids)), logger) },
       logger,
       browser: Browsers.windows("Desktop"),
       // Sem "online": o celular continua recebendo notificações normalmente.
@@ -786,7 +795,10 @@ export class WhatsApp extends EventEmitter<{
           this.store.updateChat(jid, { markedUnread: true });
           changed = true;
         } else if (u.unreadCount === 0) {
-          this.readElsewhere(jid, []);
+          // Patch do Baileys: horário (s) da última mensagem lida. A releitura do estado na conexão traz ações antigas,
+          // então sem horário só sai a marca; as mensagens lidas chegam pelos recibos.
+          const upTo = (u as { markedReadUpTo?: number }).markedReadUpTo;
+          this.readElsewhere(jid, [], upTo ? upTo * 1000 + 999 : 0);
         }
         // Fixar vem com o horário em que foi fixada; null = desafixada.
         if (u.pinned !== undefined && !!u.pinned !== !!current.pinnedAt) {
@@ -1229,8 +1241,8 @@ export class WhatsApp extends EventEmitter<{
     if (chat) this.emit("chat", chat);
   }
 
-  private readElsewhere(chatJid: string, ids: string[]): void {
-    if (!this.store.markReadElsewhere(chatJid, ids)) return;
+  private readElsewhere(chatJid: string, ids: string[], untilAt?: number): void {
+    if (!this.store.markReadElsewhere(chatJid, ids, untilAt)) return;
     const chat = this.store.getChat(chatJid);
     if (chat) this.emit("read", chat);
   }
@@ -1693,18 +1705,48 @@ export class WhatsApp extends EventEmitter<{
     return !!found[id];
   }
 
-  /** Pede ao celular a chave do estado do app; ela volta numa mensagem que o Baileys guarda sozinho. */
-  private async requestAppStateKey(sock: WASocket): Promise<void> {
+  /** Chaves que faltaram ao decifrar o estado do app: pede todas de uma vez ao celular, uma vez por conexão. */
+  private askKeys(ids: string[]) {
+    for (const id of ids) {
+      if (this.askedKeys.has(id)) continue;
+      this.askedKeys.add(id);
+      this.keysToAsk.add(id);
+    }
+    const sock = this.sock;
+    if (!sock || !this.keysToAsk.size || this.keyTimer) return;
+    this.keyTimer = setTimeout(() => {
+      this.keyTimer = null;
+      const batch = [...this.keysToAsk];
+      this.keysToAsk.clear();
+      if (this.sock !== sock || !batch.length) return;
+      void this.requestAppStateKey(sock, batch).catch((e: Error) => {
+        batch.forEach((id) => this.askedKeys.delete(id));
+        console.warn(`Pedir chaves de sincronização falhou: ${e.message}`);
+      });
+    }, 2000);
+  }
+
+  /**
+   * Pede ao celular chaves do estado do app; elas voltam numa mensagem que o Baileys guarda sozinho.
+   * A atual vai por último: o Baileys passa a usar a última chave recebida para enviar.
+   */
+  private async requestAppStateKey(sock: WASocket, others: string[] = []): Promise<void> {
     const id = sock.authState.creds.myAppStateKeyId;
     const me = sock.authState.creds.me?.id;
-    if (!id || !me) return;
-    console.warn(`Chave de sincronização ${id} ausente; pedindo ao celular.`);
+    const keyIds = [...others.filter((k) => k !== id), ...(id ? [id] : [])];
+    if (!me || !keyIds.length) return;
+    // Já vão neste pedido: o lote de `askKeys` não repete (hasAppStateKey também passa por `onMissing`).
+    for (const k of keyIds) {
+      this.askedKeys.add(k);
+      this.keysToAsk.delete(k);
+    }
+    console.warn(`Chaves de sincronização ${keyIds.join(", ")} ausentes; pedindo ao celular.`);
     await sock.relayMessage(
       jidNormalizedUser(me),
       {
         protocolMessage: {
           type: proto.Message.ProtocolMessage.Type.APP_STATE_SYNC_KEY_REQUEST,
-          appStateSyncKeyRequest: { keyIds: [{ keyId: Buffer.from(id, "base64") }] },
+          appStateSyncKeyRequest: { keyIds: keyIds.map((k) => ({ keyId: Buffer.from(k, "base64") })) },
         },
       },
       { additionalAttributes: { category: "peer", push_priority: "high_force" }, additionalNodes: [{ tag: "meta", attrs: { appdata: "default" } }] },
@@ -1726,6 +1768,8 @@ export class WhatsApp extends EventEmitter<{
     this.stopped = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.syncTimer) clearTimeout(this.syncTimer);
+    if (this.keyTimer) clearTimeout(this.keyTimer);
+    this.keyTimer = null;
     this.sock?.end(undefined);
     this.sock = null;
   }
