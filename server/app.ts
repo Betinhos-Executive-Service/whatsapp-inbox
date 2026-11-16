@@ -479,6 +479,10 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       options.onConnection?.(s);
     });
     client.on("chat", (chat) => broadcast("chat", chat));
+    client.on("read", (chat) => {
+      broadcast("chat", chat);
+      options.onRead?.(chat.jid);
+    });
     client.on("update", (u) => broadcast("update", u));
     client.on("remove", (r) => broadcast("remove", r));
     client.on("delivery", (entry) => deliveryLog.record(entry));
@@ -601,9 +605,12 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     const keys = store.markRead(jid);
     broadcast("chat", store.getChat(jid));
     options.onRead?.(jid);
-    await wa?.markRead(keys).catch(() => undefined); // recibo de leitura é cortesia, não bloqueia
-    // Estava marcada como não lida: tira a marca também no celular.
-    if (wasMarked) await wa?.syncUnread(jid, false).catch(() => undefined);
+    // O recibo só dá o tique azul a quem mandou; o contador do celular zera com o "marcar como lida" da conta.
+    if (!wasMarked && !keys.length) return;
+    await Promise.all([
+      wa?.markRead(keys).catch((e: Error) => console.warn(`Recibo de leitura falhou: ${e.message}`)),
+      wa?.syncUnread(jid, false).catch((e: Error) => console.warn(`Marcar como lida no celular falhou: ${e.message}`)),
+    ]);
   };
 
   /** "11 99999-0000" ou "+55 11 99999-0000" → só dígitos com DDI; sem DDI, assume Brasil (55). */
