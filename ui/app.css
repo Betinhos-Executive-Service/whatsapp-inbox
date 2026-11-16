@@ -901,6 +901,18 @@ ul, ol { margin: 0; padding: 0; }
 .composer__mic { padding-inline: var(--bt-space-3); }
 .chat-pane { position: relative; }
 .drop-hint { position: absolute; inset: var(--bt-space-2); z-index: var(--bt-z-index-floating-action); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--bt-space-2); border: 2px dashed var(--bt-color-action); border-radius: var(--bt-radius-lg); background-color: rgba(252, 252, 251, .92); color: var(--bt-color-action); font-weight: var(--bt-font-weight-extrabold); pointer-events: none; }
+.drop-hint__to { max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--bt-color-text-secondary); font-size: var(--bt-font-size-13); font-weight: var(--bt-font-weight-bold); }
+/* Arrastando arquivo: o que está sob ele abre depois de um instante; a barra mostra o tempo. */
+[data-spring-armed] { position: relative; }
+[data-spring-armed]::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background-color: var(--bt-color-action); transform-origin: left center; animation: spring-fill 700ms linear forwards; /* = SPRING_DELAY (file-drag.ts) */ pointer-events: none; }
+@keyframes spring-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.chat-item[data-spring-armed] { background-color: var(--bt-color-action-soft); box-shadow: inset 0 0 0 2px var(--bt-color-action); }
+.segmented__item[data-spring-armed], .archived-toggle[data-spring-armed], .bt-button[data-spring-armed] { background-color: var(--bt-color-action-soft); color: var(--bt-color-action); overflow: hidden; }
+.drag-guide { position: absolute; left: var(--bt-space-3); right: var(--bt-space-3); bottom: var(--bt-space-3); z-index: var(--bt-z-index-floating-action); display: flex; align-items: center; gap: var(--bt-space-2); padding: var(--bt-space-2) var(--bt-space-3); border-radius: var(--bt-radius-md); background-color: var(--bt-color-brand); color: var(--bt-color-white); font-size: var(--bt-font-size-12); font-weight: var(--bt-font-weight-bold); box-shadow: var(--bt-shadow-popover); pointer-events: none; }
+.drag-guide > svg { flex: 0 0 auto; }
+/* A faixa fica por cima do fim da lista: espaço extra para a última conversa continuar alcançável. */
+.list-pane:has(.drag-guide) .list-pane__scroll { padding-bottom: 72px; }
+.chat-item__files { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; color: var(--bt-color-action); font-weight: var(--bt-font-weight-bold); }
 .list-pane__filters { display: grid; grid-template-columns: 1fr 1fr auto; gap: var(--bt-space-2); }
 /* Lista estreita (janela pequena ou painel arrastado): abas em 2×2 em vez de rolar escondidas. */
 .list-pane { container-type: inline-size; container-name: list-pane; }

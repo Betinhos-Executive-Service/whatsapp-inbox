@@ -48,7 +48,7 @@ import {
   UserRoundPlus,
   PencilLine,
 } from "lucide-react";
-import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
 import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type Presence, type QuickReply, type SearchHit, type Status, type Priority } from "./api.ts";
@@ -83,6 +83,7 @@ import { NotesPanel, reminderLabel } from "./notes.tsx";
 import { ResizeHandle } from "./resize.tsx";
 import { ImageEditor } from "./image-editor/ImageEditor.tsx";
 import { canEditImage } from "./image-editor/model.ts";
+import { dragAutoScroll, hasFiles, tray, useFileDrag, useSpringLoad, useTrayCount } from "./file-drag.ts";
 import { AttachmentTray, canViewOnce, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment, AlbumView } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
@@ -113,6 +114,8 @@ declare const __BUILD_DATE__: string;
 // O index.html já pintou o tema salvo; aqui passa a acompanhar o Windows quando for "Sistema".
 applyTheme(storedTheme());
 
+/** Arquivos soltos sobre uma conversa da lista; `seq` distingue dois soltos seguidos na mesma. */
+type IncomingFiles = { jid: string; files: File[]; seq: number };
 /** Resposta em particular: a mensagem do grupo vai citada na conversa individual `to`. */
 type PrivateReply = { to: string; message: Message; from: { jid: string; name: string; isGroup: boolean } };
 
@@ -260,11 +263,15 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
   // Rascunho não enviado toma o lugar da prévia, como no WhatsApp; na conversa aberta ele já está no campo.
   const draft = useDraft(chat.jid).trim();
   const showDraft = !!draft && !selected;
+  // Anexos deixados nesta conversa (ao trocar de conversa com a bandeja cheia).
+  const pendingFiles = useTrayCount(chat.jid);
   return (
-    <li className="chat-row">
+    <li className="chat-row" data-drop-jid={chat.jid}>
       <button
         className={`chat-item${priority && priority !== "baixa" ? ` chat-item--${priority}` : ""}`}
         aria-current={selected ? "true" : undefined}
+        // Arrastando um arquivo, parar sobre a conversa abre ela (a aberta não precisa).
+        data-spring={selected ? undefined : chat.jid}
         onClick={() => {
           onPeek(null);
           onOpen(chat.jid);
@@ -319,6 +326,13 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
           {/* Linha discreta: etiquetas em texto e ícones; o espaço à direita é dos botões de status. */}
           <span className="chat-item__meta">
             {chat.pendingDraft && <Sparkles size={12} className="chat-item__meta-icon" aria-label="Resposta sugerida pela IA" />}
+            {pendingFiles > 0 && !selected && (
+              <span className="chat-item__files" title={`${pendingFiles} ${pendingFiles === 1 ? "anexo não enviado" : "anexos não enviados"}`}>
+                <Paperclip size={12} aria-hidden />
+                {pendingFiles}
+                <span className="sr-only">{pendingFiles === 1 ? " anexo não enviado" : " anexos não enviados"}</span>
+              </span>
+            )}
             {chat.reminderAt !== null && (
               <AlarmClock
                 size={12}
@@ -383,6 +397,8 @@ function ChatList(props: {
   panel?: ReactNode;
 }) {
   const account = useAccount();
+  const fileDrag = useFileDrag();
+  const canAttach = props.online && props.connection.status === "conectado";
   const [tabChoice, setTab] = useState<Tab>("todas");
   // Com status ou etiquetas desligados nas configurações, o filtro correspondente fica neutro.
   const tab: Tab = props.useStatus ? tabChoice : "todas";
@@ -548,6 +564,7 @@ function ChatList(props: {
               role="tab"
               aria-selected={!showArchived && tab === t.id}
               className="segmented__item"
+              data-spring={!showArchived && tab === t.id ? undefined : `tab:${t.id}`}
               aria-label={`${t.label} (${counts[t.id]})`}
               title={t.label}
               onClick={() => {
@@ -593,6 +610,7 @@ function ChatList(props: {
           size="compact"
           className="unread-toggle"
           aria-pressed={onlyUnread}
+          data-spring="unread"
           title={onlyUnread ? "Mostrar todas as conversas" : "Ver só as não lidas"}
           onClick={toggleUnread}
         >
@@ -623,9 +641,9 @@ function ChatList(props: {
           </div>
         )}
       </header>
-      <div className="list-pane__scroll" onScroll={peek ? () => onPeek(null) : undefined}>
+      <div className="list-pane__scroll" data-drag-scroll onScroll={peek ? () => onPeek(null) : undefined}>
         {(showArchived || counts.arquivadas > 0) && (
-          <button type="button" className="archived-toggle" aria-pressed={showArchived} onClick={() => setShowArchived((v) => !v)}>
+          <button type="button" className="archived-toggle" aria-pressed={showArchived} data-spring="archived" onClick={() => setShowArchived((v) => !v)}>
             {showArchived ? <ArrowLeft size={16} aria-hidden /> : <Archive size={16} aria-hidden />}
             {showArchived ? "Voltar para as conversas" : "Arquivadas"}
             {!showArchived && <span className="segmented__count">{counts.arquivadas}</span>}
@@ -676,7 +694,7 @@ function ChatList(props: {
           </ul>
         )}
         {filtered.length > limit && (
-          <Button variant="ghost" fullWidth onClick={() => setLimit((l) => l + PAGE)}>
+          <Button variant="ghost" fullWidth data-spring="more" onClick={() => setLimit((l) => l + PAGE)}>
             Mostrar mais {Math.min(PAGE, filtered.length - limit)}
           </Button>
         )}
@@ -684,6 +702,12 @@ function ChatList(props: {
       </div>
       {peek && peekChat && <ChatPeek key={peek.jid} chat={peekChat} anchor={peek.rect} />}
       {menu && menuChat && <ChatItemMenu chat={menuChat} x={menu.x} y={menu.y} onChange={(patch) => props.onPatch(menuChat.jid, patch)} onClose={closeMenu} />}
+      {fileDrag && !props.panel && (
+        <div className="drag-guide" role="status">
+          <Paperclip size={14} aria-hidden />
+          <span>{canAttach ? "Pare sobre uma conversa para abrir. Solte nela para anexar." : "Sem conexão: dá para abrir conversas, mas não anexar."}</span>
+        </div>
+      )}
       {props.panel}
     </section>
   );
@@ -1111,7 +1135,10 @@ const Messages = memo(function Messages({ messages, isGroup, hasMore, onMore, lo
   );
 });
 
-function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, onOpen, quickReplies, onSetupAi, sendTyping, focus, privateReply, onPrivateReply, onContact }: {
+function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, notify, onChat, onOpen, quickReplies, onSetupAi, sendTyping, focus, privateReply, onPrivateReply, onContact, incoming, onIncoming }: {
+  /** Arquivos soltos sobre esta conversa na lista: entram na bandeja de anexos. */
+  incoming: IncomingFiles | null;
+  onIncoming: () => void;
   /** Salvar ou editar contato (formulário na raiz). */
   onContact: (target: ContactTarget) => void;
   /** Resposta em particular vinda de um grupo: abre a conversa já citando a mensagem do grupo. */
@@ -1175,7 +1202,18 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const composer = useRef<HTMLTextAreaElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Anexos deixados nesta conversa antes de trocar de conversa voltam para a bandeja.
+  const [attachments, setAttachments] = useState<Attachment[]>(() => tray.get(chat.jid));
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  const sendingRef = useRef(false);
+  sendingRef.current = sending;
+  useEffect(() => {
+    const jid = chat.jid;
+    tray.set(jid, []);
+    // Saindo no meio de um envio, o que sobrou continua saindo: guardar faria reenviar.
+    return () => tray.set(jid, sendingRef.current ? [] : attachmentsRef.current);
+  }, [chat.jid]);
   /** Visualização única nos anexos elegíveis (foto, vídeo, voz); volta a desligado após o envio. */
   const [viewOnce, setViewOnce] = useState(false);
   useEffect(() => {
@@ -1184,6 +1222,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   // Imagem aberta no editor: da bandeja (substitui o anexo) ou de uma mensagem (entra na bandeja).
   const [imageEditing, setImageEditing] = useState<{ file: File; attachmentId: number | null; seq: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  // Esc, soltar fora ou sair da janela nem sempre geram dragleave aqui.
+  const fileDrag = useFileDrag();
+  useEffect(() => {
+    if (!fileDrag) setDragging(false);
+  }, [fileDrag]);
   const recorder = useRecorder((text) => notify("error", text));
   const addFiles = (files: Iterable<File>) => {
     const ok: Attachment[] = [];
@@ -1237,10 +1280,6 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     }
   };
   useEffect(() => {
-    setAttachments((list) => {
-      list.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
-      return [];
-    });
     recorder.cancel();
     setImageEditing(null);
     setReplyTo(null);
@@ -1259,6 +1298,13 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     setReplyFrom({ jid: privateReply.from.jid, name: privateReply.from.name, isGroup: privateReply.from.isGroup });
     requestAnimationFrame(() => composer.current?.focus());
   }, [privateReply, chat.jid]);
+  // Solto sobre esta conversa na lista (já aberta ou aberta agora pelo arraste).
+  useEffect(() => {
+    if (!incoming || incoming.jid !== chat.jid) return;
+    addFiles(incoming.files);
+    onIncoming();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- addFiles muda a cada render; vale o seq.
+  }, [incoming, chat.jid]);
   useEffect(() => {
     const id = requestAnimationFrame(() => composer.current?.focus());
     return () => cancelAnimationFrame(id);
@@ -2203,8 +2249,9 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       className={`chat-pane${dragging ? " chat-pane--drop" : ""}`}
       aria-label={`Conversa com ${chat.name}`}
       onDragOver={(e) => {
-        if (!connected || !e.dataTransfer.types.includes("Files")) return;
+        if (!connected || !hasFiles(e.dataTransfer)) return;
         e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
         setDragging(true);
       }}
       onDragLeave={(e) => {
@@ -2215,17 +2262,19 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         e.preventDefault();
         setDragging(false);
         addFiles(e.dataTransfer.files);
+        desktop()?.focusWindow?.();
       }}
     >
       {dragging && (
         <div className="drop-hint" aria-hidden>
           <Paperclip size={24} />
           <span>Solte para anexar</span>
+          <span className="drop-hint__to">em {chat.name}</span>
         </div>
       )}
       <header className="chat-pane__header">
         <div className="chat-pane__title">
-          <Button variant="ghost" className="chat-pane__back" aria-label="Voltar para a lista" icon={<ArrowLeft size={18} aria-hidden />} onClick={onBack} />
+          <Button variant="ghost" className="chat-pane__back" aria-label="Voltar para a lista" data-spring="back" icon={<ArrowLeft size={18} aria-hidden />} onClick={onBack} />
           <button
             type="button"
             className="chat-pane__who"
@@ -2767,6 +2816,10 @@ function App() {
   const [dialog, setDialog] = useState<"new-group" | "starred" | null>(null);
   const [contactsOpen, setContactsOpen] = useState(false);
   const [contactTarget, setContactTarget] = useState<ContactTarget | null>(null);
+  const [incoming, setIncoming] = useState<IncomingFiles | null>(null);
+  const clearIncoming = useCallback(() => setIncoming(null), []);
+  const fileDrag = useFileDrag();
+  const springTo = useSpringLoad(fileDrag);
   const openChat = useCallback((jid: string | null) => {
     setFocus(null);
     setPrivateReply(null);
@@ -2946,6 +2999,31 @@ function App() {
   const current = selected ? (chats.get(selected) ?? null) : null;
   const connection: Connection = state?.connection ?? { status: "iniciando", qr: null, me: null, error: null };
   const showConnect = connection.status === "qr" && !skipConnect;
+  const connected = online && connection.status === "conectado";
+
+  // Arquivo arrastado do computador: navegar pela lista sem soltar (parar sobre conversa, aba ou
+  // "Voltar" abre), rolar a lista pelas bordas e soltar direto numa conversa da lista para anexar.
+  const onAppDragOver = (e: DragEvent) => {
+    if (!hasFiles(e.dataTransfer)) return;
+    const el = e.target instanceof Element ? e.target : null;
+    dragAutoScroll(el, e.clientY);
+    springTo(el?.closest<HTMLElement>("[data-spring]") ?? null);
+    if (connected && el?.closest("[data-drop-jid]")) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  };
+  const onAppDrop = (e: DragEvent) => {
+    const row = e.target instanceof Element ? e.target.closest<HTMLElement>("[data-drop-jid]") : null;
+    if (e.defaultPrevented || !row || !connected || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    const jid = row.dataset.dropJid!;
+    // Os arquivos só valem durante o evento: copiar a lista agora.
+    const files = Array.from(e.dataTransfer.files);
+    if (jid !== selected) openChat(jid);
+    setIncoming((i) => ({ jid, files, seq: (i?.seq ?? 0) + 1 }));
+    desktop()?.focusWindow?.();
+  };
 
   // Fim da fila offline: relê a lista e a conversa aberta, caso algo tenha entrado sem aviso.
   const syncing = connection.status === "conectado" && !!connection.syncing;
@@ -3109,7 +3187,7 @@ function App() {
   }, [unreadTotal]);
 
   return (
-    <div className="app" data-view={current ? "chat" : "list"}>
+    <div className="app" data-view={current ? "chat" : "list"} onDragOver={onAppDragOver} onDrop={onAppDrop}>
       {showConnect ? (
         <ConnectScreen connection={connection} onSkip={() => setSkipConnect(true)} />
       ) : (
@@ -3167,6 +3245,8 @@ function App() {
               privateReply={privateReply}
               onPrivateReply={startPrivateReply}
               onContact={setContactTarget}
+              incoming={incoming}
+              onIncoming={clearIncoming}
               onSetupAi={() => {
                 setSettingsTab("ia");
                 setSettingsOpen(true);
@@ -3175,9 +3255,13 @@ function App() {
           ) : (
             <section className="chat-pane chat-pane--empty" aria-label="Nenhuma conversa aberta">
               <div className="empty">
-                <MessageSquareText size={36} aria-hidden />
-                <p className="empty__title">Escolha uma conversa</p>
-                <p className="hint">Abra uma conversa da lista para ler, responder e classificar.</p>
+                {fileDrag ? <Paperclip size={36} aria-hidden /> : <MessageSquareText size={36} aria-hidden />}
+                <p className="empty__title">{fileDrag ? "Para qual conversa vai o arquivo?" : "Escolha uma conversa"}</p>
+                <p className="hint">
+                  {fileDrag
+                    ? "Pare o arquivo sobre uma conversa da lista para abri-la, ou solte em cima dela para anexar."
+                    : "Abra uma conversa da lista para ler, responder e classificar."}
+                </p>
               </div>
             </section>
           )}

@@ -513,6 +513,13 @@ function sendToAll(channel: string, ...args: unknown[]) {
 }
 
 function setupIpc() {
+  // Soltou um arquivo vindo de outro app: a janela vem para a frente e o campo de texto recebe o foco.
+  ipcMain.on("app:focus", (event) => {
+    const inst = senderInstance(event);
+    if (!inst || !window) return;
+    showWindow();
+    inst.view.webContents.focus();
+  });
   ipcMain.on("app:unread", (event, total: unknown) => {
     const inst = senderInstance(event);
     if (!inst) return;
