@@ -745,7 +745,7 @@ export async function fileToOutgoing(file: File, caption?: string, sticker = fal
   return { fileName: file.name || "arquivo", mimetype: file.type || "application/octet-stream", data: base64(new Uint8Array(await file.arrayBuffer())), caption, ...(sticker ? { sticker: true } : {}) };
 }
 
-export const MAX_ATTACHMENT = 32 * 1024 * 1024;
+export const MAX_ATTACHMENT = 100 * 1024 * 1024;
 
 /** Copia os bytes para a memória ao anexar: a referência ao disco deixa de ser lida se o arquivo for movido,
  * alterado ou estiver só na nuvem (OneDrive), e o envio falhava depois com "could not be read". */
