@@ -747,6 +747,12 @@ export async function fileToOutgoing(file: File, caption?: string, sticker = fal
 
 export const MAX_ATTACHMENT = 32 * 1024 * 1024;
 
+/** Copia os bytes para a memória ao anexar: a referência ao disco deixa de ser lida se o arquivo for movido,
+ * alterado ou estiver só na nuvem (OneDrive), e o envio falhava depois com "could not be read". */
+export async function snapshotFile(file: File): Promise<File> {
+  return new File([await file.arrayBuffer()], file.name, { type: file.type, lastModified: file.lastModified });
+}
+
 /** Visualização única vale para foto, vídeo e voz; documento, GIF e SVG vão como arquivo comum. */
 export function canViewOnce(a: Attachment): boolean {
   if (a.sticker) return false;
