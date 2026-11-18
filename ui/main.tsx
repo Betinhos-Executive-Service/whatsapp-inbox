@@ -84,7 +84,7 @@ import { ResizeHandle } from "./resize.tsx";
 import { ImageEditor } from "./image-editor/ImageEditor.tsx";
 import { canEditImage } from "./image-editor/model.ts";
 import { dragAutoScroll, hasFiles, tray, useFileDrag, useSpringLoad, useTrayCount } from "./file-drag.ts";
-import { AttachmentTray, canViewOnce, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, toAttachment, useRecorder, viewMedia, type Attachment, AlbumView } from "./media.tsx";
+import { AttachmentTray, canViewOnce, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, snapshotFile, toAttachment, useRecorder, viewMedia, type Attachment, AlbumView } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
@@ -1228,14 +1228,41 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     if (!fileDrag) setDragging(false);
   }, [fileDrag]);
   const recorder = useRecorder((text) => notify("error", text));
-  const addFiles = (files: Iterable<File>) => {
-    const ok: Attachment[] = [];
-    for (const file of files) {
-      if (file.size > MAX_ATTACHMENT) notify("error", `${file.name} passa de 32 MB e não pode ser enviado por aqui.`);
-      else if (file.size > 0) ok.push(toAttachment(file));
-    }
-    if (ok.length) setAttachments((list) => [...list, ...ok].slice(0, 10));
+  // Anexos ainda sendo lidos: enviar antes mandaria a legenda sozinha, sem o arquivo.
+  const reading = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const addFiles = async (files: Iterable<File>) => {
+    const jid = chat.jid;
+    const valid = [...files]
+      .filter((file) => {
+        if (file.size <= MAX_ATTACHMENT) return file.size > 0;
+        notify("error", `${file.name} passa de 32 MB e não pode ser enviado por aqui.`);
+        return false;
+      })
+      .slice(0, Math.max(0, 10 - attachmentsRef.current.length));
     requestAnimationFrame(() => composer.current?.focus());
+    if (!valid.length) return;
+    reading.current++;
+    const read = await Promise.all(
+      valid.map((file) =>
+        snapshotFile(file).catch(() => {
+          notify("error", `Não deu para ler ${file.name}. Ele foi movido, alterado ou está só na nuvem (OneDrive); baixe para o computador e anexe de novo.`);
+          return null;
+        }),
+      ),
+    );
+    reading.current--;
+    const ok = read.filter((file): file is File => !!file).map(toAttachment);
+    if (!ok.length) return;
+    // Trocou de conversa durante a leitura: o anexo fica na bandeja da conversa onde foi solto.
+    if (mounted.current) setAttachments((list) => [...list, ...ok].slice(0, 10));
+    else tray.set(jid, [...tray.get(jid), ...ok].slice(0, 10));
   };
   const removeAttachment = (id: number) =>
     setAttachments((list) => {
@@ -1671,6 +1698,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       }
       return;
     }
+    if (reading.current) return notify("error", "Aguarde: o anexo ainda está sendo lido.");
     stickToBottom.current = true;
     const quotedId = replyTo?.id;
     // Resposta em particular: a citada é do grupo; anexo e voz saem sem a citação.
