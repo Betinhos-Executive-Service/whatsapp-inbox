@@ -304,7 +304,10 @@ function json(res: ServerResponse, status: number, body: unknown) {
 }
 
 /** Limite de anexo enviado pelo app (o JSON leva base64, ~33% maior). */
-const MAX_MEDIA = 32 * 1024 * 1024;
+const MAX_MEDIA = 100 * 1024 * 1024;
+const MAX_MEDIA_TEXT = "Arquivo maior que 100 MB.";
+/** Tamanho do JSON com `bytes` de arquivo em base64 mais folga para os outros campos. */
+const jsonLimit = (bytes: number) => Math.ceil((bytes * 4) / 3) + 64 * 1024;
 const sendMediaSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
   mimetype: z.string().trim().min(1).max(128),
@@ -318,8 +321,9 @@ const sendMediaSchema = z.object({
   sticker: z.boolean().optional(),
 });
 
-/** Álbum: só foto e vídeo, de 2 a 32 itens (limite do WhatsApp), cada um até 32 MB. */
+/** Álbum: só foto e vídeo, de 2 a 32 itens (limite do WhatsApp), cada um até 100 MB e 1 GB no total. */
 const MAX_ALBUM = 32;
+const MAX_ALBUM_TOTAL = 1024 * 1024 * 1024;
 const albumSchema = z.object({
   files: z
     .array(z.object({ fileName: z.string().trim().min(1).max(255), mimetype: z.string().trim().min(1).max(128), data: z.string().min(1), caption: z.string().max(4096).optional() }))
@@ -491,7 +495,7 @@ export function createHandler(api: Api) {
       if (!store.hasChat(jid)) throw new HttpError(404, "Conversa não encontrada.");
       if (action === "/pending-draft") {
         if (method === "PUT") {
-          const { text, quotedId, source, media } = parse(pendingDraftSchema, await readJson(req, Math.ceil((MAX_MEDIA * 4) / 3) + 64 * 1024));
+          const { text, quotedId, source, media } = parse(pendingDraftSchema, await readJson(req, jsonLimit(MAX_MEDIA)));
           const trimmed = text.trim();
           if (!trimmed && !media) throw new HttpError(400, "Escreva um texto ou anexe um arquivo.");
           if (quotedId && !store.messageKey(jid, quotedId)) throw new HttpError(404, "A mensagem respondida não está mais salva.");
@@ -499,7 +503,7 @@ export function createHandler(api: Api) {
           if (media) {
             const body = Buffer.from(media.data, "base64");
             if (!body.length) throw new HttpError(400, "Arquivo vazio.");
-            if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
+            if (body.length > MAX_MEDIA) throw new HttpError(413, MAX_MEDIA_TEXT);
             file = { body, mimetype: media.mimetype, fileName: media.fileName };
           }
           const chat = store.setPendingDraft(jid, { text: trimmed, quotedId, media: file, source });
@@ -566,19 +570,19 @@ export function createHandler(api: Api) {
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/send-media" && method === "POST") {
-        const { data, quotedId, ...file } = parse(sendMediaSchema, await readJson(req, Math.ceil((MAX_MEDIA * 4) / 3) + 64 * 1024));
+        const { data, quotedId, ...file } = parse(sendMediaSchema, await readJson(req, jsonLimit(MAX_MEDIA)));
         const body = Buffer.from(data, "base64");
         if (!body.length) throw new HttpError(400, "Arquivo vazio.");
-        if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
+        if (body.length > MAX_MEDIA) throw new HttpError(413, MAX_MEDIA_TEXT);
         await api.sendMedia(jid, { ...file, body }, quotedId);
         return json(res, 200, store.getChat(jid));
       }
       if (action === "/album" && method === "POST") {
-        const { files, quotedId } = parse(albumSchema, await readJson(req, MAX_ALBUM * (Math.ceil((MAX_MEDIA * 4) / 3) + 64 * 1024)));
+        const { files, quotedId } = parse(albumSchema, await readJson(req, MAX_ALBUM * (jsonLimit(MAX_MEDIA))));
         const decoded = files.map(({ data, ...file }) => {
           const body = Buffer.from(data, "base64");
           if (!body.length) throw new HttpError(400, "Arquivo vazio.");
-          if (body.length > MAX_MEDIA) throw new HttpError(413, "Arquivo maior que 32 MB.");
+          if (body.length > MAX_MEDIA) throw new HttpError(413, MAX_MEDIA_TEXT);
           if (!albumKind(file.mimetype)) throw new HttpError(400, "Álbum só leva fotos e vídeos.");
           return { ...file, body };
         });

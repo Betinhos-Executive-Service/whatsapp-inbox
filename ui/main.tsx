@@ -1242,7 +1242,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     const valid = [...files]
       .filter((file) => {
         if (file.size <= MAX_ATTACHMENT) return file.size > 0;
-        notify("error", `${file.name} passa de 32 MB e não pode ser enviado por aqui.`);
+        notify("error", `${file.name} passa de 100 MB e não pode ser enviado por aqui.`);
         return false;
       })
       .slice(0, Math.max(0, 10 - attachmentsRef.current.length));

@@ -14,7 +14,7 @@ import { voucherSchema } from "./voucher.ts";
 // Só tipos de db.ts: importar valores puxaria o node:sqlite para o processo MCP.
 const STATUSES = ["aberta", "aguardando", "resolvida"] as const satisfies readonly Chat["status"][];
 /** Mesmo limite do envio pela interface. */
-const MAX_MEDIA = 32 * 1024 * 1024;
+const MAX_MEDIA = 100 * 1024 * 1024;
 const PROPOSED = "Rascunho proposto; a pessoa decide enviar no WhatsApp Inbox.";
 
 type ToolResult = { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[]; isError?: boolean };
@@ -213,7 +213,7 @@ export function createMcpServer(client: InboxClient): McpServer {
     "propor_midia",
     {
       title: "Propor mídia",
-      description: "Cria um rascunho com um arquivo local (imagem, PDF, documento) e legenda opcional. NÃO envia: a pessoa confirma no WhatsApp Inbox. Limite de 32 MB.",
+      description: "Cria um rascunho com um arquivo local (imagem, PDF, documento) e legenda opcional. NÃO envia: a pessoa confirma no WhatsApp Inbox. Limite de 100 MB.",
       inputSchema: {
         jid: z.string(),
         caminhoArquivo: z.string().min(1).describe("Caminho completo do arquivo neste computador."),
@@ -223,7 +223,7 @@ export function createMcpServer(client: InboxClient): McpServer {
     guarded(async ({ jid, caminhoArquivo, legenda }) => {
       const info = await stat(caminhoArquivo);
       if (!info.isFile()) throw new Error("O caminho não é um arquivo.");
-      if (info.size > MAX_MEDIA) throw new Error("Arquivo maior que 32 MB.");
+      if (info.size > MAX_MEDIA) throw new Error("Arquivo maior que 100 MB.");
       const body = await readFile(caminhoArquivo);
       const fileName = basename(caminhoArquivo);
       await client.setPendingDraft(jid, { text: legenda ?? "", source: "claude", media: { fileName, mimetype: typeByExtension(fileName), data: body.toString("base64") } });
