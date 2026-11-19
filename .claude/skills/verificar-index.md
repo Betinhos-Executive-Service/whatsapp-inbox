@@ -2,3 +2,4 @@
 - verificar-servidor | server/**, tests/**, scripts/**, voucher/**, package.json, tsconfig.json | typecheck, testes e subida do servidor local
 - verificar-ambiente-cloud | scripts/cloud-setup.sh, scripts/testa-cloud-setup.sh, .claude/hooks/**, .claude/settings.json, .npmrc, .gitattributes, package.json, pnpm-lock.yaml, patches/**, CLAUDE.md | preparo da VM cloud num Linux limpo (WSL): cloud-setup.sh, hook SessionStart, idempotência, Electron sem binário, testes
 - verificar-app-linux | desktop/**, scripts/desktop.mjs, scripts/icon.mjs, scripts/testa-appimage.sh, scripts/release.mjs, .github/workflows/release.yml, package.json | AppImage no WSL: build, latest-linux.yml, MCP pelo .AppImage e app aberto
+- verificar-notificacoes-windows | desktop/main.ts | Windows: IconUri/DisplayName do AUMID das notificações e memória do ShellExperienceHost com um toast
