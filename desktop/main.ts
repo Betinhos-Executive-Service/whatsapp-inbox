@@ -4,7 +4,7 @@
 // configurações próprios); a troca de conta só alterna qual área aparece.
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, shell, Tray, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { spawn } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { startApp, type RunningApp } from "../server/app.ts";
@@ -782,14 +782,33 @@ const APP_ID = "br.com.betinhos.whatsapp-inbox";
 
 // Sem isso o Windows pode exibir "Electron" como remetente das notificações
 // (ex.: nome guardado em cache após rodar em modo dev com o mesmo ID).
-function registerNotificationName() {
+async function registerNotificationName() {
   if (process.platform !== "win32") return;
   const key = `HKCU\\Software\\Classes\\AppUserModelId\\${APP_ID}`;
-  const set = (name: string, value: string) =>
-    spawn("reg", ["add", key, "/v", name, "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true, stdio: "ignore" })
-      .on("error", (e) => console.error("Falha ao registrar nome das notificações:", e));
-  set("DisplayName", "WhatsApp Inbox");
-  set("IconUri", process.execPath);
+  const reg = (args: string[]) =>
+    spawn("reg", [...args, "/f"], { windowsHide: true, stdio: "ignore" })
+      .on("error", (e) => console.error("Falha ao registrar o app nas notificações:", e));
+  reg(["add", key, "/v", "DisplayName", "/t", "REG_SZ", "/d", "WhatsApp Inbox"]);
+  // IconUri precisa ser uma imagem pequena. Com o .exe (~235 MB), o ShellExperienceHost lê o arquivo
+  // inteiro a cada toast e não libera: o processo chegava a dezenas de GB.
+  try {
+    const image = nativeImage.createFromPath(iconPath());
+    if (!image.isEmpty()) {
+      const icon = join(userData(), "notification-icon.png");
+      const png = image.toPNG();
+      // Só regrava se mudou: o shell pode estar com o arquivo aberto, e a falha apagaria o IconUri.
+      const current = await readFile(icon).catch(() => null);
+      if (!current?.equals(png)) {
+        await mkdir(userData(), { recursive: true }); // roda antes do ready: a pasta pode não existir
+        await writeFile(icon, png);
+      }
+      reg(["add", key, "/v", "IconUri", "/t", "REG_SZ", "/d", icon]);
+      return;
+    }
+  } catch (e) {
+    console.error("Falha ao gravar o ícone das notificações:", e);
+  }
+  reg(["delete", key, "/v", "IconUri"]); // sem ícone, tira o .exe gravado por versões anteriores
 }
 
 if (process.argv.includes(MCP_SERVER_ARG)) {
@@ -804,7 +823,7 @@ if (process.argv.includes(MCP_SERVER_ARG)) {
   app.quit();
 } else {
   app.setAppUserModelId(APP_ID);
-  registerNotificationName();
+  void registerNotificationName();
   app.on("second-instance", (_event, argv) => {
     const link = linkFromArgv(argv);
     if (link && instances.size) openLink(link);
