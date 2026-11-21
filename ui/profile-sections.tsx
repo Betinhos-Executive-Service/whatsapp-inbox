@@ -2,20 +2,23 @@ import { BriefcaseBusiness, FileText, HandCoins, Images, MessageCircle, Play, Sm
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api, mediaUrl, type Message, type Persona } from "./api.ts";
 import { aiName, isAiReady, useAiStatus } from "./ai-state.ts";
-import { FileViewer, fileSize } from "./media.tsx";
+import { FileViewer, fileSize, senderLabel } from "./media.tsx";
 import { MediaGallery } from "./gallery.tsx";
+import { ChatMediaPanel } from "./chat-media.tsx";
 import { Button } from "./ds/index.ts";
 
 const PAGE = 60;
+/** Quantos itens a prévia do perfil mostra; o resto fica na tela de mídias. */
+const PREVIEW = { visual: 9, docs: 4 } as const;
 const when = (at: number, time = false) =>
   new Date(at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", ...(time ? { hour: "2-digit", minute: "2-digit" } : {}) });
 
 /** Fotos, vídeos e documentos trocados na conversa, do mais recente ao mais antigo. */
-export function MediaSection({ jid }: { jid: string }) {
+export function MediaSection({ jid, name }: { jid: string; name: string }) {
   const [type, setType] = useState<"visual" | "docs">("visual");
   const [items, setItems] = useState<Message[] | null>(null);
   const [more, setMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [all, setAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Message | null>(null);
   const close = useCallback(() => setOpen(null), []);
@@ -37,19 +40,7 @@ export function MediaSection({ jid }: { jid: string }) {
     };
   }, [jid, type]);
 
-  const loadMore = async () => {
-    if (!items?.length) return;
-    setLoadingMore(true);
-    try {
-      const list = await api.media(jid, type, items[items.length - 1].at);
-      setItems((prev) => [...(prev ?? []), ...list.filter((m) => !prev?.some((p) => p.id === m.id))]);
-      setMore(list.length === PAGE);
-    } catch (e) {
-      setError(`Não foi possível carregar mais. ${(e as Error).message}`);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  const shown = items?.slice(0, PREVIEW[type]);
 
   return (
     <section className="stack profile__section">
@@ -57,6 +48,9 @@ export function MediaSection({ jid }: { jid: string }) {
         <h5 className="eyebrow">
           <Images size={14} aria-hidden /> Mídias
         </h5>
+        <Button variant="ghost" size="compact" onClick={() => setAll(true)}>
+          Ver tudo
+        </Button>
       </div>
       <div className="segmented" role="tablist" aria-label="Tipo de mídia">
         {(
@@ -79,18 +73,18 @@ export function MediaSection({ jid }: { jid: string }) {
         </div>
       )}
       {items && !items.length && <p className="hint">{type === "visual" ? "Nenhuma foto ou vídeo nesta conversa." : "Nenhum documento nesta conversa."}</p>}
-      {items && !!items.length && type === "visual" && (
+      {shown && !!shown.length && type === "visual" && (
         <ul className="profile-media">
-          {items.map((m) => (
+          {shown.map((m) => (
             <li key={m.id}>
               <MediaTile m={m} onOpen={() => setOpen(m)} />
             </li>
           ))}
         </ul>
       )}
-      {items && !!items.length && type === "docs" && (
+      {shown && !!shown.length && type === "docs" && (
         <ul className="stack profile-docs">
-          {items.map((m) => (
+          {shown.map((m) => (
             <li key={m.id}>
               <button type="button" className="profile-doc" onClick={() => setOpen(m)}>
                 <span className="media-doc__icon" aria-hidden>
@@ -98,25 +92,26 @@ export function MediaSection({ jid }: { jid: string }) {
                 </span>
                 <span className="participant__info">
                   <span className="participant__name" title={m.media?.fileName ?? undefined}>{m.media?.fileName ?? "Documento"}</span>
-                  <span className="hint">{[when(m.at), m.media?.size ? fileSize(m.media.size) : null, m.fromMe ? "Enviado" : "Recebido"].filter(Boolean).join(" · ")}</span>
+                  <span className="hint">{[senderLabel(m, name), when(m.at), m.media?.size ? fileSize(m.media.size) : null].filter(Boolean).join(" · ")}</span>
                 </span>
               </button>
             </li>
           ))}
         </ul>
       )}
-      {more && (
-        <Button variant="ghost" size="compact" loading={loadingMore} onClick={() => void loadMore()}>
-          Ver mais antigos
+      {items && (more || items.length > PREVIEW[type]) && (
+        <Button variant="secondary" size="compact" onClick={() => setAll(true)}>
+          Ver {type === "visual" ? "todas as fotos e vídeos" : "todos os documentos"}
         </Button>
       )}
-      {open && type === "visual" && items && <MediaGallery items={items} startId={open.id} onClose={close} loadOlder={more ? loadMore : null} />}
-      {open && type === "docs" && <FileViewer m={open} onClose={close} />}
+      {open && type === "visual" && items && <MediaGallery items={items} startId={open.id} chatName={name} onClose={close} />}
+      {open && type === "docs" && items && <FileViewer m={open} items={items} chatName={name} onClose={close} />}
+      {all && <ChatMediaPanel jid={jid} chatName={name} initialTab={type} onClose={() => setAll(false)} />}
     </section>
   );
 }
 
-function MediaTile({ m, onOpen }: { m: Message; onOpen: () => void }) {
+export function MediaTile({ m, onOpen }: { m: Message; onOpen: () => void }) {
   const [failed, setFailed] = useState(false);
   const video = m.media?.type === "video";
   const label = `${video ? "Vídeo" : "Foto"} de ${when(m.at)}${m.fromMe ? ", enviado" : ", recebido"}`;

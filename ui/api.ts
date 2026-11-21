@@ -15,6 +15,8 @@ export type DeepSeekOptions = {
 } & Record<DeepSeekTask, { maxTokens: number; temperature: number }>;
 
 /** Contato da agenda (nome salvo). */
+export type MediaGroup = "visual" | "docs" | "links";
+export type MediaFilter = { q?: string; from?: "me" | "them" };
 export type Contact = { jid: string; name: string; phone: string };
 
 export type Chat = {
@@ -404,8 +406,13 @@ export const api = {
   summary: (jid: string) => request<Summary>("POST", `${chatPath(jid)}/summary`, {}),
   persona: (jid: string) => request<{ persona: Persona | null }>("GET", `${chatPath(jid)}/persona`),
   generatePersona: (jid: string) => request<{ persona: Persona }>("POST", `${chatPath(jid)}/persona`, {}),
-  media: (jid: string, type: "visual" | "docs", before?: number) =>
-    request<Message[]>("GET", `${chatPath(jid)}/media?type=${type}${before ? `&before=${before}` : ""}`),
+  media: (jid: string, type: MediaGroup, before?: number, filter: MediaFilter = {}) => {
+    const query = new URLSearchParams({ type });
+    if (before) query.set("before", String(before));
+    if (filter.q?.trim()) query.set("q", filter.q.trim());
+    if (filter.from) query.set("from", filter.from);
+    return request<Message[]>("GET", `${chatPath(jid)}/media?${query}`);
+  },
   quickReplies: () => request<QuickReply[]>("GET", "/api/quick-replies"),
   saveQuickReplies: (list: QuickReply[]) => request<QuickReply[]>("PUT", "/api/quick-replies", list),
   importQuickReplies: () =>

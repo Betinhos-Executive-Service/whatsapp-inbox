@@ -439,7 +439,7 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, onConta
           </>
         )}
 
-        <MediaSection jid={current.jid} />
+        <MediaSection jid={current.jid} name={group?.subject ?? current.name} />
 
         {!current.isGroup && current.phone && (
           <section className="stack profile__section">

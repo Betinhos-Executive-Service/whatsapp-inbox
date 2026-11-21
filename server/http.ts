@@ -769,9 +769,12 @@ export function createHandler(api: Api) {
         return json(res, 200, await api.ai.summarize(jid));
       }
       if (action === "/media" && method === "GET") {
-        const group = url.searchParams.get("type") === "docs" ? "docs" : "visual";
+        const type = url.searchParams.get("type");
+        const group = type === "docs" || type === "links" ? type : "visual";
         const before = Number(url.searchParams.get("before")) || null;
-        return json(res, 200, store.listMedia(jid, group, before));
+        const from = url.searchParams.get("from");
+        const q = url.searchParams.get("q")?.slice(0, 100);
+        return json(res, 200, store.listMedia(jid, group, before, { q, from: from === "me" || from === "them" ? from : undefined }));
       }
       if (action === "/persona" && method === "GET") return json(res, 200, { persona: await api.ai.persona(jid, false) });
       if (action === "/persona" && method === "POST") {

@@ -595,6 +595,8 @@ export const DELETED_TEXT = "Mensagem apagada";
 /** Colunas da mensagem para a tela (sem `raw`, que só serve ao retry). */
 const MESSAGE_COLUMNS = "chat_jid, id, participant, from_me, at, text, kind, media, quoted, deleted_at, ack, edited_at, contacts, extra, starred, forwarded";
 
+export type MediaGroup = "visual" | "docs" | "links";
+
 export class Store {
   readonly db: DatabaseSync;
   /** Espelha "Manter conversas arquivadas" do celular: mensagem nova não tira do arquivo. */
@@ -1153,15 +1155,25 @@ export class Store {
     return this.decorate(jid, rows).reverse();
   }
 
-  /** Mídias da conversa para o perfil: "visual" (fotos e vídeos) ou "docs", mais recentes primeiro. */
-  listMedia(jid: string, group: "visual" | "docs", before: number | null, limit = 60): Message[] {
-    const types = JSON.stringify(group === "visual" ? ["image", "video"] : ["document"]);
-    const rows = this
-      .q(
-        `select ${MESSAGE_COLUMNS} from messages where chat_jid = ? and media is not null and deleted_at is null
-         and json_extract(media, '$.type') in (select value from json_each(?)) and at < ? order by at desc, rowid desc limit ?`,
-      )
-      .all(jid, types, before ?? Number.MAX_SAFE_INTEGER, limit) as Row[];
+  /**
+   * Mídias da conversa, mais recentes primeiro: "visual" (fotos e vídeos), "docs" ou "links" (texto com endereço).
+   * `q` procura no nome do arquivo (docs) ou no texto/legenda; `from` separa enviadas ("me") e recebidas ("them").
+   */
+  listMedia(jid: string, group: MediaGroup, before: number | null, filter: { q?: string; from?: "me" | "them" } = {}, limit = 60): Message[] {
+    const where = ["chat_jid = ?", "deleted_at is null", "at < ?"];
+    const args: (string | number)[] = [jid, before ?? Number.MAX_SAFE_INTEGER];
+    if (group === "links") where.push("media is null", "(text like '%http://%' or text like '%https://%' or text like '%www.%')");
+    else {
+      where.push("media is not null", "json_extract(media, '$.type') in (select value from json_each(?))");
+      args.push(JSON.stringify(group === "visual" ? ["image", "video"] : ["document"]));
+    }
+    const q = filter.q?.trim();
+    if (q) {
+      where.push(`${group === "docs" ? "coalesce(json_extract(media, '$.fileName'), '')" : "text"} like ? escape '\\'`);
+      args.push(`%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    }
+    if (filter.from) where.push(`from_me = ${filter.from === "me" ? 1 : 0}`);
+    const rows = this.q(`select ${MESSAGE_COLUMNS} from messages where ${where.join(" and ")} order by at desc, rowid desc limit ?`).all(...args, limit) as Row[];
     return this.decorate(jid, rows);
   }
 
