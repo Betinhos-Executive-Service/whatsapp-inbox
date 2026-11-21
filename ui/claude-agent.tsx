@@ -78,6 +78,7 @@ export function ClaudeAgentButton({ jid, available, notify }: { jid: string; ava
     <Button
       variant="secondary"
       size="compact"
+      className="claude-agent-button"
       aria-label="Analisar com o Claude para agendar"
       title={
         !available

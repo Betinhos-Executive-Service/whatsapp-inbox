@@ -20,6 +20,14 @@ export const prefsSchema = z.object({
   useStatus: z.boolean(),
   /** Etiquetas: desligado esconde o filtro, o seletor e as etiquetas na lista. */
   useLabels: z.boolean(),
+  /** Classificação por IA (etiqueta sugerida, urgência, prioridade): desligado não chama a IA nem mostra o palpite. */
+  useAiClassify: z.boolean(),
+  /** Prioridade: desligado esconde as cores de prioridade e a ordem "Responder primeiro". */
+  usePriority: z.boolean(),
+  /** Perfil do contato gerado por IA, no painel do contato. */
+  usePersona: z.boolean(),
+  /** Botão do Claude que lê a conversa e agenda o serviço. */
+  useClaudeAgent: z.boolean(),
 });
 
 export type Prefs = z.infer<typeof prefsSchema>;
@@ -36,6 +44,10 @@ export const DEFAULT_PREFS: Prefs = {
   theme: "system",
   useStatus: true,
   useLabels: true,
+  useAiClassify: true,
+  usePriority: true,
+  usePersona: true,
+  useClaudeAgent: true,
 };
 
 export function readPrefs(store: Store): Prefs {

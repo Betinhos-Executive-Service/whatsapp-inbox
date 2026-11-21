@@ -1698,9 +1698,15 @@ kbd {
 :root[data-no-status] .classify .segmented--status + .chat-pane__divider,
 :root[data-no-labels] .list-pane__label-filter,
 :root[data-no-labels] .chat-item__labels,
-:root[data-no-labels] .classify .field--label {
+:root[data-no-labels] .classify .field--label,
+:root[data-no-ai-classify] .classify__ai-button,
+:root[data-no-ai-classify] .classify__ai--error,
+:root[data-no-priority] .chat-item__priority,
+:root[data-no-persona] .profile__section--persona,
+:root[data-no-claude-agent] .claude-agent-button {
   display: none;
 }
+:root[data-no-priority] .chat-item:not([aria-current='true']) { border-left-color: transparent; }
 
 .unread-toggle[aria-pressed='true'] { color: var(--bt-color-action); border-color: var(--bt-color-action); background-color: var(--bt-color-action-soft); }
 

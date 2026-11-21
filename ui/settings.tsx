@@ -803,6 +803,30 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
                   label="Etiquetas"
                   hint="Filtro, seletor e etiquetas na lista. Desligado, nada é apagado: as etiquetas voltam ao religar."
                 />
+                <Toggle
+                  checked={prefs.useAiClassify}
+                  onChange={(v) => setPref("useAiClassify", v)}
+                  label="Classificação por IA"
+                  hint="Categoria sugerida, urgência e prioridade dadas pelo Jev ou pela DeepSeek. Desligado, a IA não é chamada nem sozinha nem pelo botão."
+                />
+                <Toggle
+                  checked={prefs.usePriority}
+                  onChange={(v) => setPref("usePriority", v)}
+                  label="Prioridade"
+                  hint="Cores de prioridade na lista e a ordem “Responder primeiro”. Desligado, a lista fica por mais recentes."
+                />
+                <Toggle
+                  checked={prefs.usePersona}
+                  onChange={(v) => setPref("usePersona", v)}
+                  label="Perfil por IA"
+                  hint="Seção “Perfil pela IA” nos dados do contato. Desligado, os perfis já gerados ficam guardados."
+                />
+                <Toggle
+                  checked={prefs.useClaudeAgent}
+                  onChange={(v) => setPref("useClaudeAgent", v)}
+                  label="Botão Claude (agendamento)"
+                  hint="Botão na conversa que lê o pedido e prepara o agendamento com o Claude Code."
+                />
               </section>
               <section className="surface stack">
                 <h3 className="eyebrow">Privacidade</h3>

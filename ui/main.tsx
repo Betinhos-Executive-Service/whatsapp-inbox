@@ -244,6 +244,22 @@ function ConnectScreen({ connection, onSkip }: { connection: Connection; onSkip:
   );
 }
 
+/** Mesma conversa sem o palpite da IA; o cache mantém o objeto estável para o memo da lista. */
+const noAiCache = new WeakMap<Chat, Chat>();
+function withoutAi(chats: Map<string, Chat>): Map<string, Chat> {
+  const out = new Map<string, Chat>();
+  for (const [jid, c] of chats) {
+    if (!c.ai && !c.aiError) {
+      out.set(jid, c);
+      continue;
+    }
+    let stripped = noAiCache.get(c);
+    if (!stripped) noAiCache.set(c, (stripped = { ...c, ai: null, aiError: null }));
+    out.set(jid, stripped);
+  }
+  return out;
+}
+
 /** Prioridade exibida: a da IA manda; sem ela, urgência e a nota local. Resolvida não tem cor. */
 function displayPriority(chat: Chat): Priority | null {
   if (chat.status === "resolvida") return null;
@@ -386,6 +402,7 @@ function ChatList(props: {
   connection: Connection;
   useStatus: boolean;
   useLabels: boolean;
+  usePriority: boolean;
   online: boolean;
   onSettings: () => void;
   loaded: boolean;
@@ -432,13 +449,15 @@ function ChatList(props: {
   // A digitação responde na hora; o filtro de milhares de conversas vem logo depois.
   const deferredQuery = useDeferredValue(query);
   const [limit, setLimit] = useState(PAGE);
-  const [order, setOrder] = useState<"recentes" | "prioridade">(() => {
+  const [orderChoice, setOrder] = useState<"recentes" | "prioridade">(() => {
     try {
       return localStorage.getItem("inbox:order") === "prioridade" ? "prioridade" : "recentes";
     } catch {
       return "recentes";
     }
   });
+  // Com a prioridade desligada, a lista fica só por mais recentes.
+  const order = props.usePriority ? orderChoice : "recentes";
   const chooseOrder = (o: "recentes" | "prioridade") => {
     setOrder(o);
     try {
@@ -602,7 +621,7 @@ function ChatList(props: {
           onChange={(v) => v && chooseOrder(v as "recentes" | "prioridade")}
           options={[
             { value: "recentes", label: "Mais recentes" },
-            { value: "prioridade", label: "Responder primeiro" },
+            ...(props.usePriority ? [{ value: "prioridade", label: "Responder primeiro" }] : []),
           ]}
         />
         <Button
@@ -3027,9 +3046,13 @@ function App() {
     wasOnline.current = online;
   }, [online, reload]);
 
-  const sorted = useMemo(() => [...chats.values()].sort((a, b) => b.lastAt - a.lastAt), [chats]);
+  const prefs = state?.prefs;
+  const useAiClassify = prefs?.useAiClassify ?? true;
+  // Classificação por IA desligada: a tela ignora o palpite já salvo (etiqueta, urgência, prioridade).
+  const shown = useMemo(() => (useAiClassify ? chats : withoutAi(chats)), [chats, useAiClassify]);
+  const sorted = useMemo(() => [...shown.values()].sort((a, b) => b.lastAt - a.lastAt), [shown]);
   const labels = useMemo(() => state?.labels.map((l) => l.name) ?? [], [state]);
-  const current = selected ? (chats.get(selected) ?? null) : null;
+  const current = selected ? (shown.get(selected) ?? null) : null;
   const connection: Connection = state?.connection ?? { status: "iniciando", qr: null, me: null, error: null };
   const showConnect = connection.status === "qr" && !skipConnect;
   const connected = online && connection.status === "conectado";
@@ -3073,15 +3096,19 @@ function App() {
     refreshAvatars();
   }, [connection.status]);
 
-  const useStatus = state?.prefs.useStatus ?? true;
-  const useLabels = state?.prefs.useLabels ?? true;
+  const useStatus = prefs?.useStatus ?? true;
+  const useLabels = prefs?.useLabels ?? true;
+  const usePriority = prefs?.usePriority ?? true;
+  const usePersona = prefs?.usePersona ?? true;
+  const useClaudeAgent = prefs?.useClaudeAgent ?? true;
   useEffect(() => {
     const d = document.documentElement.dataset;
-    if (useStatus) delete d.noStatus;
-    else d.noStatus = "";
-    if (useLabels) delete d.noLabels;
-    else d.noLabels = "";
-  }, [useStatus, useLabels]);
+    const flags = { noStatus: useStatus, noLabels: useLabels, noAiClassify: useAiClassify, noPriority: usePriority, noPersona: usePersona, noClaudeAgent: useClaudeAgent };
+    for (const [key, on] of Object.entries(flags)) {
+      if (on) delete d[key];
+      else d[key] = "";
+    }
+  }, [useStatus, useLabels, useAiClassify, usePriority, usePersona, useClaudeAgent]);
 
   const theme = state?.prefs.theme;
   useEffect(() => {
@@ -3226,10 +3253,11 @@ function App() {
       ) : (
         <>
           <ChatList
-            useStatus={state?.prefs.useStatus ?? true}
-            useLabels={state?.prefs.useLabels ?? true}
+            useStatus={useStatus}
+            useLabels={useLabels}
+            usePriority={usePriority}
             chats={sorted}
-            byJid={chats}
+            byJid={shown}
             labels={labels}
             selected={selected}
             onOpen={openChat}
