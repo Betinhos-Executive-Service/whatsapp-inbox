@@ -14,9 +14,10 @@ export type DeepSeekOptions = {
   messageChars: number;
 } & Record<DeepSeekTask, { maxTokens: number; temperature: number }>;
 
-/** Contato da agenda (nome salvo). */
 export type MediaGroup = "visual" | "docs" | "links";
 export type MediaFilter = { q?: string; from?: "me" | "them" };
+
+/** Contato da agenda (nome salvo). */
 export type Contact = { jid: string; name: string; phone: string };
 
 export type Chat = {

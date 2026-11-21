@@ -246,22 +246,24 @@ type CopyStatus = { id: string; kind: "busy" | "done" | "error"; text: string };
 function useCopyMedia(m: Message) {
   const [status, setStatus] = useState<CopyStatus | null>(null);
   const timer = useRef(0);
+  const request = useRef(0);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   const shown = status?.id === m.id ? status : null;
   const run = () => {
     if (shown?.kind === "busy") return;
     window.clearTimeout(timer.current);
     const id = m.id;
+    const mine = ++request.current;
+    // Resposta de um pedido anterior (outra mídia, já trocada) não pode apagar o aviso do atual.
+    const settle = (next: CopyStatus, ms: number) => {
+      if (mine !== request.current) return;
+      setStatus(next);
+      timer.current = window.setTimeout(() => setStatus(null), ms);
+    };
     setStatus({ id, kind: "busy", text: "Copiando…" });
     copyMedia(m).then(
-      (text) => {
-        setStatus({ id, kind: "done", text });
-        timer.current = window.setTimeout(() => setStatus(null), 2500);
-      },
-      (e: unknown) => {
-        setStatus({ id, kind: "error", text: (e as Error).message });
-        timer.current = window.setTimeout(() => setStatus(null), 6000);
-      },
+      (text) => settle({ id, kind: "done", text }, 2500),
+      (e: unknown) => settle({ id, kind: "error", text: (e as Error).message }, 6000),
     );
   };
   return { status: shown, run };

@@ -55,6 +55,8 @@ export function ChatMediaPanel({ jid, chatName, initialTab = "visual", onClose }
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Message | null>(null);
+  /** Muda a cada busca nova: a página "mais antigos" de uma busca anterior é descartada. */
+  const search = useRef(0);
   const group = jid.endsWith("@g.us");
   useDialog(panel, close, onClose);
 
@@ -65,6 +67,7 @@ export function ChatMediaPanel({ jid, chatName, initialTab = "visual", onClose }
 
   useEffect(() => {
     let alive = true;
+    search.current++;
     setItems(null);
     setError(null);
     api
@@ -82,13 +85,15 @@ export function ChatMediaPanel({ jid, chatName, initialTab = "visual", onClose }
 
   const loadMore = async () => {
     if (!items?.length) return;
+    const mine = search.current;
     setLoadingMore(true);
     try {
       const list = await api.media(jid, tab, items[items.length - 1].at, { q, from });
+      if (mine !== search.current) return;
       setItems((prev) => [...(prev ?? []), ...list.filter((m) => !prev?.some((p) => p.id === m.id))]);
       setMore(list.length === PAGE);
     } catch (e) {
-      setError(`Não foi possível carregar mais. ${(e as Error).message}`);
+      if (mine === search.current) setError(`Não foi possível carregar mais. ${(e as Error).message}`);
     } finally {
       setLoadingMore(false);
     }
@@ -174,7 +179,7 @@ export function ChatMediaPanel({ jid, chatName, initialTab = "visual", onClose }
                           <span className="participant__info">
                             <span className="participant__name">{host(url)}</span>
                             <span className="chat-media__url">{url}</span>
-                            <span className="hint">{[who(m) ?? "Recebido", when(m.at)].filter(Boolean).join(" · ")}</span>
+                            <span className="hint">{[who(m) ?? "Recebido", when(m.at)].join(" · ")}</span>
                           </span>
                         </a>
                       </li>

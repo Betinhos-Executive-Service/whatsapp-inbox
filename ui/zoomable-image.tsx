@@ -1,5 +1,5 @@
 import { Maximize, Minus, Plus } from "lucide-react";
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type PointerEvent as ReactPointerEvent, type Ref } from "react";
 
 const MAX_ZOOM = 8;
 const CLICK_ZOOM = 2.5;
@@ -78,7 +78,7 @@ export function ZoomableImage({ src, alt = "", onError, ref }: { src: string; al
         if (e.key === "+" || e.key === "=") setView((v) => zoomAt(v, v.zoom * 1.5, 0, 0, true));
         else if (e.key === "-") setView((v) => zoomAt(v, v.zoom / 1.5, 0, 0, true));
         else if (e.key === "0") setView(FIT);
-        else if (e.key === "Enter" && !(e.target instanceof HTMLButtonElement)) setView((v) => (v.zoom > 1 ? FIT : zoomAt(v, CLICK_ZOOM, 0, 0, true)));
+        else if (e.key === "Enter" && !(e.target instanceof HTMLElement && e.target.closest("a, button"))) setView((v) => (v.zoom > 1 ? FIT : zoomAt(v, CLICK_ZOOM, 0, 0, true)));
         else if (view.zoom > 1 && e.key.startsWith("Arrow")) {
           const dx = e.key === "ArrowLeft" ? PAN_STEP : e.key === "ArrowRight" ? -PAN_STEP : 0;
           const dy = e.key === "ArrowUp" ? PAN_STEP : e.key === "ArrowDown" ? -PAN_STEP : 0;
@@ -90,8 +90,12 @@ export function ZoomableImage({ src, alt = "", onError, ref }: { src: string; al
         return true;
       },
     }),
-    [view.zoom, shown.x, shown.y, baseW, baseH, stage.w, stage.h],
   );
+
+  const release = (e: ReactPointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (!pointers.current.size) setDragging(false);
+  };
 
   const percent = Math.round(view.zoom * fit * 100);
   return (
@@ -104,8 +108,8 @@ export function ZoomableImage({ src, alt = "", onError, ref }: { src: string; al
         e.currentTarget.setPointerCapture(e.pointerId);
         const pts = [...pointers.current.values()];
         const mid = pts.length === 2 ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 } : pts[0];
-        gesture.current = { x: mid.x, y: mid.y, vx: shown.x, vy: shown.y, dist: pts.length === 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0, moved: gesture.current?.moved ?? false };
-        if (pts.length === 1) gesture.current.moved = false;
+        const moved = pts.length === 1 ? false : (gesture.current?.moved ?? false);
+        gesture.current = { x: mid.x, y: mid.y, vx: shown.x, vy: shown.y, dist: pts.length === 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0, moved };
       }}
       onPointerMove={(e) => {
         const g = gesture.current;
@@ -115,9 +119,10 @@ export function ZoomableImage({ src, alt = "", onError, ref }: { src: string; al
         if (pts.length >= 2) {
           const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
           const { px, py } = fromCenter((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2);
+          const ratio = dist / (g.dist || dist);
           g.moved = true;
-          setView((v) => zoomAt(v, v.zoom * (dist / (g.dist || dist)), px, py));
           g.dist = dist;
+          setView((v) => zoomAt(v, v.zoom * ratio, px, py));
           return;
         }
         if (Math.hypot(e.clientX - g.x, e.clientY - g.y) > 4) g.moved = true;
@@ -125,14 +130,8 @@ export function ZoomableImage({ src, alt = "", onError, ref }: { src: string; al
         setDragging(true);
         setView((v) => clamp({ ...v, x: g.vx + e.clientX - g.x, y: g.vy + e.clientY - g.y, animate: false }));
       }}
-      onPointerUp={(e) => {
-        pointers.current.delete(e.pointerId);
-        if (!pointers.current.size) setDragging(false);
-      }}
-      onPointerCancel={(e) => {
-        pointers.current.delete(e.pointerId);
-        if (!pointers.current.size) setDragging(false);
-      }}
+      onPointerUp={release}
+      onPointerCancel={release}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest(".zoomable__controls")) return;
         // Clique que terminou um arrasto ou uma pinça não muda o zoom.
