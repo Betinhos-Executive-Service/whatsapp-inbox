@@ -181,7 +181,7 @@ export function PersonaSection({ jid, name, notify }: { jid: string; name: strin
 
   const ready = isAiReady(ai);
   return (
-    <section className="stack profile__section" aria-labelledby="persona-title">
+    <section className="stack profile__section profile__section--persona" aria-labelledby="persona-title">
       <div className="profile__section-head">
         <h5 id="persona-title" className="eyebrow">
           <WandSparkles size={14} aria-hidden /> Perfil pela IA

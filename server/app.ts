@@ -420,6 +420,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     const run = queue.then(async () => {
       const which = classifier();
       const key = classifierKey();
+      if (!readPrefs(store).useAiClassify) throw new Error("A classificação por IA está desligada em Configurações › Geral › Funções.");
       if (!key) throw new Error("Configure a chave do Jev ou da DeepSeek em Configurações › IA.");
       const chat = store.getChat(jid);
       if (!chat) throw new Error("Conversa não encontrada.");
@@ -447,7 +448,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
 
   /** Espera a pessoa terminar de mandar mensagens antes de classificar (uma chamada por rajada). */
   function scheduleClassify(jid: string) {
-    if (!classifierKey() || !autoClassify()) return;
+    if (!classifierKey() || !autoClassify() || !readPrefs(store).useAiClassify) return;
     clearTimeout(pending.get(jid));
     pending.set(
       jid,
@@ -892,6 +893,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
         const dir = join(options.dataDir, "personas");
         const cached = await cachedAudioSummary<PersonaRecord>(dir, jid, "persona");
         if (!force) return cached;
+        if (!readPrefs(store).usePersona) throw new Error("O perfil por IA está desligado em Configurações › Geral › Funções.");
         const chat = store.getChat(jid);
         if (!chat) throw new Error("Conversa não encontrada.");
         const messages = (await withTranscripts(jid, store.listMessages(jid, null, PERSONA_WINDOW.messages))).filter((m) => m.text.trim());

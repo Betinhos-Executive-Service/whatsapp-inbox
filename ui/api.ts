@@ -278,6 +278,10 @@ export type Prefs = {
   sendTyping: boolean;
   useStatus: boolean;
   useLabels: boolean;
+  useAiClassify: boolean;
+  usePriority: boolean;
+  usePersona: boolean;
+  useClaudeAgent: boolean;
 };
 export type AppState = {
   prefs: Prefs;
