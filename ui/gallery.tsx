@@ -1,38 +1,30 @@
-import { ChevronLeft, ChevronRight, Download, Play, TriangleAlert, X } from "lucide-react";
+import { Play, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, mediaUrl, type Message } from "./api.ts";
-import { CopyMediaButton, useDialog } from "./media.tsx";
-import { Button } from "./ds/index.ts";
-
-const when = (at: number) => new Date(at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+import { senderLabel, ViewerShell, when } from "./media.tsx";
+import { ZoomableImage, type ZoomableImageHandle } from "./zoomable-image.tsx";
 
 /**
  * Galeria de fotos e vídeos, como no WhatsApp: setas laterais, teclado e tira de miniaturas embaixo.
  * `items` chega do mais recente ao mais antigo (ordem da API); a tira mostra do mais antigo ao mais recente.
  * `loadOlder` busca a página anterior quando a navegação chega ao item mais antigo.
  */
-export function MediaGallery({ items, startId, onClose, loadOlder }: { items: Message[]; startId: string; onClose: () => void; loadOlder?: (() => Promise<void>) | null }) {
-  const panel = useRef<HTMLDivElement>(null);
-  const close = useRef<HTMLButtonElement>(null);
+export function MediaGallery({ items, startId, chatName, onClose, loadOlder }: { items: Message[]; startId: string; chatName?: string; onClose: () => void; loadOlder?: (() => Promise<void>) | null }) {
   const strip = useRef<HTMLUListElement>(null);
+  const zoomable = useRef<ZoomableImageHandle>(null);
   const [currentId, setCurrentId] = useState(startId);
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   /** Pediu o anterior estando no mais antigo: ao chegar a página nova, anda para ele. */
   const wantPrev = useRef(false);
-  useDialog(panel, close, onClose);
 
   const list = useMemo(() => [...items].reverse(), [items]);
   const index = Math.max(0, list.findIndex((m) => m.id === currentId));
   const current = list[index];
-  const hasPrev = index > 0 || !!loadOlder;
-  const hasNext = index < list.length - 1;
 
   const go = useCallback(
     (dir: -1 | 1) => {
       const next = list[index + dir];
       if (next) {
-        setError(null);
         setCurrentId(next.id);
         return;
       }
@@ -53,17 +45,6 @@ export function MediaGallery({ items, startId, onClose, loadOlder }: { items: Me
   }, [list, index]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") go(-1);
-      else if (e.key === "ArrowRight") go(1);
-      else return;
-      e.preventDefault();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [go]);
-
-  useEffect(() => {
     strip.current?.querySelector<HTMLElement>('[aria-current="true"]')?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
   }, [currentId]);
 
@@ -75,46 +56,34 @@ export function MediaGallery({ items, startId, onClose, loadOlder }: { items: Me
   if (!current) return null;
   const video = current.media?.type === "video";
   return (
-    <div ref={panel} className="lightbox gallery" role="dialog" aria-modal="true" aria-label="Fotos e vídeos da conversa" onClick={onClose}>
-      <div className="gallery__stage">
-        <button type="button" className="gallery__nav gallery__nav--prev" onClick={(e) => { e.stopPropagation(); go(-1); }} disabled={!hasPrev || loading} aria-label="Anterior">
-          <ChevronLeft size={28} aria-hidden />
-        </button>
-        {video ? (
-          <video key={current.id} className="gallery__media" src={mediaUrl(current)} controls autoPlay preload="metadata" onClick={(e) => e.stopPropagation()} />
-        ) : (
-          <img key={current.id} className="gallery__media" src={mediaUrl(current)} alt="" onClick={(e) => e.stopPropagation()} />
-        )}
-        <button type="button" className="gallery__nav gallery__nav--next" onClick={(e) => { e.stopPropagation(); go(1); }} disabled={!hasNext} aria-label="Próxima">
-          <ChevronRight size={28} aria-hidden />
-        </button>
-      </div>
-      <p className="gallery__meta" onClick={(e) => e.stopPropagation()}>
-        <span aria-live="polite">{index + 1} de {list.length}{loadOlder ? "+" : ""}</span>
-        <span>{when(current.at)} · {current.fromMe ? "Enviado" : "Recebido"}</span>
-      </p>
-      {error && (
-        <p className="viewer__error viewer__error--dark" role="alert" onClick={(e) => e.stopPropagation()}>
-          <TriangleAlert size={14} aria-hidden /> {error}
-        </p>
+    <ViewerShell
+      m={current}
+      label="Fotos e vídeos da conversa"
+      title={senderLabel(current, chatName)}
+      meta={when(current.at)}
+      onClose={onClose}
+      onKey={(e) => !!zoomable.current?.key(e)}
+      nav={{ prev: (index > 0 || loadOlder) && !loading ? () => go(-1) : null, next: index < list.length - 1 ? () => go(1) : null, position: `${index + 1} de ${list.length}${loadOlder ? "+" : ""}` }}
+      footer={
+        list.length > 1 && (
+          <ul ref={strip} className="gallery__strip" aria-label="Miniaturas">
+            {list.map((m, i) => (
+              <li key={m.id}>
+                <Thumb m={m} active={i === index} onPick={() => setCurrentId(m.id)} />
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    >
+      {video ? (
+        <div className="viewer-shell__center">
+          <video key={current.id} className="viewer-shell__media" src={mediaUrl(current)} controls autoPlay preload="metadata" />
+        </div>
+      ) : (
+        <ZoomableImage key={current.id} ref={zoomable} src={mediaUrl(current)} />
       )}
-      <div className="lightbox__actions" onClick={(e) => e.stopPropagation()}>
-        <CopyMediaButton m={current} onError={setError} />
-        <a className="button button--secondary" href={mediaUrl(current, true)} download>
-          <Download size={16} aria-hidden /> Baixar
-        </a>
-        <Button ref={close} variant="primary" icon={<X size={16} aria-hidden />} onClick={onClose}>
-          Fechar
-        </Button>
-      </div>
-      <ul ref={strip} className="gallery__strip" aria-label="Miniaturas" onClick={(e) => e.stopPropagation()}>
-        {list.map((m, i) => (
-          <li key={m.id}>
-            <Thumb m={m} active={i === index} onPick={() => { setError(null); setCurrentId(m.id); }} />
-          </li>
-        ))}
-      </ul>
-    </div>
+    </ViewerShell>
   );
 }
 

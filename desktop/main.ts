@@ -2,7 +2,7 @@
 // próprio Electron, mostra cada conta numa área própria da mesma janela e mantém tudo rodando
 // na bandeja quando a janela é fechada. Cada conta é uma instância separada (dados, auth e
 // configurações próprios); a troca de conta só alterna qual área aparece.
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, shell, Tray, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, shell, Tray, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -537,6 +537,13 @@ function setupIpc() {
     const path = await mediaFile(event, chatJid, id);
     await copyFileToClipboard(path);
   });
+  // PNG e JPEG vão pela área de transferência nativa; WebP (figurinha) o nativeImage não lê e a página converte.
+  ipcMain.handle("media:copy-image", async (event, chatJid: unknown, id: unknown) => {
+    const image = nativeImage.createFromPath(await mediaFile(event, chatJid, id));
+    if (image.isEmpty()) return false;
+    await clipboard.write([new ClipboardItem({ "image/png": new Blob([new Uint8Array(image.toPNG())], { type: "image/png" }) })]);
+    return true;
+  });
   ipcMain.handle("media:open", async (event, chatJid: unknown, id: unknown) => {
     const failure = await shell.openPath(await mediaFile(event, chatJid, id));
     if (failure) throw new Error(`Nenhum app abriu este arquivo. ${failure}`);
@@ -616,6 +623,10 @@ function editMenu(wc: WebContents) {
       );
     } else if (selectionText.trim()) {
       items.push({ label: "Copiar", role: "copy" });
+    }
+    if (params.mediaType === "image" && params.hasImageContents && !isEditable) {
+      if (items.length) items.push({ type: "separator" });
+      items.push({ label: "Copiar imagem", click: () => wc.copyImageAt(params.x, params.y) });
     }
     if (linkURL && /^https?:/i.test(linkURL)) {
       if (items.length) items.push({ type: "separator" });
