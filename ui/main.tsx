@@ -2408,7 +2408,6 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
             icon={<Search size={16} aria-hidden />}
             onClick={() => (findOpen ? closeFind() : (setFindOpen(true), requestAnimationFrame(() => findInput.current?.focus())))}
           />
-          <AiQuickPicker onMore={onSetupAi} />
         </div>
       </header>
       {findOpen && (
@@ -2688,6 +2687,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           onClick={() => (aiReady ? void suggest() : onSetupAi())}
           icon={drafting ? <LoaderCircle className="spin" size={18} aria-hidden /> : <WandSparkles size={18} aria-hidden />}
         />
+        {aiReady && <AiQuickPicker onMore={onSetupAi} />}
         <div className="composer__field">
         <div className="composer__mirror" ref={mirror} aria-hidden>
           <WaLive text={draft} />

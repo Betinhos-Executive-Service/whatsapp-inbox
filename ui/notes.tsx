@@ -264,16 +264,16 @@ export function NotesPanel({ chat, onChat, onClose, notify }: {
           ) : (
             <p className="hint">{isAiReady(ai) ? (ai?.provider === "deepseek" ? "Gera um resumo das últimas mensagens com a DeepSeek." : ai?.provider === "claude" ? "Gera um resumo com o Claude do seu plano. Pode levar mais de um minuto." : "Gera um resumo das últimas mensagens.") : "Ative a IA em Configurações › IA para usar."}</p>
           )}
-          <div className="cluster">
+          {(isAiReady(ai) || summary) && <div className="cluster">
             <Button variant="secondary" size="compact" disabled={!isAiReady(ai)} loading={summarizing} icon={<WandSparkles size={16} aria-hidden />} onClick={() => void summarize()}>
               {summary ? "Resumir de novo" : "Resumir conversa"}
             </Button>
-          </div>
-          <p className="hint notes__usage">
+          </div>}
+          {(isAiReady(ai) || chat.aiUsage.calls > 0) && <p className="hint notes__usage">
             {chat.aiUsage.calls === 0
               ? "Nenhuma chamada de IA nesta conversa ainda."
               : `IA nesta conversa: ${chat.aiUsage.calls} chamada${chat.aiUsage.calls > 1 ? "s" : ""} · ${formatTokens(chat.aiUsage.tokens)} tokens · ${formatBrl(chat.aiUsage.costUsd * usdBrl)} (${formatUsd(chat.aiUsage.costUsd)})`}
-          </p>
+          </p>}
         </section>
       </div>
     </aside>

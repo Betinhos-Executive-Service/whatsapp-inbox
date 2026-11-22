@@ -728,7 +728,8 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
           <Button variant="ghost" icon={<X size={18} aria-hidden />} aria-label="Fechar configurações" onClick={requestClose} disabled={saving} />
         </header>
 
-        <div className="settings-tabs" role="tablist" aria-label="Seções das configurações">
+        <div className="settings-layout">
+        <div className="settings-tabs" role="tablist" aria-orientation="vertical" aria-label="Seções das configurações">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -1168,6 +1169,7 @@ export function SettingsDrawer({ open, initialTab, state, onClose, onSaved, noti
             </section>
           )}
           {tab === "conta" && <SendLogPanel />}
+        </div>
         </div>
 
         <footer className="drawer__footer">

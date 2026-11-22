@@ -1,4 +1,4 @@
-import { Bot, ChevronDown, LoaderCircle, Settings2 } from "lucide-react";
+import { ChevronDown, LoaderCircle, Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, type AiStatus, type ClaudeEffort, type ClaudeModel, type DeepSeekModel, type Thinking } from "./api.ts";
 import { publishAi, useAiStatus } from "./ai-state.ts";
@@ -19,7 +19,7 @@ export function aiSummary(ai: AiStatus): string {
   return `DeepSeek ${model}${thinking === "off" ? "" : ` · thinking ${THINKING_LABELS[thinking].toLowerCase()}`}`;
 }
 
-/** Botão da conversa que troca IA, modelo e raciocínio na hora (rascunho e resumo). */
+/** Seta ao lado da varinha do campo de resposta: troca IA, modelo e raciocínio na hora (rascunho e resumo). */
 export function AiQuickPicker({ onMore }: { onMore: () => void }) {
   const ai = useAiStatus();
   const [open, setOpen] = useState(false);
@@ -61,18 +61,15 @@ export function AiQuickPicker({ onMore }: { onMore: () => void }) {
   return (
     <div className="ai-quick" ref={root}>
       <Button
-        variant="secondary"
-        size="compact"
+        variant="ghost"
         className="ai-quick__toggle"
-        icon={<Bot size={16} aria-hidden />}
-        iconEnd={<ChevronDown size={14} aria-hidden />}
+        icon={<ChevronDown size={14} aria-hidden />}
         aria-expanded={open}
         aria-haspopup="dialog"
-        title="IA usada no rascunho e no resumo"
+        aria-label={`Escolher a IA do rascunho e do resumo (${aiSummary(ai)})`}
+        title={`IA do rascunho e do resumo: ${aiSummary(ai)}`}
         onClick={() => setOpen((v) => !v)}
-      >
-        <span className="ai-quick__label">{aiSummary(ai)}</span>
-      </Button>
+      />
       {open && (
         <div className="ai-quick__panel" role="dialog" aria-label="Escolher IA">
           <div className="field">
