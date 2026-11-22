@@ -91,7 +91,9 @@ export function ClaudeAgentButton({ jid, available, notify }: { jid: string; ava
       aria-busy={running || undefined}
       onClick={() => void start(jid, "analisar", notify)}
       icon={running ? <LoaderCircle className="spin" size={16} aria-hidden /> : <ClaudeMark size={16} />}
-    />
+    >
+      <span className="claude-agent-button__label">Agendar</span>
+    </Button>
   );
 }
 
