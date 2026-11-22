@@ -849,7 +849,9 @@ function mergeTail(list: Message[], fresh: Message[]): Message[] {
   const added = fresh.filter((x) => !known.has(x.id));
   if (!added.length) return list;
   const pending = list.filter((x) => x.pending);
-  return [...list.filter((x) => !x.pending), ...added].sort((a, b) => a.at - b.at).concat(pending);
+  // Mesmo segundo: vale a ordem em que o servidor devolveu (a de chegada), para não mudar ao reabrir a conversa.
+  const rank = new Map(fresh.map((x, i) => [x.id, i]));
+  return [...list.filter((x) => !x.pending), ...added].sort((a, b) => a.at - b.at || (rank.get(a.id) ?? -1) - (rank.get(b.id) ?? -1)).concat(pending);
 }
 
 /** Encaixa pelo horário: mensagem atrasada (entregue depois de reconectar) não vai parar no fim. Pendentes ficam por último. */
@@ -1485,6 +1487,29 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     [chat.jid],
   );
 
+  type Outgoing = { text: string; quotedId?: string; quotedChat?: string; mentions: string[]; mentionAll?: boolean; failed?: boolean };
+  // Payload de cada bolha otimista, para "Tentar de novo".
+  const outbox = useRef(new Map<string, Outgoing>());
+  // Id real (do WhatsApp) -> id da bolha local que ele substituiu, enquanto o envio não foi confirmado.
+  const claimed = useRef(new Map<string, string>());
+  // Saiu da conversa com envio falhado: sem bolha para mostrar, o texto volta para o rascunho.
+  const alive = useRef(true);
+  const toDraft = useCallback(
+    (texts: string[]) => {
+      const rest = drafts.get(chat.jid);
+      drafts.set(chat.jid, [...texts, ...(rest.trim() ? [rest] : [])].join("\n"));
+    },
+    [chat.jid],
+  );
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      const failed = [...outbox.current.values()].filter((o) => o.failed).map((o) => o.text);
+      if (failed.length) toDraft(failed);
+    };
+  }, [toDraft]);
+
   // Mensagem nova chegando nesta conversa (SSE) vira evento no window.
   useEffect(() => {
     const onMessage = (e: Event) => {
@@ -1493,17 +1518,27 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       const el = scroller.current;
       stickToBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
       if (!stickToBottom.current && !m.fromMe) setNewBelow((n) => n + 1);
+      const late = m.fromMe ? claimed.current.get(m.id) : undefined;
       setMessages((list) => {
         if (!list || list.some((x) => x.id === m.id)) return list;
-        const i = m.fromMe ? list.findIndex((x) => x.pending === "sending" && x.text === m.text) : -1;
-        return i >= 0 ? list.map((x, j) => (j === i ? m : x)) : insertByTime(list, m);
+        // Confirmação atrasada de um envio que já tinha falhado: a real entra no lugar da bolha "Não enviada".
+        const i = !m.fromMe ? -1 : late ? list.findIndex((x) => x.id === late) : list.findIndex((x) => x.pending === "sending" && x.text === m.text);
+        if (i < 0) return insertByTime(list, m);
+        if (late) outbox.current.delete(late);
+        else claimed.current.set(m.id, list[i].id);
+        return list.map((x, j) => (j === i ? m : x));
       });
     };
     // Apagada, editada, reação ou status de entrega: troca no lugar.
     const onUpdate = (e: Event) => {
       const m = (e as CustomEvent<Message>).detail;
       if (m.chatJid !== chat.jid) return;
-      setMessages((list) => list && list.map((x) => (x.id === m.id ? m : x)));
+      setMessages((list) => {
+        const old = list?.find((x) => x.id === m.id);
+        if (!list || !old) return list;
+        // O horário mudou (o WhatsApp confirmou o envio com o relógio dele): reencaixa na ordem.
+        return old.at === m.at ? list.map((x) => (x.id === m.id ? m : x)) : insertByTime(list.filter((x) => x.id !== m.id), m);
+      });
       if (m.deleted) {
         setReplyTo((r) => (r?.id === m.id ? null : r));
         setEditing((r) => (r?.id === m.id ? null : r));
@@ -1513,7 +1548,13 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     const onRemove = (e: Event) => {
       const { chatJid, id } = (e as CustomEvent<{ chatJid: string; id: string }>).detail;
       if (chatJid !== chat.jid) return;
-      setMessages((list) => list && list.filter((x) => x.id !== id));
+      // O servidor tirou um envio que o WhatsApp não confirmou: a bolha volta como "Não enviada", com o texto.
+      const localId = claimed.current.get(id);
+      const out = localId && outbox.current.get(localId);
+      if (localId && out) {
+        out.failed = true;
+        setMessages((list) => list && list.map((x) => (x.id === id ? { ...x, id: localId, ack: null, pending: "failed" } : x)));
+      } else setMessages((list) => list && list.filter((x) => x.id !== id));
       setReplyTo((r) => (r?.id === id ? null : r));
     };
     window.addEventListener("inbox:message", onMessage);
@@ -1640,19 +1681,25 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     el?.scrollTo({ top: el.scrollHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   };
 
-  type Outgoing ={ text: string; quotedId?: string; quotedChat?: string; mentions: string[]; mentionAll?: boolean };
   const pendingSeq = useRef(0);
-  // Payload de cada bolha otimista, para "Tentar de novo".
-  const outbox = useRef(new Map<string, Outgoing>());
   const deliver = useCallback(
     async (localId: string) => {
       const out = outbox.current.get(localId);
       if (!out) return;
       const startedAt = Date.now();
+      out.failed = false;
+      // Ids reais que já ocuparam o lugar desta bolha (um por tentativa).
+      const realIds = () => [...claimed.current].filter(([, local]) => local === localId).map(([real]) => real);
+      const forget = () => {
+        outbox.current.delete(localId);
+        for (const real of realIds()) claimed.current.delete(real);
+      };
       setMessages((list) => list && list.map((x) => (x.id === localId ? { ...x, pending: "sending" } : x)));
       // Se a bolha já foi trocada pela real (SSE) ou a real já está no fim da conversa, some com a local.
       const settle = (fresh: Message[]) => {
-        const sent = fresh.some((x) => x.fromMe && x.text === out.text && x.at >= startedAt - 5_000);
+        // Pelo id quando o SSE já mostrou a real; o horário dela é o do WhatsApp, não serve sozinho de prova.
+        const real = realIds();
+        const sent = fresh.some((x) => real.includes(x.id) || (x.fromMe && x.text === out.text && x.at >= startedAt - 5_000));
         setMessages((list) => {
           if (!list) return list;
           const merged = mergeTail(list, fresh);
@@ -1671,7 +1718,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           timeout,
         ]);
         clearTimeout(timer);
-        outbox.current.delete(localId);
+        forget();
         onChat(updated);
         // A versão real chega pelo SSE e já substitui a bolha; se não chegou, recarrega o fim da conversa.
         setMessages((list) => list && list.filter((x) => x.id !== localId));
@@ -1682,15 +1729,24 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       } catch (e) {
         clearTimeout(timer);
         const sent = await api.messages(chat.jid).then(settle, () => false);
-        if (sent) {
-          outbox.current.delete(localId);
-          return;
+        if (sent) return forget();
+        const real = realIds();
+        if (!alive.current) {
+          // A real pode ter ficado no cache desta conversa (o aviso de remoção chegou com ela fechada).
+          const tail = tailCache.get(chat.jid);
+          if (tail) tailCache.set(chat.jid, tail.filter((x) => !real.includes(x.id)));
+          // Se já falhou com a conversa aberta, a saída dela levou o texto para o rascunho.
+          if (!out.failed) toDraft([out.text]);
+          forget();
+          return notify("error", `Mensagem para ${chat.name} não enviada; o texto voltou para o rascunho. ${(e as Error).message}`);
         }
-        setMessages((list) => list && list.map((x) => (x.id === localId && x.pending === "sending" ? { ...x, pending: "failed" } : x)));
+        out.failed = true;
+        // Também a real que o SSE pôs no lugar e o servidor já tirou (o aviso de remoção pode não ter chegado).
+        setMessages((list) => list && list.map((x) => ((x.id === localId && x.pending === "sending") || real.includes(x.id) ? { ...x, id: localId, ack: null, pending: "failed" } : x)));
         notify("error", `Mensagem não enviada. ${(e as Error).message}`);
       }
     },
-    [chat.jid, notify, onChat],
+    [chat.jid, chat.name, notify, onChat, toDraft],
   );
   const retry = useCallback((m: Message) => void deliver(m.id), [deliver]);
   const discard = useCallback((m: Message) => {
@@ -1766,6 +1822,12 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         const file = viewOnce && canViewOnce(a) ? { ...base, viewOnce: true } : base;
         onChat(await api.sendMedia(chat.jid, i === 0 && mediaQuotedId ? { ...file, quotedId: mediaQuotedId } : file));
         removeAttachment(a.id);
+        // Já foram: se um anexo seguinte falhar, "enviar" de novo não repete a legenda nem a citação.
+        if (i === captionAt && text) setDraft("");
+        if (i === 0) {
+          setReplyTo(null);
+          setReplyFrom(null);
+        }
       }
       setViewOnce(false);
       // Só figurinhas e havia texto: o texto fica no campo para ir como mensagem separada.

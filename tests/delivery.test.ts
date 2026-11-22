@@ -84,6 +84,42 @@ test("ack de outra stanza (reação, edição) não interfere", async () => {
   await waiting;
 });
 
+test("relógio do computador adiantado: o ack traz o horário do WhatsApp e a resposta do cliente fica depois", async () => {
+  const { store, wa, inner } = setup();
+  const real = Math.floor(Date.now() / 1000) - 600;
+  const updates: number[] = [];
+  wa.on("update", ({ message }) => updates.push(message.at));
+  // Enviada com o relógio local 5 min à frente do WhatsApp.
+  const waiting = inner.confirm({ key: { remoteJid: PN, fromMe: true, id: "F1" }, message: { conversation: "Pergunta" }, messageTimestamp: real + 300, status: 1 });
+  inner.applyAck({ id: "F1", from: PN, class: "message", t: String(real) });
+  await waiting;
+  assert.equal(store.getMessage(PN, "F1")?.at, real * 1000);
+  assert.deepEqual(updates, [real * 1000]);
+  // A resposta chega 30 s depois, com o horário do WhatsApp.
+  store.addMessage({ chatJid: PN, rawJid: PN, id: "F2", fromMe: false, at: (real + 30) * 1000, text: "Resposta", kind: "text" }, true);
+  assert.deepEqual(store.listMessages(PN, null).map((m) => m.id), ["F1", "F2"]);
+  assert.equal(store.getChat(PN)?.lastAt, (real + 30) * 1000);
+});
+
+test("relógio do computador atrasado: o horário do ack não passa de agora, como o das recebidas", async () => {
+  const { store, inner, sent } = setup();
+  const waiting = inner.confirm(sent("H1"));
+  const before = Date.now();
+  inner.applyAck({ id: "H1", from: PN, class: "message", t: String(Math.floor(Date.now() / 1000) + 300) });
+  await waiting;
+  const at = store.getMessage(PN, "H1")!.at;
+  assert.ok(at >= before && at <= Date.now(), `at=${at}`);
+});
+
+test("ack sem horário mantém o do envio", async () => {
+  const { store, inner, sent } = setup();
+  const waiting = inner.confirm(sent("G1"));
+  const before = store.getMessage(PN, "G1")?.at;
+  inner.applyAck({ id: "G1", from: PN, class: "message" });
+  await waiting;
+  assert.equal(store.getMessage(PN, "G1")?.at, before);
+});
+
 test("cada tentativa vira uma entrada de log, com sucesso ou erro", async () => {
   const { wa, inner } = setup();
   const entries: { kind: string; ok: boolean; error?: string; id?: string | null }[] = [];

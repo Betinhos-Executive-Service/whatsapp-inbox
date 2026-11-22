@@ -1051,7 +1051,10 @@ export class WhatsApp extends EventEmitter<{
     }
     const chatJid = waiting?.chatJid ?? (late?.key.remoteJid ? this.canonical(late.key.remoteJid, late.key.remoteJidAlt) : null);
     if (chatJid) {
-      const message = this.store.setAck(chatJid, id, SERVER_ACK);
+      // `t` é o horário do servidor para esta mensagem: passa a valer no lugar do relógio deste computador,
+      // com o mesmo limite das recebidas (nunca no futuro), para as duas seguirem a mesma régua.
+      const moved = Number(attrs.t) > 0 && this.store.setSentAt(chatJid, id, arrivalAt(attrs.t));
+      const message = this.store.setAck(chatJid, id, SERVER_ACK) ?? (moved ? this.store.getMessage(chatJid, id) : null);
       if (message) this.emit("update", { message, chat: this.store.getChat(chatJid)! });
     }
     if (waiting) {
