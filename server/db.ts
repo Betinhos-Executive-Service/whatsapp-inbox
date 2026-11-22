@@ -903,7 +903,7 @@ export class Store {
         `select f.chat_jid, f.id, m.at, m.from_me, snippet(messages_fts, 0, char(2), char(3), '…', 12) as snippet
          from messages_fts f join messages m on m.rowid = f.rowid
          where messages_fts match ? and m.deleted_at is null
-         order by m.at desc limit ?`,
+         order by m.at desc, m.rowid desc limit ?`,
       )
       .all(match, limit) as Row[];
     return rows.map((r) => ({ chatJid: String(r.chat_jid), id: String(r.id), at: Number(r.at), fromMe: r.from_me === 1, snippet: String(r.snippet) }));
@@ -1025,7 +1025,7 @@ export class Store {
 
   /** Favoritas de todas as conversas, mais recentes primeiro. */
   listStarred(limit = 300): Message[] {
-    const rows = this.q(`select ${MESSAGE_COLUMNS} from messages where starred = 1 and deleted_at is null order by at desc limit ?`).all(limit) as Row[];
+    const rows = this.q(`select ${MESSAGE_COLUMNS} from messages where starred = 1 and deleted_at is null order by at desc, rowid desc limit ?`).all(limit) as Row[];
     return rows.map((r) => this.decorate(String(r.chat_jid), [r])[0]);
   }
 
@@ -1240,6 +1240,18 @@ export class Store {
   }
 
   /** Status de entrega só avança (o recibo de "lida" pode chegar antes do de "entregue"). */
+  /**
+   * Horário que o WhatsApp deu a uma mensagem minha. Ela nasce com o relógio deste computador, que pode
+   * estar adiantado ou atrasado, e aí ficaria fora de ordem em relação às recebidas (que já vêm com o do WhatsApp).
+   */
+  setSentAt(chatJid: string, id: string, at: number): boolean {
+    return this.tx(() => {
+      const changed = this.q("update messages set at = ? where chat_jid = ? and id = ? and from_me = 1 and at <> ?").run(at, chatJid, id, at).changes > 0;
+      if (changed) this.refreshLast(chatJid);
+      return changed;
+    });
+  }
+
   setAck(chatJid: string, id: string, ack: number): Message | null {
     const changed = this
       .q("update messages set ack = ? where chat_jid = ? and id = ? and from_me = 1 and coalesce(ack, 0) < ?")

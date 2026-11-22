@@ -20,6 +20,7 @@ description: "Verifica o servidor local do WhatsApp Inbox (API HTTP, banco SQLit
 ## Casos de borda
 - Porta 38291 ocupada por instância anterior: `scripts/dev.mjs` encerra se o comando for `server/main.ts`; outro serviço → falha com PID.
 - Carimbo de hora do WhatsApp no futuro (relógio do contato ou deste PC adiantado): `arrivalAt` em `server/history.ts` grava `agora` e avisa no log uma vez por minuto; coberto em `tests/messages.test.ts` (helper) e `tests/timestamp.test.ts` (ingestão completa: áudio, reação e lote de histórico), sem WhatsApp.
+- Horário da mensagem enviada: nasce com o relógio deste PC e, no ack do WhatsApp (`applyAck`, atributo `t`), passa ao horário do servidor limitado a agora (`Store.setSentAt`); coberto em `tests/delivery.test.ts` (relógio adiantado, atrasado e ack sem `t`). Se o ack real traz `t`, só com WhatsApp real.
 - Chaves de sincronização do estado do app (arquivar, fixar, marcar como não lida): nomes em hex para não colidir por maiúscula no Windows; `tests/app-state-keys.test.ts` simula a pasta sem diferença de maiúscula. Pedido e resposta das chaves pelo celular só com WhatsApp real.
 - Depois de `preview_stop`, conferir com `netstat -ano | grep ":38291 .*LISTEN"`; o filho `node server/main.ts` pode sobrar e precisa de `taskkill /PID <pid> /T /F` (só se o comando for `server/main.ts`).
 
