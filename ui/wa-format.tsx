@@ -6,7 +6,7 @@ const MENTION = mentionPattern();
 
 const TAG = { b: "strong", i: "em", s: "s", code: "code", mono: "code" } as const;
 
-function inline(nodes: WaNode[], live: boolean, key = "", pattern = MENTION): ReactNode[] {
+function inline(nodes: WaNode[], live: boolean, key = "", pattern: RegExp | null = MENTION): ReactNode[] {
   return nodes.map((n, idx) => {
     const k = `${key}${idx}`;
     if (typeof n === "string") return <Fragment key={k}>{live ? n : linked(n, k, pattern)}</Fragment>;
@@ -25,7 +25,7 @@ function inline(nodes: WaNode[], live: boolean, key = "", pattern = MENTION): Re
 }
 
 /** Links clicáveis; abrem fora do app (navegador padrão). */
-function linked(text: string, key: string, pattern: RegExp): ReactNode {
+function linked(text: string, key: string, pattern: RegExp | null): ReactNode {
   const parts = splitLinks(text);
   if (parts.length === 1 && typeof parts[0] === "string") return mentioned(text, key, pattern);
   return parts.map((p, idx) =>
@@ -40,8 +40,8 @@ function linked(text: string, key: string, pattern: RegExp): ReactNode {
 }
 
 /** "@nome" e "@5511…" viram chip destacado, como no WhatsApp. */
-function mentioned(text: string, key: string, pattern: RegExp): ReactNode {
-  if (!text.includes("@")) return text;
+function mentioned(text: string, key: string, pattern: RegExp | null): ReactNode {
+  if (!pattern || !text.includes("@")) return text;
   const out: ReactNode[] = [];
   let last = 0;
   for (const m of text.matchAll(pattern)) {
@@ -100,7 +100,10 @@ export function WaLive({ text }: { text: string }) {
   return <>{inline(parseWa(text), true)}{"\n"}</>;
 }
 
-/** Só a formatação em linha — prévia da lista e citação. Quebras viram espaço: bloco ``` (pre-wrap) não pode furar o corte em uma linha. */
+/**
+ * Só a formatação em linha — prévia da lista e citação. Quebras viram espaço: bloco ``` (pre-wrap) não pode furar o corte em uma linha.
+ * Menção fica em texto simples, como no WhatsApp: sem a lista de participantes, "@tio juninho" viraria chip só em "@tio".
+ */
 export function WaInline({ text }: { text: string }) {
-  return <>{inline(parseWa(text.replace(/\s*\n\s*/g, " ")), false)}</>;
+  return <>{inline(parseWa(text.replace(/\s*\n\s*/g, " ")), false, "", null)}</>;
 }
