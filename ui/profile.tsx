@@ -6,7 +6,7 @@ import { api, type Chat, type Participant, type ParticipantAction, type Particip
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AddParticipantsDialog, GroupInfoDialog } from "./dialogs.tsx";
 import { loadBitmap } from "./image-editor/render.ts";
-import { base64 } from "./media.tsx";
+import { base64, PhotoViewer } from "./media.tsx";
 import { MediaSection, PersonaSection } from "./profile-sections.tsx";
 import { ResizeHandle } from "./resize.tsx";
 import { Button, Dialog, Menu, Select, Switch } from "./ds/index.ts";
@@ -103,6 +103,7 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, onConta
   const [adding, setAdding] = useState(false);
   const [savingEphemeral, setSavingEphemeral] = useState(false);
   const [savingPhoto, setSavingPhoto] = useState(false);
+  const [photo, setPhoto] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"closed" | "open" | "busy">("closed");
   const [exportMedia, setExportMedia] = useState(false);
   const photoInput = useRef<HTMLInputElement>(null);
@@ -279,7 +280,7 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, onConta
       <div className="notes__body">
         <div className="profile__hero">
           <span className="profile__photo">
-            <Avatar jid={current.jid} name={current.name} className="avatar--xl" full />
+            <Avatar jid={current.jid} name={current.name} className="avatar--xl" full onOpen={setPhoto} />
             {isChat && group?.meAdmin && connected && (
               <>
                 <Menu
@@ -540,6 +541,7 @@ export function ProfilePanel({ target, chat, connected, onClose, onChat, onConta
           onAdd={(jids) => changeParticipants("add", jids, jids.length > 1 ? `${jids.length} pessoas adicionadas.` : "Pessoa adicionada.")}
         />
       )}
+      {photo && <PhotoViewer src={photo} name={current.name} onClose={() => setPhoto(null)} />}
     </aside>
   );
 }
