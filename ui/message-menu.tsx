@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { mediaUrl, type Message } from "./api.ts";
 import { EmojiPicker, rememberEmoji } from "./emoji.tsx";
 import { canEdit, REACTIONS } from "./message-extras.tsx";
-import { canCopyMedia } from "./media.tsx";
+import { canCopyFiles, canCopyMedia } from "./media.tsx";
 
 /** Mensagem e ponto da tela onde o menu abre (clique direito ou botão "Mais opções"). */
 export type MenuAt = { message: Message; x: number; y: number };
@@ -14,6 +14,8 @@ export type MessageMenuActions = {
   onCopy: (m: Message) => void;
   /** Imagem como imagem; outros arquivos como arquivo (colar no Explorer, e-mail etc.). */
   onCopyMedia: (m: Message) => void;
+  /** Copia como arquivos (um ou o álbum inteiro), para colar em pasta, e-mail etc. */
+  onCopyFiles: (messages: Message[]) => void;
   /** Abre a visualização dentro do app, sem baixar. */
   onView: (m: Message) => void;
   /** Abre a imagem no editor; o resultado entra na bandeja de anexos desta conversa. */
@@ -46,7 +48,7 @@ const PIN_TIMES = [
 type Item = { id: string; label: string; icon: ReactNode; danger?: boolean; disabled?: boolean; href?: string; keep?: boolean; sub?: boolean; run?: () => void };
 
 /** Menu de contexto da mensagem, com as ações do WhatsApp. Fecha com Esc, clique fora ou rolagem. */
-export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateReply, actions, onClose }: {
+export function MessageMenu({ at, canAct, hasText, album, author, pinned, canPrivateReply, actions, onClose }: {
   /** Mensagem já fixada na conversa. */
   pinned: boolean;
   canPrivateReply: boolean;
@@ -55,6 +57,8 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
   canAct: boolean;
   /** Tem texto ou legenda para copiar. */
   hasText: boolean;
+  /** Álbum a que a mídia pertence, para copiar tudo de uma vez. */
+  album: Message[] | null;
   /** Autor em grupo (mensagem de outra pessoa). */
   author: { jid: string; name: string } | null;
   actions: MessageMenuActions;
@@ -85,6 +89,8 @@ export function MessageMenu({ at, canAct, hasText, author, pinned, canPrivateRep
         ...(m.media && canCopyMedia(m)
           ? [{ id: "copy-media", label: image ? "Copiar imagem" : "Copiar arquivo", icon: image ? <ImageIcon size={16} aria-hidden /> : <Copy size={16} aria-hidden />, run: () => actions.onCopyMedia(m) }]
           : []),
+        ...(image && canCopyFiles() ? [{ id: "copy-file", label: "Copiar como arquivo", icon: <Copy size={16} aria-hidden />, run: () => actions.onCopyFiles([m]) }] : []),
+        ...(album && canCopyFiles() ? [{ id: "copy-album", label: `Copiar álbum (${album.length} arquivos)`, icon: <Copy size={16} aria-hidden />, run: () => actions.onCopyFiles(album) }] : []),
         ...(viewable ? [{ id: "view", label: "Visualizar", icon: <Eye size={16} aria-hidden />, run: () => actions.onView(m) }] : []),
         ...(m.media?.type === "image" ? [{ id: "edit-image", label: "Editar e enviar", icon: <Brush size={16} aria-hidden />, disabled: !canAct, run: () => actions.onEditImage(m) }] : []),
         ...(m.media?.type === "image" ? [{ id: "to-sticker", label: "Enviar como figurinha", icon: <Sticker size={16} aria-hidden />, disabled: !canAct, run: () => actions.onSticker(m) }] : []),

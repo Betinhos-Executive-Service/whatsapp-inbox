@@ -26,6 +26,10 @@ export type DesktopBridge = {
   setUnread: (total: number, image: string | null) => void;
   /** Põe o arquivo da mídia na área de transferência (colar no Explorer, e-mail etc.). */
   copyFile: (chatJid: string, id: string) => Promise<void>;
+  /** Vários arquivos de uma vez (seleção, álbum), com o texto junto em outro formato. Ausente em versões antigas. */
+  copyFiles?: (items: Array<{ chatJid: string; id: string }>, text?: string) => Promise<void>;
+  /** Deixa a mídia e a cópia de arquivo prontas antes do clique (menu ou visualizador aberto). */
+  warmCopy?: (chatJid: string, id: string) => void;
   /** Põe a imagem na área de transferência pelo sistema (cola em qualquer app); false se o formato não é suportado. Ausente em versões antigas. */
   copyImage?: (chatJid: string, id: string) => Promise<boolean>;
   /** Abre a mídia no app padrão do computador, sem salvar em Downloads. */

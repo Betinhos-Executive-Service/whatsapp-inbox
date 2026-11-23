@@ -84,7 +84,7 @@ import { ResizeHandle } from "./resize.tsx";
 import { ImageEditor } from "./image-editor/ImageEditor.tsx";
 import { canEditImage } from "./image-editor/model.ts";
 import { dragAutoScroll, hasFiles, tray, useFileDrag, useSpringLoad, useTrayCount } from "./file-drag.ts";
-import { AttachmentTray, canViewOnce, clock, copyMedia, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, snapshotFile, toAttachment, useRecorder, viewMedia, type Attachment, AlbumView } from "./media.tsx";
+import { AttachmentTray, canCopyFiles, canViewOnce, clock, copyMedia, copyMediaFiles, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, snapshotFile, toAttachment, useRecorder, viewMedia, warmCopy, type Attachment, AlbumView } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
@@ -2037,6 +2037,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       ),
     [notify],
   );
+  const copyFiles = useCallback(
+    (list: Message[]) =>
+      void copyMediaFiles(list).then(
+        (done) => notify("success", done),
+        (e: Error) => notify("error", e.message),
+      ),
+    [notify],
+  );
   const editImage = useCallback(
     async (m: Message) => {
       try {
@@ -2097,6 +2105,18 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
       const { author, body } = splitAuthor(m, chat.isGroup);
       return { author: m.fromMe ? "Você" : (chat.isGroup ? author : chat.name) ?? "Participante", text: m.media ? body : captionOf(m, body) };
     });
+    // Com mídia na seleção, vão os arquivos (colar em pasta, e-mail, outro chat); o texto segue junto se houver.
+    if (canCopyFiles() && selectedMessages.some((m) => m.media)) {
+      const hasText = selectedMessages.some((m) => !m.media || captionOf(m, splitAuthor(m, chat.isGroup).body));
+      void copyMediaFiles(selectedMessages, hasText ? text : "").then(
+        (done) => {
+          notify("success", done);
+          setSelected(null);
+        },
+        (e: Error) => notify("error", e.message),
+      );
+      return;
+    }
     void navigator.clipboard.writeText(text).then(
       () => {
         notify("success", selectedMessages.length === 1 ? "Mensagem copiada." : `${selectedMessages.length} mensagens copiadas.`);
@@ -2182,7 +2202,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     [chat.jid, notify, onOpen],
   );
   const [menuAt, setMenuAt] = useState<MenuAt | null>(null);
-  const openMenu = useCallback((message: Message, x: number, y: number) => setMenuAt({ message, x, y }), []);
+  const openMenu = useCallback((message: Message, x: number, y: number) => {
+    warmCopy(message);
+    setMenuAt({ message, x, y });
+  }, []);
+  const menuAlbum = useMemo(() => {
+    const m = menuAt?.message;
+    if (!m?.media || !messages) return null;
+    for (const album of groupAlbums(messages).albums.values()) if (album.some((x) => x.id === m.id)) return album;
+    return null;
+  }, [menuAt, messages]);
   const closeMenu = useCallback(() => setMenuAt(null), []);
   const edit = useCallback((m: Message) => {
     setReplyTo(null);
@@ -2588,6 +2617,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           at={menuAt}
           canAct={connected}
           hasText={!menuAt.message.deleted && !!captionOf(menuAt.message, splitAuthor(menuAt.message, chat.isGroup).body)}
+          album={menuAlbum}
           author={
             chat.isGroup && !menuAt.message.fromMe && menuAt.message.sender
               ? { jid: menuAt.message.sender, name: splitAuthor(menuAt.message, true).author ?? "participante" }
@@ -2595,7 +2625,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
           }
           pinned={chat.pins.some((p) => p.id === menuAt.message.id && p.until > Date.now())}
           canPrivateReply={chat.isGroup && !menuAt.message.fromMe && !!menuAt.message.sender}
-          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onView: viewMedia, onEditImage: (m) => void editImage(m), onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect, onInfo: setInfoFor, onSticker: (m) => void stickerFromMessage(m) }}
+          actions={{ onReply: reply, onReact: react, onCopy: copy, onCopyMedia: copyFile, onCopyFiles: copyFiles, onView: viewMedia, onEditImage: (m) => void editImage(m), onForward: forward, onEdit: edit, onDelete: askDelete, onAuthor: showAuthor, onStar: (m) => void star(m), onPin: (m, seconds) => void pin(m, seconds), onPrivateReply, onSelect: startSelect, onInfo: setInfoFor, onSticker: (m) => void stickerFromMessage(m) }}
           onClose={closeMenu}
         />
       )}
