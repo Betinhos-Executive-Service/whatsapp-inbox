@@ -51,7 +51,7 @@ import {
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { priorityLevel, priorityScore } from "./priority.ts";
-import { mediaUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type Presence, type QuickReply, type SearchHit, type Status, type Priority } from "./api.ts";
+import { mediaUrl, photoUrl, api, type OutgoingMedia, type AppState, type Chat, type ChatPatch, type Connection, type Message, type Participant, type Presence, type QuickReply, type SearchHit, type Status, type Priority } from "./api.ts";
 import { ChatItemMenu, drafts, isMuted, useDraft, isSnoozed, MessageHits, ShortcutsDialog, untilLabel } from "./organize.tsx";
 import { Avatar, refreshAvatars } from "./avatar.tsx";
 import { AiQuickPicker } from "./ai-quick.tsx";
@@ -84,7 +84,7 @@ import { ResizeHandle } from "./resize.tsx";
 import { ImageEditor } from "./image-editor/ImageEditor.tsx";
 import { canEditImage } from "./image-editor/model.ts";
 import { dragAutoScroll, hasFiles, tray, useFileDrag, useSpringLoad, useTrayCount } from "./file-drag.ts";
-import { AttachmentTray, canCopyFiles, canViewOnce, clock, copyMedia, copyMediaFiles, fileToOutgoing, MAX_ATTACHMENT, MediaView, RecordingBar, snapshotFile, toAttachment, useRecorder, viewMedia, warmCopy, type Attachment, AlbumView } from "./media.tsx";
+import { AttachmentTray, canCopyFiles, canViewOnce, clock, copyMedia, copyMediaFiles, fileToOutgoing, MAX_ATTACHMENT, MediaView, PhotoViewer, RecordingBar, snapshotFile, toAttachment, useRecorder, viewMedia, warmCopy, type Attachment, AlbumView } from "./media.tsx";
 import { aiName, isAiReady, publishAi, useAiStatus, useUsdBrl } from "./ai-state.ts";
 import { fillQuickReply, quickQuery, QuickReplyMenu } from "./quick.tsx";
 import { convertEmoticon, EmojiButton, EmojiShortcutMenu, emojiQuery, insertAt, insertEmojiShortcut, rememberEmoji, searchEmoji, undoEmoticon, useEmojiData, type EmoticonSwap } from "./emoji.tsx";
@@ -276,6 +276,7 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
   // Prioridade só por cor: faixa à esquerda (vermelha = alta, âmbar = média, nenhuma = baixa).
   const priority = displayPriority(chat);
   const labels = [chat.label, ...chat.extraLabels].filter((l): l is string => !!l);
+  const [photo, setPhoto] = useState(false);
   // Rascunho não enviado toma o lugar da prévia, como no WhatsApp; na conversa aberta ele já está no campo.
   const draft = useDraft(chat.jid).trim();
   const showDraft = !!draft && !selected;
@@ -288,9 +289,11 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
         aria-current={selected ? "true" : undefined}
         // Arrastando um arquivo, parar sobre a conversa abre ela (a aberta não precisa).
         data-spring={selected ? undefined : chat.jid}
-        onClick={() => {
+        onClick={(e) => {
           onPeek(null);
-          onOpen(chat.jid);
+          // Clique na foto (já carregada) amplia; no resto da linha, abre a conversa.
+          if ((e.target as HTMLElement).matches(".avatar__img[data-loaded]")) setPhoto(true);
+          else onOpen(chat.jid);
         }}
         onMouseEnter={(e) => onPeek(chat.jid, e.currentTarget)}
         onMouseLeave={() => onPeek(null)}
@@ -377,6 +380,7 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
           </button>
         ))}
       </span>
+      {photo && <PhotoViewer src={photoUrl(chat.jid, true)} name={chat.name} onClose={() => setPhoto(false)} />}
     </li>
   );
 });

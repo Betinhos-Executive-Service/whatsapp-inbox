@@ -1078,6 +1078,7 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 
 /* ---- foto de perfil: a imagem cobre as iniciais quando carrega */
 .avatar { position: relative; overflow: hidden; }
+.chat-item .avatar__img[data-loaded] { cursor: zoom-in; }
 .avatar--button { padding: 0; border: 0; font: inherit; cursor: zoom-in; }
 .avatar--button:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--bt-color-surface), 0 0 0 4px var(--bt-focus-border); }
 .avatar__img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity var(--bt-duration-normal) var(--bt-ease-out); }
