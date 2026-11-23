@@ -19,14 +19,17 @@ const subscribe = (fn: () => void) => {
   return () => void listeners.delete(fn);
 };
 
-/** Foto de perfil com as iniciais por baixo: sem foto, privada ou offline, ficam as iniciais. */
-export const Avatar = memo(function Avatar({ jid, name, className = "", full = false }: { jid: string | null; name: string; className?: string; full?: boolean }) {
+/**
+ * Foto de perfil com as iniciais por baixo: sem foto, privada ou offline, ficam as iniciais.
+ * Com `onOpen`, a foto carregada vira botão (abre em tela cheia); só iniciais continua inerte.
+ */
+export const Avatar = memo(function Avatar({ jid, name, className = "", full = false, onOpen }: { jid: string | null; name: string; className?: string; full?: boolean; onOpen?: (src: string) => void }) {
   const v = useSyncExternalStore(subscribe, () => version);
   const [loaded, setLoaded] = useState<string | null>(null);
   const src = jid ? photoUrl(jid, full, v) : null;
   const show = !!jid && !!src && !missing.has(jid);
-  return (
-    <span className={`avatar ${className}`} aria-hidden>
+  const content = (
+    <>
       {initials(name)}
       {show && (
         <img
@@ -45,6 +48,17 @@ export const Avatar = memo(function Avatar({ jid, name, className = "", full = f
           }}
         />
       )}
+    </>
+  );
+  if (onOpen && src && show && loaded === src)
+    return (
+      <button type="button" className={`avatar avatar--button ${className}`} aria-label={`Ver foto de ${name} em tela cheia`} title="Ver foto" onClick={() => onOpen(src)}>
+        {content}
+      </button>
+    );
+  return (
+    <span className={`avatar ${className}`} aria-hidden>
+      {content}
     </span>
   );
 });

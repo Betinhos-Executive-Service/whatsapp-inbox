@@ -276,6 +276,12 @@ export const senderLabel = (m: Message, chatName?: string) => (m.fromMe ? "Você
 
 const isTyping = (t: EventTarget | null) => t instanceof HTMLElement && !!t.closest("input, textarea, select, video, audio, [contenteditable]");
 
+/** Clique no fundo do palco (fora da imagem/documento) fecha o visualizador. */
+const closeOnBackdrop = (onClose: () => void) => (e: React.MouseEvent<HTMLDivElement>) => {
+  const t = e.target as HTMLElement;
+  if (t === e.currentTarget || t.classList.contains("zoomable") || t.classList.contains("viewer-shell__center")) onClose();
+};
+
 /**
  * Visualizador em tela cheia: barra fixa em cima, palco que ocupa o resto sem rolar, rodapé opcional (miniaturas).
  * Clique no fundo fecha; setas navegam; Ctrl+C copia (se não houver texto selecionado).
@@ -346,10 +352,7 @@ export function ViewerShell({ m, label, title, meta, onClose, onKey, nav, extra,
       </header>
       <div
         className="viewer-shell__stage"
-        onClick={(e) => {
-          const t = e.target as HTMLElement;
-          if (t === e.currentTarget || t.classList.contains("zoomable") || t.classList.contains("viewer-shell__center")) onClose();
-        }}
+        onClick={closeOnBackdrop(onClose)}
       >
         {children}
         {nav && (
@@ -562,6 +565,43 @@ function DocCard({ m }: { m: Message }) {
         </a>
       </div>
       {viewing && <FileViewer m={m} onClose={closeViewer} />}
+    </div>
+  );
+}
+
+/** Foto de perfil ou do grupo em tela cheia, com zoom. Clique no fundo ou Esc fecha. */
+export function PhotoViewer({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  const zoomable = useRef<ZoomableImageHandle>(null);
+  useDialog(panel, close, onClose);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isTyping(e.target) && zoomable.current?.key(e)) e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  return (
+    <div ref={panel} className="viewer-shell" role="dialog" aria-modal="true" aria-label={`Foto de ${name}`}>
+      <header className="viewer-shell__bar">
+        <div className="viewer-shell__info">
+          <strong title={name}>{name}</strong>
+          <span>Foto do perfil</span>
+        </div>
+        <div className="viewer-shell__actions">
+          <a className="viewer-shell__action" href={src} download={`${name}.jpg`} title="Baixar">
+            <Download size={16} aria-hidden />
+            <span>Baixar</span>
+          </a>
+          <button ref={close} type="button" className="viewer-shell__action viewer-shell__close" aria-label="Fechar (Esc)" title="Fechar (Esc)" onClick={onClose}>
+            <X size={18} aria-hidden />
+          </button>
+        </div>
+      </header>
+      <div className="viewer-shell__stage" onClick={closeOnBackdrop(onClose)}>
+        <ZoomableImage ref={zoomable} src={src} alt={`Foto de ${name}`} />
+      </div>
     </div>
   );
 }
