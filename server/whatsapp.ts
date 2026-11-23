@@ -167,6 +167,25 @@ function quoteText(ref: MessageKeyRef): string {
   return i > 0 && i <= 60 ? ref.text.slice(i + 2) : ref.text;
 }
 
+/**
+ * Mensagem mínima para a citação: chave + texto.
+ * - Mesma conversa: a chave usa o jid de destino. Com o `rawJid` em LID e o envio para o número,
+ *   o Baileys gravava `contextInfo.remoteJid` e o WhatsApp do outro lado tratava como citação de
+ *   outra conversa, sem mostrar a mensagem citada.
+ * - Sua mensagem em grupo com LID: o autor citado vai como o seu LID (o Baileys usaria o número).
+ */
+export function quotedOption(jid: string, ref: MessageKeyRef | null | undefined): { quoted: WAMessage } | undefined {
+  if (!ref) return undefined;
+  const remoteJid = ref.chatJid === jid ? jid : ref.rawJid;
+  const myLid = ref.fromMe && ref.participant?.endsWith("@lid") ? ref.participant : null;
+  return {
+    quoted: {
+      key: { remoteJid, id: ref.id, fromMe: myLid ? false : ref.fromMe, ...(ref.participant ? { participant: ref.participant } : {}) },
+      message: { conversation: quoteText(ref) },
+    },
+  };
+}
+
 export class WhatsApp extends EventEmitter<{
   connection: [ConnectionState];
   message: [{ message: Message; chat: Chat; live: boolean }];
@@ -1113,21 +1132,10 @@ export class WhatsApp extends EventEmitter<{
     return sent;
   }
 
-  /** Mensagem mínima para a citação: chave + texto. */
-  private quoted(ref: MessageKeyRef | null | undefined): { quoted: WAMessage } | undefined {
-    if (!ref) return undefined;
-    return {
-      quoted: {
-        key: { remoteJid: ref.rawJid, id: ref.id, fromMe: ref.fromMe, ...(ref.participant ? { participant: ref.participant } : {}) },
-        message: { conversation: quoteText(ref) },
-      },
-    };
-  }
-
   /** Citação e, com mensagens temporárias ligadas, o prazo (a mensagem some como as do celular). */
   private sendOptions(jid: string, quoted?: MessageKeyRef | null) {
     const ephemeral = this.store.getChat(jid)?.ephemeral;
-    return { ...this.quoted(quoted), ...(ephemeral ? { ephemeralExpiration: ephemeral } : {}) };
+    return { ...quotedOption(jid, quoted), ...(ephemeral ? { ephemeralExpiration: ephemeral } : {}) };
   }
 
   /** Texto. Só resolve depois do ack do servidor; devolve o id enviado. */

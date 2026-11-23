@@ -178,7 +178,7 @@ export type PollResult = { options: { name: string; count: number; mine: boolean
 export type QuotedRef = { id: string; text: string; fromMe: boolean; author: string | null };
 
 /** O que o servidor precisa para citar ou apagar uma mensagem no WhatsApp. */
-export type MessageKeyRef = { id: string; rawJid: string; fromMe: boolean; participant: string | null; text: string; at: number };
+export type MessageKeyRef = { chatJid: string; id: string; rawJid: string; fromMe: boolean; participant: string | null; text: string; at: number };
 
 /** Correção sua de etiqueta, usada como exemplo nas próximas classificações do Jev. */
 export type LabelExample = { label: string; snippet: string };
@@ -1096,7 +1096,7 @@ export class Store {
       .q("select id, raw_jid, from_me, participant, case when deleted_at is null then text else ? end as text, at from messages where chat_jid = ? and id = ?")
       .get(DELETED_TEXT, jid, id) as Row | undefined;
     if (!r) return null;
-    return { id: String(r.id), rawJid: String(r.raw_jid), fromMe: r.from_me === 1, participant: (r.participant as string) ?? null, text: String(r.text), at: Number(r.at) };
+    return { chatJid: jid, id: String(r.id), rawJid: String(r.raw_jid), fromMe: r.from_me === 1, participant: (r.participant as string) ?? null, text: String(r.text), at: Number(r.at) };
   }
 
   /** Última mensagem da conversa: o WhatsApp exige ao arquivar, para sincronizar com o celular. */
