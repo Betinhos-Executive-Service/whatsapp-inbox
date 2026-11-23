@@ -264,10 +264,12 @@ function Snippet({ text }: { text: string }) {
 }
 
 /** Mensagens achadas na busca, abaixo das conversas. */
-export function MessageHits({ hits, chats, loading, onOpen }: {
+export function MessageHits({ hits, chats, loading, active, onOpen }: {
   hits: SearchHit[];
   chats: Map<string, Chat>;
   loading: boolean;
+  /** `jid/id` do resultado aberto agora. */
+  active: string | null;
   onOpen: (jid: string, id: string) => void;
 }) {
   const list = hits.filter((h) => chats.has(h.chatJid));
@@ -282,7 +284,7 @@ export function MessageHits({ hits, chats, loading, onOpen }: {
         <ul className="chat-list">
           {list.map((h) => (
             <li key={`${h.chatJid}/${h.id}`}>
-              <button type="button" className="chat-item message-hit" onClick={() => onOpen(h.chatJid, h.id)}>
+              <button type="button" className="chat-item message-hit" aria-current={active === `${h.chatJid}/${h.id}` ? "true" : undefined} title="Mostrar na conversa" onClick={() => onOpen(h.chatJid, h.id)}>
                 <span className="chat-item__body">
                   <span className="chat-item__row">
                     <span className="chat-item__name">{chats.get(h.chatJid)!.name}</span>

@@ -385,6 +385,33 @@ const ChatItem = memo(function ChatItem({ chat, selected, onOpen, onMenu, onPeek
   );
 });
 
+/** Trechos com `query` (sem acento nem caixa) no texto das bolhas dentro de `root`. */
+function termRanges(root: HTMLElement, query: string): Range[] {
+  const q = normalize(query);
+  const ranges: Range[] = [];
+  for (const p of root.querySelectorAll<HTMLElement>(".bubble__text")) {
+    const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+      const raw = node.data;
+      // Normaliza letra a letra para manter a posição no texto original.
+      let flat = "";
+      const pos: number[] = [];
+      for (let i = 0; i < raw.length; i++) {
+        const n = normalize(raw[i]);
+        for (let k = 0; k < n.length; k++) pos.push(i);
+        flat += n;
+      }
+      for (let at = flat.indexOf(q); at !== -1 && ranges.length < 500; at = flat.indexOf(q, at + q.length)) {
+        const r = document.createRange();
+        r.setStart(node, pos[at]);
+        r.setEnd(node, pos[at + q.length - 1] + 1);
+        ranges.push(r);
+      }
+    }
+  }
+  return ranges;
+}
+
 /** Texto de busca já normalizado, uma vez por versão da conversa (objeto novo a cada mudança). */
 const searchCache = new WeakMap<Chat, string>();
 function searchText(c: Chat): string {
@@ -399,8 +426,10 @@ function ChatList(props: {
   labels: string[];
   selected: string | null;
   onOpen: (jid: string) => void;
-  /** Abre a conversa já na mensagem achada pela busca. */
-  onOpenAt: (jid: string, id: string) => void;
+  /** Abre a conversa já na mensagem achada pela busca (`query` abre a pesquisa da conversa com o termo). */
+  onOpenAt: (jid: string, id: string, query?: string) => void;
+  /** Mensagem aberta pela busca, para marcar o resultado na lista. */
+  focusId: string | null;
   /** Ordem que está na tela, para os atalhos de próxima/anterior. */
   onVisible: (jids: string[]) => void;
   connection: Connection;
@@ -721,7 +750,7 @@ function ChatList(props: {
             Mostrar mais {Math.min(PAGE, filtered.length - limit)}
           </Button>
         )}
-        {messageQuery && <MessageHits hits={hits} chats={props.byJid} loading={hitsLoading} onOpen={props.onOpenAt} />}
+        {messageQuery && <MessageHits hits={hits} chats={props.byJid} loading={hitsLoading} active={props.selected && props.focusId ? `${props.selected}/${props.focusId}` : null} onOpen={(jid, id) => props.onOpenAt(jid, id, messageQuery)} />}
       </div>
       {peek && peekChat && <ChatPeek key={peek.jid} chat={peekChat} anchor={peek.rect} />}
       {menu && menuChat && <ChatItemMenu chat={menuChat} x={menu.x} y={menu.y} onChange={(patch) => props.onPatch(menuChat.jid, patch)} onClose={closeMenu} />}
@@ -1173,8 +1202,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   chat: Chat;
   /** Abre outra conversa (ex.: "Conversar" de um cartão de contato). */
   onOpen: (chat: Chat) => void;
-  /** Mensagem para abrir em destaque (vinda da busca); `seq` força reabrir a mesma. */
-  focus: { id: string; seq: number } | null;
+  /** Mensagem para abrir em destaque (vinda da busca); `seq` força reabrir a mesma; `query` abre a pesquisa da conversa com o termo. */
+  focus: { id: string; seq: number; query?: string } | null;
   /** Avisar ao contato que você está digitando (preferência). */
   sendTyping: boolean;
   onSetupAi: () => void;
@@ -1188,6 +1217,8 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   onChat: (chat: Chat) => void;
 }) {
   const [messages, setMessages] = useState<Message[] | null>(null);
+  const messagesRef = useRef<Message[] | null>(null);
+  messagesRef.current = messages;
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [draft, setDraft] = useState("");
@@ -1418,6 +1449,11 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   );
 
   useEffect(() => {
+    // Outro resultado da busca nesta mesma conversa e já carregado: só rola até ele, sem recarregar a lista.
+    if (focus && messagesRef.current?.some((x) => x.id === focus.id)) {
+      jump(focus.id);
+      return;
+    }
     let alive = true;
     // Sem não lidas, reabre na hora com o que já tinha; com não lidas, a faixa precisa da versão do servidor.
     const cached = !focus && unreadAtOpen <= 0 ? tailCache.get(chat.jid) : undefined;
@@ -2282,6 +2318,19 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const [findHits, setFindHits] = useState<string[]>([]);
   const [findLoading, setFindLoading] = useState(false);
   const findInput = useRef<HTMLInputElement>(null);
+  // Veio da busca geral: abre a pesquisa da conversa com o mesmo termo, posicionada no resultado clicado.
+  const findTarget = useRef<string | null>(null);
+  const findHitsRef = useRef<string[]>([]);
+  findHitsRef.current = findHits;
+  useEffect(() => {
+    if (!focus?.query) return;
+    setFindOpen(true);
+    // Mesmo termo já pesquisado (outro resultado da mesma conversa): só muda a posição.
+    const at = findHitsRef.current.indexOf(focus.id);
+    if (at >= 0) return setFindIndex(at);
+    findTarget.current = focus.id;
+    setFindQuery(focus.query);
+  }, [focus]);
   useEffect(() => {
     const q = findQuery.trim();
     setFindIndex(0);
@@ -2295,7 +2344,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     const timer = window.setTimeout(() => {
       api
         .searchInChat(chat.jid, q)
-        .then((hits) => alive && setFindHits(hits.map((h) => h.id))) // mais recente primeiro, como no WhatsApp
+        .then((hits) => {
+          if (!alive) return;
+          const ids = hits.map((h) => h.id); // mais recente primeiro, como no WhatsApp
+          const at = findTarget.current ? ids.indexOf(findTarget.current) : -1;
+          findTarget.current = null;
+          setFindIndex(Math.max(at, 0));
+          setFindHits(ids);
+        })
         .catch((e: Error) => alive && notify("error", `Busca não concluída. ${e.message}`))
         .finally(() => alive && setFindLoading(false));
     }, 250);
@@ -2305,6 +2361,16 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
     };
   }, [findQuery, findOpen, chat.jid, notify]);
   const hitId = findOpen ? (findHits[Math.min(findIndex, findHits.length - 1)] ?? null) : null;
+  // Termo pesquisado marcado no texto das mensagens carregadas (CSS Custom Highlight, sem mexer no DOM).
+  useEffect(() => {
+    const q = findOpen ? findQuery.trim() : "";
+    const el = scroller.current;
+    if (!q || !el) return;
+    const ranges = termRanges(el, q);
+    if (!ranges.length || typeof Highlight === "undefined" || !CSS.highlights) return;
+    CSS.highlights.set("chat-find", new Highlight(...ranges));
+    return () => void CSS.highlights.delete("chat-find");
+  }, [findOpen, findQuery, messages]);
   useEffect(() => {
     if (!hitId) return;
     const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(hitId)}"]`);
@@ -2337,11 +2403,12 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const jump = useCallback(
     (id: string) => {
       const row = scroller.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
-      if (!row) return notify("error", "A mensagem respondida é mais antiga. Use Carregar mensagens anteriores.");
+      // Fora do que está carregado: recarrega em volta dela (o useLayoutEffect rola e destaca).
+      if (!row) return void openAround(id).catch(() => notify("error", "Não foi possível abrir essa mensagem. Ela pode não estar salva neste computador."));
       row.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
       flashRow(id, "message-row--flash");
     },
-    [notify, flashRow],
+    [notify, flashRow, openAround],
   );
   const confirmDelete = async (mode: "everyone" | "me") => {
     if (!deleting) return;
@@ -2959,7 +3026,7 @@ function App() {
   const [chats, setChats] = useState<Map<string, Chat>>(new Map());
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
-  const [focus, setFocus] = useState<{ id: string; seq: number } | null>(null);
+  const [focus, setFocus] = useState<{ id: string; seq: number; query?: string } | null>(null);
   const [privateReply, setPrivateReply] = useState<PrivateReply | null>(null);
   const [dialog, setDialog] = useState<"new-group" | "starred" | null>(null);
   const [contactsOpen, setContactsOpen] = useState(false);
@@ -2973,9 +3040,9 @@ function App() {
     setPrivateReply(null);
     setSelected(jid);
   }, []);
-  const openAt = useCallback((jid: string, id: string) => {
+  const openAt = useCallback((jid: string, id: string, query?: string) => {
     setSelected(jid);
-    setFocus((f) => ({ id, seq: (f?.seq ?? 0) + 1 }));
+    setFocus((f) => ({ id, seq: (f?.seq ?? 0) + 1, query }));
   }, []);
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
@@ -3358,6 +3425,7 @@ function App() {
             selected={selected}
             onOpen={openChat}
             onOpenAt={openAt}
+            focusId={focus?.id ?? null}
             onVisible={onVisible}
             connection={connection}
             online={online}
