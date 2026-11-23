@@ -15,7 +15,8 @@ import type { ConnectionState } from "../server/whatsapp.ts";
 import { addAccount, isRemovableDir, loadAccounts, MAX_ACCOUNTS, removeAccount, renameAccount, saveAccounts, setActive, type Account, type Registry } from "./accounts.ts";
 import { roundAvatar } from "./avatar.ts";
 import { MCP_SERVER_ARG, setAutostart } from "./linux.ts";
-import { mediaToTemp, safeFileName } from "./files.ts";
+import { bundlePaths, mediaToTemp, safeFileName } from "./files.ts";
+import { copyFilesToClipboard, warmFileClipboard } from "./clipboard-files.ts";
 import { isUrgent, notificationBody, notificationTitle, UnreadCounter } from "./notifications.ts";
 import type { RailAccount } from "./rail/rail.ts";
 import { setupUpdates } from "./updates.ts";
@@ -512,6 +513,9 @@ function sendToAll(channel: string, ...args: unknown[]) {
   for (const inst of instances.values()) inst.view.webContents.send(channel, ...args);
 }
 
+/** Limite de arquivos numa cópia só. */
+const MAX_COPY_FILES = 100;
+
 function setupIpc() {
   // Soltou um arquivo vindo de outro app: a janela vem para a frente e o campo de texto recebe o foco.
   ipcMain.on("app:focus", (event) => {
@@ -533,9 +537,26 @@ function setupIpc() {
     if (typeof chatJid !== "string" || typeof id !== "string" || !chatJid || !id) throw new Error("Mensagem inválida.");
     return mediaToTemp(inst.origin, chatJid, id, join(app.getPath("temp"), PRODUCT, inst.account.id));
   };
-  ipcMain.handle("media:copy-file", async (event, chatJid: unknown, id: unknown) => {
-    const path = await mediaFile(event, chatJid, id);
-    await copyFileToClipboard(path);
+  // Um arquivo ou vários de uma vez (seleção, álbum). O texto vai junto para quem cola em campo de texto.
+  ipcMain.handle("media:copy-files", async (event, items: unknown, text: unknown) => {
+    if (!Array.isArray(items) || !items.length || items.length > MAX_COPY_FILES) throw new Error(`Copie de 1 a ${MAX_COPY_FILES} arquivos por vez.`);
+    warmFileClipboard();
+    const list = items as Array<{ chatJid?: unknown; id?: unknown } | null>;
+    const paths = new Array<string>(list.length);
+    let next = 0;
+    // Poucos por vez: mídia ainda não baixada vem do WhatsApp.
+    const worker = async () => {
+      for (let i = next++; i < list.length; i = next++) paths[i] = await mediaFile(event, list[i]?.chatJid, list[i]?.id);
+    };
+    await Promise.all(Array.from({ length: Math.min(4, list.length) }, worker));
+    await copyFilesToClipboard(await bundlePaths(paths), typeof text === "string" ? text : "");
+  });
+  // Menu ou visualizador aberto numa mídia: o arquivo e o ajudante de cópia ficam prontos antes do clique.
+  ipcMain.on("media:warm", (event, chatJid: unknown, id: unknown) => {
+    warmFileClipboard();
+    void Promise.resolve()
+      .then(() => mediaFile(event, chatJid, id))
+      .catch(() => undefined);
   });
   // PNG e JPEG vão pela área de transferência nativa; WebP (figurinha) o nativeImage não lê e a página converte.
   ipcMain.handle("media:copy-image", async (event, chatJid: unknown, id: unknown) => {
@@ -710,38 +731,6 @@ function mcpEntry() {
   const env = { INBOX_MCP_FILE: mcpFile() };
   if (appImage) return { command: appImage, args: [MCP_SERVER_ARG], env };
   return { command: process.execPath, args: [join(app.getAppPath(), "dist-electron", "mcp.mjs")], env: { ...env, ELECTRON_RUN_AS_NODE: "1" } };
-}
-
-/**
- * Lista de arquivos (CF_HDROP) na área de transferência do Windows, a mesma do Ctrl+C no Explorer.
- * O Electron só grava texto e imagem; o caminho vai por variável de ambiente, nunca no comando.
- */
-function copyFileToClipboard(path: string): Promise<void> {
-  if (linux) return copyFileToClipboardLinux(path);
-  return new Promise((resolve, reject) => {
-    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Set-Clipboard -LiteralPath $env:INBOX_CLIPBOARD_FILE"], {
-      env: { ...process.env, INBOX_CLIPBOARD_FILE: path },
-      windowsHide: true,
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
-    child.on("error", reject);
-    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`Não foi possível copiar o arquivo. ${stderr.trim()}`.trim()))));
-  });
-}
-
-/** Linux: text/uri-list (o que o gerenciador de arquivos cola) pelo wl-copy no Wayland ou xclip no X11. */
-function copyFileToClipboardLinux(path: string): Promise<void> {
-  const [cmd, ...args] = process.env.WAYLAND_DISPLAY ? ["wl-copy", "--type", "text/uri-list"] : ["xclip", "-selection", "clipboard", "-t", "text/uri-list"];
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ["pipe", "ignore", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
-    child.stdin.end(`${pathToFileURL(path).href}\r\n`);
-    child.on("error", (error: NodeJS.ErrnoException) => reject(error.code === "ENOENT" ? new Error(`Para copiar arquivo no Linux, instale o ${cmd}.`) : error));
-    child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`Não foi possível copiar o arquivo. ${stderr.trim()}`.trim()))));
-  });
 }
 
 function buildTrayMenu() {

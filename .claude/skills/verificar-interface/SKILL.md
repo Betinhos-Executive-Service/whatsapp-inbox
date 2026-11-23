@@ -49,3 +49,8 @@ description: "Verifica a interface do WhatsApp Inbox no navegador, sem WhatsApp:
 - Botão Claude (Analisar/Agendar) chama o Claude Code e o Dataverse PROD: não clicar.
 - A tecla `?` pelo emulador de teclado não chega; para a lista de atalhos, disparar `window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }))` e conferir o `<dialog>` "Atalhos de teclado".
 - App desktop (bandeja, notificações, atualização) não roda no navegador.
+
+## Copiar arquivos (menu, álbum e seleção)
+- Só aparece com a ponte do app desktop. No Chromium headless, injete um `window.desktop` falso com `addInitScript` (`copyFile`, `copyFiles`, `copyImage`, `warmCopy` gravando as chamadas) e intercepte `GET /api/chats/*/messages*` para pôr `media` em três mensagens (um documento e duas imagens com o mesmo `media.album`) e `GET /api/media/**` devolvendo um PNG.
+- Esperado: botão direito na foto do álbum mostra "Copiar imagem", "Copiar como arquivo" e "Copiar álbum (2 arquivos)"; abrir o menu chama `warmCopy`; "Copiar álbum" chama `copyFiles` com os dois ids e o toast "2 arquivos copiados. Cole com Ctrl+V onde quiser."; na seleção com mídia, "Copiar" chama `copyFiles` (com o texto junto quando há legenda ou mensagem de texto).
+- A gravação real na área de transferência (Windows: PowerShell que fica aberto, `desktop/clipboard-files.ts`) só se prova no Windows: copiar e conferir com `[Windows.Forms.Clipboard]::GetFileDropList()`. Não entra nos testes automáticos porque troca a área de transferência de quem roda.

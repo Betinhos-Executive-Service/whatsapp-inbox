@@ -185,6 +185,26 @@ export async function copyMedia(m: Message): Promise<string> {
   return "Arquivo copiado. Cole com Ctrl+V onde quiser.";
 }
 
+/** Dá para copiar vários arquivos de uma vez (só no app desktop). */
+export const canCopyFiles = () => !!desktop()?.copyFiles;
+
+/** Copia as mídias como arquivos, todas juntas; `text` vai junto para quem cola num campo de texto. */
+export async function copyMediaFiles(messages: Message[], text = ""): Promise<string> {
+  const bridge = desktop();
+  const items = messages.filter((m) => m.media && !m.deleted).map((m) => ({ chatJid: m.chatJid, id: m.id }));
+  if (!bridge?.copyFiles) throw new Error("Copiar arquivo só funciona no app desktop. Use Baixar.");
+  if (!items.length) throw new Error("Nenhum arquivo para copiar.");
+  await bridge.copyFiles(items, text).catch((e: unknown) => {
+    throw new Error(bridgeError(e));
+  });
+  return items.length === 1 ? "Arquivo copiado. Cole com Ctrl+V onde quiser." : `${items.length} arquivos copiados. Cole com Ctrl+V onde quiser.`;
+}
+
+/** Menu ou visualizador aberto numa mídia: adianta o download e a cópia de arquivo. */
+export const warmCopy = (m: Message) => {
+  if (m.media && !m.deleted) desktop()?.warmCopy?.(m.chatJid, m.id);
+};
+
 /** Pede a uma bolha de mídia que abra a própria visualização (menu de contexto). */
 export const viewMedia = (m: Message) => window.dispatchEvent(new CustomEvent("inbox:view-media", { detail: { chatJid: m.chatJid, id: m.id } }));
 
@@ -305,6 +325,7 @@ export function ViewerShell({ m, label, title, meta, onClose, onKey, nav, extra,
   const copyable = canCopyMedia(m);
   const image = m.media?.type === "image" || m.media?.type === "sticker";
   useDialog(panel, close, onClose);
+  useEffect(() => warmCopy(m), [m]);
   const keys = useRef({ copy: copy.run, copyable, onKey, nav });
   keys.current = { copy: copy.run, copyable, onKey, nav };
   useEffect(() => {
