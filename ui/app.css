@@ -1179,8 +1179,14 @@ body.is-resizing iframe, body.is-resizing video { pointer-events: none; }
 .message-row .bubble { transition: box-shadow var(--bt-duration-fast) ease; }
 .message-row--target .bubble { box-shadow: 0 0 0 2px var(--bt-focus-border); }
 .message-row--hit .bubble { box-shadow: 0 0 0 2px var(--bt-color-action); }
-.message-row--flash .bubble { animation: message-flash 1.4s var(--bt-ease-out); }
-@keyframes message-flash { 0%, 40% { box-shadow: 0 0 0 3px var(--bt-focus-border); } 100% { box-shadow: 0 0 0 3px transparent; } }
+/* mensagem aberta pela busca ou citação: pulsa no fundo da linha para o olho achar */
+.message-row--flash { animation: message-row-flash 2.2s var(--bt-ease-out); }
+.message-row--flash .bubble { animation: message-flash 2.2s var(--bt-ease-out); }
+@keyframes message-flash { 0%, 50% { box-shadow: 0 0 0 3px var(--bt-focus-border); } 100% { box-shadow: 0 0 0 3px transparent; } }
+@keyframes message-row-flash { 0%, 50% { background-color: var(--bt-color-action-soft); } 100% { background-color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .message-row--flash, .message-row--flash .bubble { animation-duration: 0.01s; } }
+/* termo pesquisado (Ctrl+F ou vindo da busca geral) marcado no texto */
+::highlight(chat-find) { background-color: color-mix(in srgb, var(--bt-color-amber-700) 38%, transparent); color: var(--bt-color-text-primary); }
 
 /* autor em grupo: nome e foto abrem o perfil */
 .author-button { flex: 0 0 auto; padding: 0; border: 0; border-radius: var(--bt-radius-full); background: transparent; cursor: pointer; }
