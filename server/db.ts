@@ -162,7 +162,8 @@ export type Message = {
   /** Só nas enviadas: 1 pendente, 2 no servidor, 3 entregue, 4 lida, 5 ouvida (proto.WebMessageInfo.Status). */
   ack: number | null;
   editedAt: number | null;
-  reactions: { emoji: string; fromMe: boolean }[];
+  /** `name`: quem reagiu ("Você" nas minhas). */
+  reactions: { emoji: string; fromMe: boolean; name: string }[];
   /** Enquete, localização, contato, evento, convite, ligação ou prévia de link (sem segredos). */
   extra: Extra | null;
   /** Só em enquete: votos somados por opção. */
@@ -954,7 +955,7 @@ export class Store {
         if (!picked.length) continue;
         voters++;
         const voter = String(v.voter);
-        const name = voter === "me" ? "Você" : (this.contactName(voter) ?? (phoneOf(voter) ? `+${phoneOf(voter)}` : "Participante"));
+        const name = this.personName(voter);
         for (const o of options) {
           if (!picked.includes(o.name)) continue;
           o.count++;
@@ -1186,9 +1187,20 @@ export class Store {
     for (const r of rows) {
       const id = String(r.message_id);
       if (!out.has(id)) out.set(id, []);
-      out.get(id)!.push({ emoji: String(r.emoji), fromMe: r.sender === "me" });
+      const sender = String(r.sender);
+      out.get(id)!.push({ emoji: String(r.emoji), fromMe: sender === "me", name: this.personName(sender) });
     }
     return out;
+  }
+
+  /** Nome de quem reagiu ou votou: "Você", o nome do contato (também pelo número de um LID), o número ou "Participante". */
+  private personName(jid: string): string {
+    if (jid === "me") return "Você";
+    const pn = jid.endsWith("@lid") ? this.pnForLid(jid) : null;
+    const name = this.contactName(jid) ?? (pn ? this.contactName(pn) : null);
+    if (name) return name;
+    const phone = phoneOf(pn ?? jid);
+    return phone ? `+${phone}` : "Participante";
   }
 
   /** Texto sem o "Autor: " que os grupos levam na frente. */

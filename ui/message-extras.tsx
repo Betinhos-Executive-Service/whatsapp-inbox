@@ -25,32 +25,79 @@ export function AckIcon({ ack }: { ack: number | null }) {
   );
 }
 
-/** Reações agrupadas por emoji; a minha fica destacada e sai com um clique. */
+/** "Ana", "Ana e Bruno", "Ana, Bruno e Você". */
+const joinNames = (names: string[]) => (names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} e ${names[names.length - 1]}`);
+
+/**
+ * Reações agrupadas por emoji; a minha fica destacada. Passar o mouse mostra quem reagiu;
+ * clicar abre a lista de quem reagiu com o quê, e ali a minha sai com um clique, como no WhatsApp.
+ */
 export function ReactionList({ m, onReact }: { m: Message; onReact: (m: Message, emoji: string) => void }) {
+  const [open, setOpen] = useState(false);
   if (!m.reactions.length) return null;
-  const groups = new Map<string, { count: number; mine: boolean }>();
+  const groups = new Map<string, { names: string[]; mine: boolean }>();
   for (const r of m.reactions) {
-    const g = groups.get(r.emoji) ?? { count: 0, mine: false };
-    groups.set(r.emoji, { count: g.count + 1, mine: g.mine || r.fromMe });
+    const g = groups.get(r.emoji) ?? { names: [], mine: false };
+    groups.set(r.emoji, { names: [...g.names, r.name], mine: g.mine || r.fromMe });
   }
+  // Minha reação primeiro, depois na ordem em que chegaram.
+  const people = [...m.reactions].sort((a, b) => Number(b.fromMe) - Number(a.fromMe));
   return (
-    <ul className="reactions" aria-label="Reações">
-      {[...groups].map(([emoji, g]) => (
-        <li key={emoji}>
-          <button
-            type="button"
-            className={`reaction${g.mine ? " reaction--mine" : ""}`}
-            aria-label={g.mine ? `Tirar sua reação ${emoji}` : `${emoji}, ${g.count} ${g.count === 1 ? "reação" : "reações"}`}
-            title={g.mine ? "Tirar sua reação" : undefined}
-            disabled={!g.mine}
-            onClick={() => onReact(m, "")}
-          >
-            <span aria-hidden>{emoji}</span>
-            {g.count > 1 && <span className="reaction__count">{g.count}</span>}
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div
+      className="reactions-wrap"
+      onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}
+      onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+    >
+      <ul className="reactions" aria-label="Reações">
+        {[...groups].map(([emoji, g]) => (
+          <li key={emoji}>
+            <button
+              type="button"
+              className={`reaction${g.mine ? " reaction--mine" : ""}`}
+              aria-label={`${emoji}: ${joinNames(g.names)}. Ver quem reagiu`}
+              aria-expanded={open}
+              title={joinNames(g.names)}
+              onClick={() => setOpen((v) => !v)}
+            >
+              <span aria-hidden>{emoji}</span>
+              {g.names.length > 1 && <span className="reaction__count">{g.names.length}</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {open && (
+        <div className="reactors" role="dialog" aria-label={`${m.reactions.length} ${m.reactions.length === 1 ? "reação" : "reações"}`}>
+          <ul className="reactors__list">
+            {people.map((r, i) => (
+              <li key={`${r.name}-${i}`} className="reactors__item">
+                {r.fromMe ? (
+                  <button
+                    type="button"
+                    className="reactors__row reactors__row--mine"
+                    autoFocus
+                    onClick={() => {
+                      setOpen(false);
+                      onReact(m, "");
+                    }}
+                  >
+                    <span className="reactors__name">
+                      Você
+                      <span className="reactors__hint">Clique para remover</span>
+                    </span>
+                    <span className="reactors__emoji" aria-hidden>{r.emoji}</span>
+                  </button>
+                ) : (
+                  <span className="reactors__row">
+                    <span className="reactors__name">{r.name}</span>
+                    <span className="reactors__emoji">{r.emoji}</span>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 

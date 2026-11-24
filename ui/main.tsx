@@ -2105,7 +2105,7 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
   const replaceMessage = (updated: Message) => setMessages((list) => list && list.map((x) => (x.id === updated.id ? updated : x)));
   const react = useCallback(
     async (m: Message, emoji: string) => {
-      const reactions = [...m.reactions.filter((r) => !r.fromMe), ...(emoji ? [{ emoji, fromMe: true }] : [])];
+      const reactions = [...m.reactions.filter((r) => !r.fromMe), ...(emoji ? [{ emoji, fromMe: true, name: "Você" }] : [])];
       setMessages((list) => list && list.map((x) => (x.id === m.id ? { ...x, reactions } : x)));
       if (emoji) requestAnimationFrame(() => flashRow(m.id, "message-row--reacted"));
       try {

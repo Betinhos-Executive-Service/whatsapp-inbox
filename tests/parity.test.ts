@@ -79,11 +79,23 @@ test("reações: uma por pessoa, trocar e tirar", () => {
   s.setReaction(PN, "a", "me", "❤️", 2);
   s.setReaction(PN, "a", PN, "😂", 3);
   assert.deepEqual(s.getMessage(PN, "a")?.reactions, [
-    { emoji: "❤️", fromMe: true },
-    { emoji: "😂", fromMe: false },
+    { emoji: "❤️", fromMe: true, name: "Você" },
+    { emoji: "😂", fromMe: false, name: "+5511999990000" },
   ]);
   s.setReaction(PN, "a", "me", "");
-  assert.deepEqual(s.listMessages(PN, null)[0].reactions, [{ emoji: "😂", fromMe: false }]);
+  assert.deepEqual(s.listMessages(PN, null)[0].reactions, [{ emoji: "😂", fromMe: false, name: "+5511999990000" }]);
+});
+
+test("reações mostram quem reagiu: contato salvo, LID pelo número, desconhecido", () => {
+  const s = new Store(":memory:");
+  s.addMessage(msg({ chatJid: GROUP, rawJid: GROUP, participant: PN, id: "g", text: "Ana: oi" }), true);
+  s.setNames(PN, { saved: "Ana" });
+  s.setNames("5511888880000@s.whatsapp.net", { push: "Bruno" });
+  s.mapLid("123@lid", "5511888880000@s.whatsapp.net");
+  s.setReaction(GROUP, "g", PN, "👍", 1);
+  s.setReaction(GROUP, "g", "123@lid", "👍", 2);
+  s.setReaction(GROUP, "g", "999@lid", "😂", 3);
+  assert.deepEqual(s.getMessage(GROUP, "g")?.reactions.map((r) => r.name), ["Ana", "Bruno", "Participante"]);
 });
 
 test("markRead devolve exatamente as não lidas, mesmo fora de ordem", () => {
