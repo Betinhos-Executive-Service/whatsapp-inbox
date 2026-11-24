@@ -16,6 +16,7 @@ import makeWASocket, {
   proto,
   S_WHATSAPP_NET,
   useMultiFileAuthState,
+  type BaileysEventMap,
   type WACallEvent,
   type WAMessage,
   type WASocket,
@@ -160,6 +161,17 @@ const STUB = { CREATE: 20, SUBJECT: 21, ICON: 22, DESCRIPTION: 24, RESTRICT: 25,
 const joinNames = (names: string[]) => (names.length <= 1 ? (names[0] ?? "alguém") : `${names.slice(0, -1).join(", ")} e ${names[names.length - 1]}`);
 const timestamp = (m: { messageTimestamp?: unknown }) => arrivalAt(m.messageTimestamp);
 
+/** Aplica `fn` a cada item; o que falhar fica no log e não interrompe os demais (lote do histórico). */
+function eachSafe<T>(what: string, list: Iterable<T>, fn: (item: T) => void) {
+  for (const item of list) {
+    try {
+      fn(item);
+    } catch (error) {
+      process.stderr.write(`[whatsapp] ${what} do histórico não foi gravado(a): ${error instanceof Error ? error.message : error}\n`);
+    }
+  }
+}
+
 /** Em grupo, o texto salvo começa com "Autor: "; na citação vai só o conteúdo. */
 function quoteText(ref: MessageKeyRef): string {
   if (!ref.participant || ref.fromMe) return ref.text;
@@ -188,7 +200,8 @@ export function quotedOption(jid: string, ref: MessageKeyRef | null | undefined)
 
 export class WhatsApp extends EventEmitter<{
   connection: [ConnectionState];
-  message: [{ message: Message; chat: Chat; live: boolean }];
+  /** `offline`: veio da fila acumulada enquanto o app estava fechado; conta como não lida, mas não avisa. */
+  message: [{ message: Message; chat: Chat; live: boolean; offline?: boolean }];
   /** Mensagem existente mudou: apagada para todos, editada, reação ou status de entrega. */
   update: [{ message: Message; chat: Chat }];
   chat: [Chat];
@@ -302,6 +315,32 @@ export class WhatsApp extends EventEmitter<{
     return isLiveArrival(live, at, this.store.getChat(chatJid)?.lastAt, LIVE_WINDOW_MS);
   }
 
+  /**
+   * Lote de mensagens (fila offline ao reabrir, histórico): a que falhar fica no log e não leva as
+   * demais junto. Antes, um erro numa mensagem parava o laço e o resto do lote se perdia (o WhatsApp
+   * já tinha recebido a confirmação e não entrega de novo).
+   */
+  private ingestAll(list: WAMessage[], live: boolean, quiet = false, offline = false): number {
+    let failed = 0;
+    this.offlineBatch = offline;
+    try {
+      for (const m of list) {
+        try {
+          this.ingest(m, live, quiet);
+        } catch (error) {
+          failed++;
+          process.stderr.write(`[whatsapp] mensagem ${m.key?.id ?? "?"} de ${m.key?.remoteJid ?? "?"} não foi gravada: ${error instanceof Error ? (error.stack ?? error.message) : error}\n`);
+        }
+      }
+    } finally {
+      this.offlineBatch = false;
+    }
+    return failed;
+  }
+
+  /** Durante `ingestAll` da fila offline: as mensagens emitidas levam `offline` e não viram notificação. */
+  private offlineBatch = false;
+
   /** `quiet`: lote do histórico; a tela recarrega uma vez no fim, sem um evento por mensagem. */
   private ingest(m: WAMessage, live: boolean, quiet = false) {
     const raw = m.key.remoteJid;
@@ -312,6 +351,12 @@ export class WhatsApp extends EventEmitter<{
     if (!isConversation(raw) || !m.key.id) return;
     const chatJid = this.canonical(raw, m.key.remoteJidAlt);
     if (!m.message && !viewOnce) {
+      // Não decifrou: o Baileys pede reenvio e, se vier, chega de novo com o mesmo id. Fica no log para
+      // diagnosticar mensagem que não apareceu.
+      if (m.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT) {
+        process.stderr.write(`[whatsapp] mensagem ${m.key.id} de ${chatJid} não decifrou (${m.messageStubParameters?.[0] ?? "sem motivo"}); aguardando reenvio\n`);
+        return;
+      }
       // Sem conteúdo: avisos do grupo (entrou, saiu, mudou o nome…) e ligação perdida.
       if (m.messageStubType) this.ingestStub(m, chatJid, live, quiet);
       return;
@@ -377,7 +422,7 @@ export class WhatsApp extends EventEmitter<{
     }
     const result = this.store.addMessage(incoming, isLive);
     if (!group && !m.key.fromMe && m.pushName) this.store.setNames(chatJid, { push: m.pushName });
-    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive });
+    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive, offline: this.offlineBatch });
   }
 
   /** Aviso na conversa (fixou, temporárias, entrou no grupo…): não conta como não lida. */
@@ -399,7 +444,7 @@ export class WhatsApp extends EventEmitter<{
     const isLive = this.isLive(chatJid, at, live);
     if (quiet) return void this.store.insertMessage(incoming, isLive);
     const result = this.store.addMessage(incoming, isLive);
-    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive && kind === "call" });
+    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive && kind === "call", offline: this.offlineBatch });
   }
 
   /** Quem fez a ação: "Você", o autor no grupo ou o contato. */
@@ -587,7 +632,7 @@ export class WhatsApp extends EventEmitter<{
       if (updated) return this.emit("update", updated);
       const incoming: IncomingMessage = { chatJid, id, rawJid: from, fromMe: false, at, text: callText(call), kind: "call", extra, silent: !missed };
       const result = this.store.addMessage(incoming, !c.offline);
-      if (result) this.emit("message", { ...result, live: !c.offline && missed });
+      if (result) this.emit("message", { ...result, live: !c.offline && missed, offline: !!c.offline });
     };
     switch (c.status) {
       case "offer": {
@@ -712,10 +757,24 @@ export class WhatsApp extends EventEmitter<{
       },
     });
     this.sock = sock;
+    // O Baileys repassa os eventos acumulados (a fila offline inteira ao reabrir) num laço sem proteção:
+    // um erro num tratador interrompia o laço e os eventos seguintes do lote nunca chegavam.
+    const on = <E extends keyof BaileysEventMap>(event: E, handler: (arg: BaileysEventMap[E]) => unknown) => {
+      const fail = (error: unknown) =>
+        process.stderr.write(`[whatsapp] erro ao tratar ${event}: ${error instanceof Error ? (error.stack ?? error.message) : error}\n`);
+      sock.ev.on(event, (arg) => {
+        try {
+          const result = handler(arg);
+          if (result instanceof Promise) result.catch(fail);
+        } catch (error) {
+          fail(error);
+        }
+      });
+    };
     // Ack do servidor para cada stanza enviada. O Baileys só trata o ack com erro; o ack bom (um tique) fica conosco.
     (sock.ws as unknown as EventEmitter).on("CB:ack,class:message", (node: { attrs: Record<string, string | undefined> }) => this.applyAck(node.attrs));
 
-    sock.ev.on("creds.update", (update) => {
+    on("creds.update", (update) => {
       // Logo depois de ler o QR o número já é conhecido, antes do histórico chegar.
       if (update.me?.id) this.checkAccount(jidNormalizedUser(update.me.id));
       if (update.accountSettings) this.store.keepArchived = !update.accountSettings.unarchiveChats;
@@ -727,7 +786,7 @@ export class WhatsApp extends EventEmitter<{
       }
     });
 
-    sock.ev.on("connection.update", async (u) => {
+    on("connection.update", async (u) => {
       if (u.qr) {
         this.setState({ status: "qr", qr: await QRCode.toDataURL(u.qr, { margin: 1, width: 280 }) });
       }
@@ -774,12 +833,12 @@ export class WhatsApp extends EventEmitter<{
       }
     });
 
-    sock.ev.on("messaging-history.set", ({ chats, contacts, messages, lidPnMappings }) => {
+    on("messaging-history.set", ({ chats, contacts, messages, lidPnMappings }) => {
       // Uma transação para o lote inteiro: milhares de gravações sem um commit (fsync) cada.
       this.store.tx(() => {
-        for (const map of lidPnMappings ?? []) this.learnLid(map.lid, map.pn);
-        for (const c of chats) {
-          if (!isConversation(c.id)) continue;
+        eachSafe("vínculo LID", lidPnMappings ?? [], (map) => this.learnLid(map.lid, map.pn));
+        eachSafe("conversa", chats, (c) => {
+          if (!isConversation(c.id)) return;
           const jid = this.canonical(c.id, c.pnJid);
           const unread = Number(c.unreadCount ?? 0);
           this.store.ensureChat(jid, { status: unread > 0 ? "aberta" : "resolvida", unread: Math.max(0, unread) });
@@ -789,16 +848,16 @@ export class WhatsApp extends EventEmitter<{
           if (c.pinned && !this.store.getChat(jid)?.pinnedAt) this.store.updateChat(jid, { pinned: true });
           if (c.ephemeralExpiration != null) this.store.setEphemeral(jid, Number(c.ephemeralExpiration) || null);
           if (c.markedAsUnread) this.store.updateChat(jid, { markedUnread: true });
-        }
-        for (const contact of contacts) this.applyContact(contact);
+        });
+        eachSafe("contato", contacts, (contact) => this.applyContact(contact));
         // Cronológico: o lote vem da mais nova para a mais antiga e o rowid desempata o mesmo segundo.
-        for (const m of chronological(messages)) this.ingest(m, false, true);
+        this.ingestAll(chronological(messages), false, true);
       });
       this.emit("reload");
     });
 
     // Mudanças feitas no celular: arquivar (ou desarquivar por mensagem nova), marcar como lida/não lida, temporárias.
-    sock.ev.on("chats.update", (list) => {
+    on("chats.update", (list) => {
       for (const u of list) {
         if (!u.id || !isConversation(u.id)) continue;
         const jid = this.canonical(u.id);
@@ -836,30 +895,31 @@ export class WhatsApp extends EventEmitter<{
         if (chat && chat.lastAt > 0) this.emit("chat", chat);
       }
     });
-    sock.ev.on("call", (list) => list.forEach((c) => this.onCall(c)));
-    sock.ev.on("blocklist.set", ({ blocklist }) => {
+    on("call", (list) => list.forEach((c) => this.onCall(c)));
+    on("blocklist.set", ({ blocklist }) => {
       this.blocked = new Set(blocklist.map((j) => this.canonical(j)));
     });
-    sock.ev.on("blocklist.update", ({ blocklist, type }) => {
+    on("blocklist.update", ({ blocklist, type }) => {
       for (const j of blocklist) {
         if (type === "add") this.blocked.add(this.canonical(j));
         else this.blocked.delete(this.canonical(j));
       }
     });
-    sock.ev.on("groups.upsert", (list) => list.forEach((g) => this.setGroupName(g.id, g.subject)));
-    sock.ev.on("groups.update", (list) => list.forEach((g) => this.setGroupName(g.id, g.subject)));
-    sock.ev.on("lid-mapping.update", (map) => this.learnLid(map.lid, map.pn));
-    sock.ev.on("contacts.upsert", (list) => list.forEach((c) => this.applyContact(c)));
-    sock.ev.on("contacts.update", (list) => list.forEach((c) => this.applyContact(c)));
-    sock.ev.on("messages.upsert", ({ messages, type }) => {
-      for (const m of messages) this.ingest(m, type === "notify" || type === "append");
+    on("groups.upsert", (list) => list.forEach((g) => this.setGroupName(g.id, g.subject)));
+    on("groups.update", (list) => list.forEach((g) => this.setGroupName(g.id, g.subject)));
+    on("lid-mapping.update", (map) => this.learnLid(map.lid, map.pn));
+    on("contacts.upsert", (list) => list.forEach((c) => this.applyContact(c)));
+    on("contacts.update", (list) => list.forEach((c) => this.applyContact(c)));
+    on("messages.upsert", ({ messages, type }) => {
+      // "append" = fila offline (o que chegou com o app fechado) ou reenvio atrasado: conta como não lida, sem notificar.
+      this.ingestAll(messages, type === "notify" || type === "append", false, type === "append");
     });
-    sock.ev.on("presence.update", ({ id, presences }) => {
+    on("presence.update", ({ id, presences }) => {
       if (!isConversation(id)) return;
       this.emit("presence", { jid: this.canonical(id), ...presenceOf(presences, isJidGroup(id) === true) });
     });
     // Recibos das minhas mensagens (entregue, lida, ouvida), estrela dada no celular e edição.
-    sock.ev.on("messages.update", (list) => {
+    on("messages.update", (list) => {
       const readElsewhere = new Map<string, string[]>();
       for (const { key, update } of list) {
         if (!key.id || !isConversation(key.remoteJid)) continue;
@@ -881,17 +941,17 @@ export class WhatsApp extends EventEmitter<{
       for (const [chatJid, ids] of readElsewhere) this.readElsewhere(chatJid, ids);
     });
     // Etiquetas do WhatsApp Business: definições e associações mudadas no celular (e o eco das nossas).
-    sock.ev.on("labels.edit", (label) => {
+    on("labels.edit", (label) => {
       if (this.store.applyWaLabel(label)) this.emit("reload");
     });
-    sock.ev.on("labels.association", ({ type, association }) => {
+    on("labels.association", ({ type, association }) => {
       if (association.type !== "label_jid") return;
       const jid = this.canonical(association.chatId);
       const chat = this.store.applyWaAssociation(jid, association.labelId, type === "add");
       if (chat) this.emit("chat", chat);
     });
     // Recibos por participante (só grupos): quem recebeu, leu ou ouviu cada mensagem minha. Em 1:1 vem só o status acima.
-    sock.ev.on("message-receipt.update", (list) => {
+    on("message-receipt.update", (list) => {
       for (const { key, receipt } of list) {
         const remote = key.remoteJid;
         // Em grupo, a leitura feita no celular chega como recibo com o meu próprio número.
