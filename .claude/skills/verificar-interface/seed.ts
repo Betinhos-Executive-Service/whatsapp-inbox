@@ -52,6 +52,13 @@ for (const c of chats) {
   if (c.status) s.updateChat(c.jid, { status: c.status });
   if (c.pinned) s.updateChat(c.jid, { pinned: true });
 }
+// Reações no grupo ("OS 4471 está sem motorista ainda"): 👍 de um contato salvo e minha, 😮 de alguém fora da agenda.
+const grupo = "120363000000000001@g.us";
+s.setNames("5511990000010@s.whatsapp.net", { saved: "Paulo Souza" });
+const os = s.listMessages(grupo, null).find((x) => x.text.includes("OS 4471"))!;
+s.setReaction(grupo, os.id, "5511990000010@s.whatsapp.net", "👍", now - 25 * min);
+s.setReaction(grupo, os.id, "me", "👍", now - 24 * min);
+s.setReaction(grupo, os.id, "5511990000099@s.whatsapp.net", "😮", now - 23 * min);
 // Volume: 60 conversas resolvidas para testar rolagem.
 for (let i = 0; i < 60; i++) {
   const jid = `55119910${String(i).padStart(5, "0")}@s.whatsapp.net`;

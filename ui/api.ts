@@ -206,7 +206,8 @@ export type Message = {
   /** Só nas enviadas: 1 pendente, 2 enviada, 3 entregue, 4 lida, 5 ouvida. */
   ack: number | null;
   editedAt: number | null;
-  reactions: { emoji: string; fromMe: boolean }[];
+  /** `name`: quem reagiu ("Você" nas minhas). */
+  reactions: { emoji: string; fromMe: boolean; name: string }[];
   extra: Extra | null;
   /** Só em enquete: votos somados por opção. */
   poll: PollResult | null;
