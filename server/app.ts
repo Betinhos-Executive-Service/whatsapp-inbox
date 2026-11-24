@@ -489,7 +489,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     client.on("delivery", (entry) => deliveryLog.record(entry));
     client.on("presence", (p) => broadcast("presence", p));
     client.on("reload", () => broadcast("reload", null));
-    client.on("message", ({ message, chat, live }) => {
+    client.on("message", ({ message, chat, live, offline }) => {
       broadcast("message", { message, chat });
       if (live && !message.fromMe) {
         // Ligação e avisos não mudam o assunto da conversa: não pedem classificação.
@@ -512,7 +512,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
             .catch((error: Error) => console.warn(`Transcrição automática falhou: ${error.message}`));
         }
         // Silenciada ou mantida no arquivo: chega e conta como não lida, só não avisa (como no WhatsApp).
-        if (!chat.archived && (!chat.mutedUntil || chat.mutedUntil <= Date.now())) options.onIncoming?.(chat, message);
+        // Fila offline (app reaberto): entra como não lida, sem uma notificação por mensagem que já passou.
+        if (!offline && !chat.archived && (!chat.mutedUntil || chat.mutedUntil <= Date.now())) options.onIncoming?.(chat, message);
       }
     });
     wa = client;

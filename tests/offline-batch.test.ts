@@ -9,7 +9,7 @@ import { WhatsApp } from "../server/whatsapp.ts";
 const PN = "5512999990000@s.whatsapp.net";
 
 /** Caminho que o socket real percorre ao entregar a fila offline (messages.upsert com várias mensagens). */
-type Inner = { ingestAll(list: unknown[], live: boolean, quiet?: boolean): number };
+type Inner = { ingestAll(list: unknown[], live: boolean, quiet?: boolean, offline?: boolean): number };
 
 const setup = () => {
   const dir = mkdtempSync(join(tmpdir(), "inbox-offline-"));
@@ -44,4 +44,19 @@ test("mensagem que não decifrou não grava nada e vai para o log", () => {
   stderr.mock.restore();
   assert.equal(store.getMessage(PN, "X"), null);
   assert.ok(lines.some((l) => l.includes("X") && l.includes("não decifrou")));
+});
+
+test("fila offline (append) conta como não lida mas sai marcada como offline, sem virar notificação", () => {
+  const { store, wa, inner } = setup();
+  const events: { id: string; live: boolean; offline?: boolean }[] = [];
+  wa.on("message", ({ message, live, offline }) => events.push({ id: message.id, live, offline }));
+  const at = nowSec() - 3600;
+  inner.ingestAll([text("O1", "enquanto fechado", at), text("O2", "outra", at + 5)], true, false, true);
+  inner.ingestAll([text("N1", "agora", nowSec())], true);
+  assert.deepEqual(events, [
+    { id: "O1", live: true, offline: true },
+    { id: "O2", live: true, offline: true },
+    { id: "N1", live: true, offline: false },
+  ]);
+  assert.equal(store.getChat(PN)!.unread, 3);
 });

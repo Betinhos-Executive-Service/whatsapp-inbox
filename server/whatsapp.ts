@@ -200,7 +200,8 @@ export function quotedOption(jid: string, ref: MessageKeyRef | null | undefined)
 
 export class WhatsApp extends EventEmitter<{
   connection: [ConnectionState];
-  message: [{ message: Message; chat: Chat; live: boolean }];
+  /** `offline`: veio da fila acumulada enquanto o app estava fechado; conta como não lida, mas não avisa. */
+  message: [{ message: Message; chat: Chat; live: boolean; offline?: boolean }];
   /** Mensagem existente mudou: apagada para todos, editada, reação ou status de entrega. */
   update: [{ message: Message; chat: Chat }];
   chat: [Chat];
@@ -319,18 +320,26 @@ export class WhatsApp extends EventEmitter<{
    * demais junto. Antes, um erro numa mensagem parava o laço e o resto do lote se perdia (o WhatsApp
    * já tinha recebido a confirmação e não entrega de novo).
    */
-  private ingestAll(list: WAMessage[], live: boolean, quiet = false): number {
+  private ingestAll(list: WAMessage[], live: boolean, quiet = false, offline = false): number {
     let failed = 0;
-    for (const m of list) {
-      try {
-        this.ingest(m, live, quiet);
-      } catch (error) {
-        failed++;
-        process.stderr.write(`[whatsapp] mensagem ${m.key?.id ?? "?"} de ${m.key?.remoteJid ?? "?"} não foi gravada: ${error instanceof Error ? (error.stack ?? error.message) : error}\n`);
+    this.offlineBatch = offline;
+    try {
+      for (const m of list) {
+        try {
+          this.ingest(m, live, quiet);
+        } catch (error) {
+          failed++;
+          process.stderr.write(`[whatsapp] mensagem ${m.key?.id ?? "?"} de ${m.key?.remoteJid ?? "?"} não foi gravada: ${error instanceof Error ? (error.stack ?? error.message) : error}\n`);
+        }
       }
+    } finally {
+      this.offlineBatch = false;
     }
     return failed;
   }
+
+  /** Durante `ingestAll` da fila offline: as mensagens emitidas levam `offline` e não viram notificação. */
+  private offlineBatch = false;
 
   /** `quiet`: lote do histórico; a tela recarrega uma vez no fim, sem um evento por mensagem. */
   private ingest(m: WAMessage, live: boolean, quiet = false) {
@@ -413,7 +422,7 @@ export class WhatsApp extends EventEmitter<{
     }
     const result = this.store.addMessage(incoming, isLive);
     if (!group && !m.key.fromMe && m.pushName) this.store.setNames(chatJid, { push: m.pushName });
-    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive });
+    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive, offline: this.offlineBatch });
   }
 
   /** Aviso na conversa (fixou, temporárias, entrou no grupo…): não conta como não lida. */
@@ -435,7 +444,7 @@ export class WhatsApp extends EventEmitter<{
     const isLive = this.isLive(chatJid, at, live);
     if (quiet) return void this.store.insertMessage(incoming, isLive);
     const result = this.store.addMessage(incoming, isLive);
-    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive && kind === "call" });
+    if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive && kind === "call", offline: this.offlineBatch });
   }
 
   /** Quem fez a ação: "Você", o autor no grupo ou o contato. */
@@ -623,7 +632,7 @@ export class WhatsApp extends EventEmitter<{
       if (updated) return this.emit("update", updated);
       const incoming: IncomingMessage = { chatJid, id, rawJid: from, fromMe: false, at, text: callText(call), kind: "call", extra, silent: !missed };
       const result = this.store.addMessage(incoming, !c.offline);
-      if (result) this.emit("message", { ...result, live: !c.offline && missed });
+      if (result) this.emit("message", { ...result, live: !c.offline && missed, offline: !!c.offline });
     };
     switch (c.status) {
       case "offer": {
@@ -902,7 +911,8 @@ export class WhatsApp extends EventEmitter<{
     on("contacts.upsert", (list) => list.forEach((c) => this.applyContact(c)));
     on("contacts.update", (list) => list.forEach((c) => this.applyContact(c)));
     on("messages.upsert", ({ messages, type }) => {
-      this.ingestAll(messages, type === "notify" || type === "append");
+      // "append" = fila offline (o que chegou com o app fechado) ou reenvio atrasado: conta como não lida, sem notificar.
+      this.ingestAll(messages, type === "notify" || type === "append", false, type === "append");
     });
     on("presence.update", ({ id, presences }) => {
       if (!isConversation(id)) return;
