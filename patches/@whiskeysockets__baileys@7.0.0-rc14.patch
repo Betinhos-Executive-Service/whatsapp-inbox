@@ -50,7 +50,7 @@ index beadd0604fae22e91faacd8424bd4b695d36e254..9ffa9285c37cd379320d31b654e35d3f
                              migratedCount++;
                          }
 diff --git a/lib/Socket/messages-recv.js b/lib/Socket/messages-recv.js
-index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..340637c771fc20079d82933c3b499bb3fef201d4 100644
+index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..9fbd72f29ebb7164c936bffc1b9d3f49fd19deb8 100644
 --- a/lib/Socket/messages-recv.js
 +++ b/lib/Socket/messages-recv.js
 @@ -422,14 +422,17 @@ export const makeMessagesRecvSocket = (config) => {
@@ -75,7 +75,18 @@ index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..340637c771fc20079d82933c3b499bb3
                      // Delete existing session to force recreation
                      await authState.keys.set({ session: { [sessionId]: null } });
                      forceIncludeKeys = true;
-@@ -493,24 +496,24 @@ export const makeMessagesRecvSocket = (config) => {
+@@ -460,7 +463,9 @@ export const makeMessagesRecvSocket = (config) => {
+             }
+         }
+         const deviceIdentity = encodeSignedDeviceIdentity(account, true);
+-        await authState.keys.transaction(async () => {
++        // patch (WhatsApp Inbox): o recibo só sai depois do commit da transação. Antes ele saía lá dentro, e uma
++        // queda entre o envio e o commit deixava o contato com uma pré-chave que nunca foi gravada ("Invalid PreKey ID").
++        const receipt = await authState.keys.transaction(async () => {
+             const receipt = {
+                 tag: 'receipt',
+                 attrs: {
+@@ -493,27 +498,28 @@ export const makeMessagesRecvSocket = (config) => {
              if (node.attrs.participant) {
                  receipt.attrs.participant = node.attrs.participant;
              }
@@ -97,6 +108,8 @@ index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..340637c771fc20079d82933c3b499bb3
 -                });
 -                ev.emit('creds.update', update);
 -            }
+-            await sendNode(receipt);
+-            logger.info({ msgAttrs: node.attrs, retryCount }, 'sent retry receipt');
 +            // patch (WhatsApp Inbox): chaves já no 1º pedido de reenvio. Sem elas o contato reenviava com a sessão
 +            // quebrada, ou nem respondia, e o 2º pedido (o que levava as chaves) nunca saía.
 +            const { update, preKeys } = await getNextPreKeys(authState, 1);
@@ -115,9 +128,53 @@ index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..340637c771fc20079d82933c3b499bb3
 +                ]
 +            });
 +            ev.emit('creds.update', update);
-             await sendNode(receipt);
-             logger.info({ msgAttrs: node.attrs, retryCount }, 'sent retry receipt');
++            return receipt;
          }, authState?.creds?.me?.id || 'sendRetryRequest');
++        await sendNode(receipt);
++        logger.info({ msgAttrs: node.attrs, retryCount }, 'sent retry receipt');
+     };
+     // Mirrors WAWeb/Handle/PreKeyLow.js: skip a re-issued notification with the same stanza id.
+     const inFlightPreKeyLow = new Set();
+@@ -1275,22 +1281,25 @@ export const makeMessagesRecvSocket = (config) => {
+         try {
+             const { fullMessage: msg, category, author, decrypt } = decryptMessageNode(node, authState.creds.me.id, authState.creds.me.lid || '', signalRepository, logger);
+             const alt = msg.key.participantAlt || msg.key.remoteJidAlt;
+-            // store new mappings we didn't have before
+-            if (!!alt) {
+-                const altServer = jidDecode(alt)?.server;
+-                const primaryJid = msg.key.participant || msg.key.remoteJid;
+-                if (altServer === 'lid') {
+-                    if (!(await signalRepository.lidMapping.getPNForLID(alt))) {
+-                        await signalRepository.lidMapping.storeLIDPNMappings([{ lid: alt, pn: primaryJid }]);
+-                        await signalRepository.migrateSession(primaryJid, alt);
++            await messageMutex.mutex(async () => {
++                // patch (WhatsApp Inbox): a migração Número→LID roda dentro do mesmo mutex da decifragem. Fora dele,
++                // ela lia o registro do LID, uma decifragem em paralelo gravava ali uma sessão nova, e a migração
++                // gravava por cima o merge feito com a leitura antiga: a sessão nova sumia.
++                // store new mappings we didn't have before
++                if (!!alt) {
++                    const altServer = jidDecode(alt)?.server;
++                    const primaryJid = msg.key.participant || msg.key.remoteJid;
++                    if (altServer === 'lid') {
++                        if (!(await signalRepository.lidMapping.getPNForLID(alt))) {
++                            await signalRepository.lidMapping.storeLIDPNMappings([{ lid: alt, pn: primaryJid }]);
++                            await signalRepository.migrateSession(primaryJid, alt);
++                        }
++                    }
++                    else {
++                        await signalRepository.lidMapping.storeLIDPNMappings([{ lid: primaryJid, pn: alt }]);
++                        await signalRepository.migrateSession(alt, primaryJid);
+                     }
+                 }
+-                else {
+-                    await signalRepository.lidMapping.storeLIDPNMappings([{ lid: primaryJid, pn: alt }]);
+-                    await signalRepository.migrateSession(alt, primaryJid);
+-                }
+-            }
+-            await messageMutex.mutex(async () => {
+                 await decrypt();
+                 if (msg.key?.remoteJid && msg.key?.id && msg.message && messageRetryManager) {
+                     messageRetryManager.addRecentMessage(msg.key.remoteJid, msg.key.id, msg.message);
 diff --git a/lib/Socket/messages-send.js b/lib/Socket/messages-send.js
 index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..825f19ef76420691770eb5c67abd9a40a7946ac5 100644
 --- a/lib/Socket/messages-send.js
@@ -233,7 +290,7 @@ index c30265d36671bacd25a8c456cafedcd9fc2fdd9a..f3aa4d591ea9fcd3f4654a4b5f0b119e
              }
          ]);
 diff --git a/lib/Utils/use-multi-file-auth-state.js b/lib/Utils/use-multi-file-auth-state.js
-index dc8182c832dd28fb6c60a9bfd0b3a5739e1bf229..2725edff15cd493590c4f73edecabbe441827c43 100644
+index dc8182c832dd28fb6c60a9bfd0b3a5739e1bf229..32692ec5b20b16aa920498fad62b87f447bee7f7 100644
 --- a/lib/Utils/use-multi-file-auth-state.js
 +++ b/lib/Utils/use-multi-file-auth-state.js
 @@ -1,5 +1,5 @@
@@ -243,14 +300,15 @@ index dc8182c832dd28fb6c60a9bfd0b3a5739e1bf229..2725edff15cd493590c4f73edecabbe4
  import { join } from 'path';
  import { proto } from '../../WAProto/index.js';
  import { initAuthCreds } from './auth-utils.js';
-@@ -18,6 +18,35 @@ const getFileLock = (path) => {
+@@ -18,6 +18,36 @@ const getFileLock = (path) => {
      }
      return mutex;
  };
 +// patch (WhatsApp Inbox): grava num temporário e troca pelo rename, para que uma queda no meio da escrita
 +// (atualização, desligamento) nunca deixe um arquivo de chave truncado: a leitura devolveria null e a
 +// sessão daquele contato seria recriada do zero. No Windows o rename falha se outro processo (antivírus,
-+// indexador) estiver com o arquivo aberto: tenta de novo e, por último, grava direto, como antes.
++// indexador) estiver com o arquivo aberto: tenta de novo por até ~1,5 s e, por último, grava direto, como antes.
++const RENAME_RETRY_DELAYS_MS = [50, 100, 200, 400, 800];
 +const writeAtomic = async (filePath, content) => {
 +    const tmpPath = `${filePath}.tmp`;
 +    const handle = await open(tmpPath, 'w');
@@ -268,18 +326,18 @@ index dc8182c832dd28fb6c60a9bfd0b3a5739e1bf229..2725edff15cd493590c4f73edecabbe4
 +        catch (error) {
 +            if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
 +                throw error;
-+            if (attempt === 3) {
++            if (attempt > RENAME_RETRY_DELAYS_MS.length) {
 +                await unlink(tmpPath).catch(() => { });
 +                return writeFile(filePath, content);
 +            }
-+            await new Promise(resolve => setTimeout(resolve, 50 * attempt));
++            await new Promise(resolve => setTimeout(resolve, RENAME_RETRY_DELAYS_MS[attempt - 1]));
 +        }
 +    }
 +};
  /**
   * stores the full authentication state in a single folder.
   * Far more efficient than singlefileauthstate
-@@ -32,7 +61,7 @@ export const useMultiFileAuthState = async (folder) => {
+@@ -32,7 +62,7 @@ export const useMultiFileAuthState = async (folder) => {
          const mutex = getFileLock(filePath);
          return mutex.acquire().then(async (release) => {
              try {

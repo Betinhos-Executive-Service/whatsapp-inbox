@@ -12,9 +12,9 @@ Ao reconectar, o **Aparelho conectado** recebe a **Fila offline** inteira, e as 
 ## Entra
 1. Patch no Baileys: pedir a fila offline em lotes até o aviso de fim.
 2. Patch no Baileys: chaves já no 1º pedido de reenvio.
-3. Patch no Baileys: a migração Número→LID junta as sessões.
+3. Patch no Baileys: a migração Número→LID junta as sessões e roda na mesma fila da decifragem. Patch na libsignal: cada sessão é tentada numa cópia, para a tentativa errada não estragar a sessão.
 4. Patch no Baileys: gravação atômica dos arquivos de chave (`useMultiFileAuthState`), no mesmo formato.
-5. App: antes de instalar uma atualização, esperar as gravações e fechar o WhatsApp limpo.
+5. App: antes de instalar uma atualização, esperar as gravações (com teto de 10 s) e fechar o WhatsApp limpo; no logout, esperar as gravações antes de apagar a sessão salva.
 
 ## Fora
 - Trocar de biblioteca. Gravar em disco o contador de reenvio. Mudança de interface.
@@ -22,6 +22,7 @@ Ao reconectar, o **Aparelho conectado** recebe a **Fila offline** inteira, e as 
 ## Aceite
 - Fila com mais de 100 itens: o app pede de novo até receber o aviso de fim, e o log registra "fila offline terminou".
 - Mensagem que não decifrou: o 1º recibo de reenvio leva as chaves.
+- O recibo de reenvio só sai depois de a pré-chave nova estar gravada.
 - Migração Número→LID com sessão já existente no LID: as duas sessões ficam no registro.
 - Queda no meio da gravação de uma chave: o arquivo anterior fica intacto.
 - Atualização: o app só chama o instalador depois de fechar o WhatsApp e gravar as chaves (com limite de tempo para não travar).

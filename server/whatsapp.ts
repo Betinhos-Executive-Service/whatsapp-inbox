@@ -268,6 +268,8 @@ export class WhatsApp extends EventEmitter<{
   private keyTimer: ReturnType<typeof setTimeout> | null = null;
   /** Gravações de chaves e credenciais em andamento; o stop() espera por elas para a atualização não cortar uma no meio. */
   private writes = new Set<Promise<unknown>>();
+  /** Conta as chamadas de stop(): quem esperou o removeAuth() confere se o app não encerrou nesse meio-tempo. */
+  private stops = 0;
   private readonly store: Store;
   private readonly authDir: string;
 
@@ -285,6 +287,28 @@ export class WhatsApp extends EventEmitter<{
     const done = () => this.writes.delete(write);
     write.then(done, done);
     return write;
+  }
+
+  /** Espera as gravações em andamento, com teto: uma gravação travada (arquivo preso no Windows) não segura o "Sair". */
+  private async drainWrites(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<true>((resolve) => (timer = setTimeout(() => resolve(true), 10_000)));
+    try {
+      while (this.writes.size) {
+        if (await Promise.race([Promise.allSettled(this.writes).then(() => false), expired])) {
+          this.diag(`encerrando com ${this.writes.size} gravação(ões) de chaves ainda pendente(s)`);
+          return;
+        }
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Apaga a sessão salva só depois das gravações do socket antigo, senão uma atrasada cai na pasta que o start() recria. */
+  private async removeAuth(): Promise<void> {
+    await this.drainWrites();
+    await rm(this.authDir, { recursive: true, force: true });
   }
 
   private setState(patch: Partial<ConnectionState>) {
@@ -884,7 +908,9 @@ export class WhatsApp extends EventEmitter<{
         if (this.stopped) return;
         if (code === DisconnectReason.loggedOut) {
           // Aparelho desconectado no celular: limpa a sessão e mostra QR novo.
-          await rm(this.authDir, { recursive: true, force: true });
+          await this.removeAuth();
+          // O removeAuth() espera até 10 s pelas gravações: se o app encerrou nesse tempo, não reconecta.
+          if (this.stopped) return;
           this.retries = 0;
           this.setState({ status: "desconectado", me: null, error: "O aparelho foi desconectado no celular." });
           void this.start();
@@ -1901,16 +1927,20 @@ export class WhatsApp extends EventEmitter<{
   /** Desconecta este aparelho do WhatsApp e volta a mostrar o QR. */
   async logout(): Promise<void> {
     this.stopped = true;
+    const stops = this.stops;
     const sock = this.sock;
     this.sock = null;
     await sock?.logout().catch(() => undefined);
-    await rm(this.authDir, { recursive: true, force: true });
+    await this.removeAuth();
+    // stop() chamado durante a espera (app encerrando): não reabre a conexão depois do encerramento.
+    if (this.stops !== stops) return;
     this.setState({ status: "desconectado", me: null, qr: null, error: null });
     await this.start();
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.stops++;
     recoveryListeners.delete(this.onRecoveryLog);
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.syncTimer) clearTimeout(this.syncTimer);
@@ -1918,6 +1948,6 @@ export class WhatsApp extends EventEmitter<{
     this.keyTimer = null;
     this.sock?.end(undefined);
     this.sock = null;
-    while (this.writes.size) await Promise.allSettled(this.writes);
+    await this.drainWrites();
   }
 }

@@ -6,8 +6,11 @@ settings:
 
 patchedDependencies:
   '@whiskeysockets/baileys@7.0.0-rc14':
-    hash: tq6zx5h6fgqmoi7lrclt475fb4
+    hash: 7t7krcrrg6rxhsef43vv6mx3xu
     path: patches/@whiskeysockets__baileys@7.0.0-rc14.patch
+  libsignal@6.0.0:
+    hash: 7x3vl3zrofeasgx2afeeupqphu
+    path: patches/libsignal@6.0.0.patch
 
 importers:
 
@@ -21,7 +24,7 @@ importers:
         version: 0.6.0
       '@whiskeysockets/baileys':
         specifier: 7.0.0-rc14
-        version: 7.0.0-rc14(patch_hash=tq6zx5h6fgqmoi7lrclt475fb4)
+        version: 7.0.0-rc14(patch_hash=7t7krcrrg6rxhsef43vv6mx3xu)
       electron-updater:
         specifier: 6.8.9
         version: 6.8.9
@@ -2221,12 +2224,12 @@ snapshots:
 
   '@typesafe-ai/sdk@0.6.0': {}
 
-  '@whiskeysockets/baileys@7.0.0-rc14(patch_hash=tq6zx5h6fgqmoi7lrclt475fb4)':
+  '@whiskeysockets/baileys@7.0.0-rc14(patch_hash=7t7krcrrg6rxhsef43vv6mx3xu)':
     dependencies:
       '@cacheable/node-cache': 1.7.6
       '@hapi/boom': 9.1.4
       async-mutex: 0.5.0
-      libsignal: 6.0.0
+      libsignal: 6.0.0(patch_hash=7x3vl3zrofeasgx2afeeupqphu)
       lru-cache: 11.5.3
       music-metadata: 11.16.1
       p-queue: 9.3.3
@@ -3054,7 +3057,7 @@ snapshots:
 
   lazy-val@1.0.5: {}
 
-  libsignal@6.0.0:
+  libsignal@6.0.0(patch_hash=7x3vl3zrofeasgx2afeeupqphu):
     dependencies:
       curve25519-js: 0.0.4
       protobufjs: 7.6.6

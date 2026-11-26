@@ -9,4 +9,7 @@ Mensagens perdidas ao reconectar vinham de defeitos do Baileys 7.0.0-rc14 (fila 
   - migração Número→LID que junta sessões;
   - chaves no 1º pedido de reenvio;
   - gravação atômica dos arquivos de chave em `useMultiFileAuthState`.
+  - recibo de reenvio só depois do commit da transação;
+  - migração Número→LID dentro do mutex da decifragem.
+- A junção das sessões depende de um 2º patch, na libsignal (`patches/libsignal@6.0.0.patch`): cada sessão é tentada numa cópia, porque a tentativa na sessão errada avançava o estado dela antes de falhar o MAC. Atualizar a libsignal também exige refazer esse patch.
 - Contribuir com as correções no repositório público fica para depois de validá-las com WhatsApp real.
