@@ -26,7 +26,7 @@ import { albumParentId } from "./text.ts";
 import { albumCounts } from "./media.ts";
 import pino from "pino";
 import QRCode from "qrcode";
-import type { Chat, IncomingMessage, Message, MessageKeyRef, QuotedRef, Store } from "./db.ts";
+import { type Chat, type IncomingMessage, type Message, type MessageKeyRef, type QuotedRef, type Store, WAITING_TEXT } from "./db.ts";
 import type { DeliveryEntry } from "./delivery-log.ts";
 import { caseSafeAppStateKeys } from "./app-state-keys.ts";
 import { buildVcard, extractContacts } from "./contacts.ts";
@@ -72,10 +72,25 @@ const CONTACTS_RESYNC_MS = 6 * 60 * 60 * 1000;
  */
 type QuickReplySync = { id: string; shortcut: string; text: string; deleted: boolean };
 const quickReplyListeners = new Set<(q: QuickReplySync) => void>();
+/** Passos do Baileys para recuperar mensagem que não decifrou (pedido de reenvio, sessão refeita, pedido ao celular). */
+const RECOVERY_LOG = /retry receipt|recreating session|placeholder resend|PDO message without response|retry limit|Failed to send retry/;
+const RECOVERY_FIELDS = ["msgId", "fromJid", "sessionJid", "participant", "retryCount", "reason", "requestId", "err", "error"] as const;
+const recoveryListeners = new Set<(line: string) => void>();
 const logger = pino({
   level: "debug",
   hooks: {
     logMethod(args) {
+      const text = [args[0], args[1]].find((a): a is string => typeof a === "string") ?? "";
+      if (recoveryListeners.size && RECOVERY_LOG.test(text)) {
+        const o = { ...(typeof args[0] === "object" && args[0] ? args[0] : {}) } as Record<string, unknown>;
+        // "sent retry receipt" traz o id só em msgAttrs; erros viram a mensagem, não "[object Object]".
+        o.msgId ??= (o.msgAttrs as { id?: string } | undefined)?.id ?? (o.messageKey as { id?: string } | undefined)?.id;
+        const detail = RECOVERY_FIELDS.filter((k) => o[k] != null)
+          .map((k) => `${k}=${o[k] instanceof Error ? (o[k] as Error).message : String(o[k])}`)
+          .join(" ");
+        const line = `baileys: ${text}${detail ? ` (${detail})` : ""}`;
+        recoveryListeners.forEach((fn) => fn(line));
+      }
       const m = (args[0] as { syncAction?: { syncAction?: { value?: { quickReplyAction?: { shortcut?: string | null; message?: string | null; deleted?: boolean | null } } }; index?: string[] } })?.syncAction;
       const q = m?.syncAction?.value?.quickReplyAction;
       if (q && quickReplyListeners.size) {
@@ -201,7 +216,7 @@ export function quotedOption(jid: string, ref: MessageKeyRef | null | undefined)
 export class WhatsApp extends EventEmitter<{
   connection: [ConnectionState];
   /** `offline`: veio da fila acumulada enquanto o app estava fechado; conta como não lida, mas não avisa. */
-  message: [{ message: Message; chat: Chat; live: boolean; offline?: boolean }];
+  message: [{ message: Message; chat: Chat; live: boolean; offline?: boolean; filled?: boolean }];
   /** Mensagem existente mudou: apagada para todos, editada, reação ou status de entrega. */
   update: [{ message: Message; chat: Chat }];
   chat: [Chat];
@@ -258,6 +273,9 @@ export class WhatsApp extends EventEmitter<{
     this.store = store;
     this.authDir = authDir;
   }
+
+  /** Passos de recuperação do Baileys no log de conexão; sai no stop() para não vazar nem duplicar linhas. */
+  private readonly onRecoveryLog = (line: string) => this.diag(line);
 
   private setState(patch: Partial<ConnectionState>) {
     this.state = { ...this.state, ...patch };
@@ -362,16 +380,24 @@ export class WhatsApp extends EventEmitter<{
     if (!isConversation(raw) || !m.key.id) return;
     const chatJid = this.canonical(raw, m.key.remoteJidAlt);
     if (!m.message && !viewOnce) {
-      // Não decifrou: o Baileys pede reenvio e, se vier, chega de novo com o mesmo id. Fica no log para
-      // diagnosticar mensagem que não apareceu.
+      // Não decifrou: o Baileys pede reenvio e, se vier, chega com o mesmo id e substitui o aviso (como no WhatsApp).
       if (m.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT) {
         this.diag(`mensagem ${m.key.id} de ${chatJid} não decifrou (${m.messageStubParameters?.[0] ?? "sem motivo"}); aguardando reenvio`);
+        // No histórico o reenvio nunca vem: o aviso ficaria para sempre.
+        if (!quiet) this.addNotice(chatJid, m, WAITING_TEXT, live, quiet, "system", null, false);
         return;
       }
       // Sem conteúdo: avisos do grupo (entrou, saiu, mudou o nome…) e ligação perdida.
       if (m.messageStubType) this.ingestStub(m, chatJid, live, quiet);
       return;
     }
+    this.ingestContent(m, raw, chatJid, wrapped, viewOnce, live, quiet);
+    // Reenvio que não virou mensagem própria (reação, edição, apagada, voto…): o aviso sai da conversa.
+    if (this.store.dropWaiting(chatJid, m.key.id) && !quiet) this.emit("remove", { chatJid, id: m.key.id, chat: this.store.getChat(chatJid)! });
+  }
+
+  private ingestContent(m: WAMessage, raw: string, chatJid: string, wrapped: ReturnType<typeof viewOnceWrapper>, viewOnce: boolean, live: boolean, quiet: boolean) {
+    if (!m.key.id) return;
     const content = normalizeMessageContent(m.message);
     const revoked = revokedId(content);
     if (revoked) {
@@ -425,6 +451,18 @@ export class WhatsApp extends EventEmitter<{
     const isLive = this.isLive(chatJid, at, live);
     // Enviada agora: guarda o proto para reenviar se o WhatsApp do contato pedir retry.
     if (isLive && m.key.fromMe && m.message) incoming.raw = proto.Message.encode(m.message).finish();
+    // Chegou o reenvio de uma que não tinha decifrado: troca o aviso pelo conteúdo.
+    if (this.store.fillWaiting(incoming)) {
+      this.diag(`mensagem ${m.key.id} de ${chatJid} chegou no reenvio`);
+      if (!group && !m.key.fromMe && m.pushName) this.store.setNames(chatJid, { push: m.pushName });
+      if (quiet) return;
+      const message = this.store.getMessage(chatJid, m.key.id)!;
+      const chat = this.store.getChat(chatJid)!;
+      this.emit("update", { message, chat });
+      // `filled`: a tela já tem esse id (não repassa); o "message" serve para baixar o áudio, transcrever e classificar.
+      this.emit("message", { message, chat, live: isLive, offline: this.offlineBatch, filled: true });
+      return;
+    }
     if (quiet) {
       // Lote do histórico: só grava; a tela recarrega uma vez no fim, então não lê nada de volta.
       this.store.insertMessage(incoming, isLive);
@@ -436,8 +474,8 @@ export class WhatsApp extends EventEmitter<{
     if (result) this.emit("message", { ...result, chat: this.store.getChat(chatJid)!, live: isLive, offline: this.offlineBatch });
   }
 
-  /** Aviso na conversa (fixou, temporárias, entrou no grupo…): não conta como não lida. */
-  private addNotice(chatJid: string, m: WAMessage, text: string, live: boolean, quiet: boolean, kind = "system", extra: Extra | null = null) {
+  /** Aviso na conversa (fixou, temporárias, entrou no grupo…); só ligação perdida e mensagem aguardando contam como não lida. */
+  private addNotice(chatJid: string, m: WAMessage, text: string, live: boolean, quiet: boolean, kind = "system", extra: Extra | null = null, silent = kind !== "call") {
     const at = timestamp(m);
     const incoming: IncomingMessage = {
       chatJid,
@@ -449,8 +487,7 @@ export class WhatsApp extends EventEmitter<{
       text,
       kind,
       extra: extra ? JSON.stringify(extra) : null,
-      // Ligação perdida conta como mensagem nova; os demais avisos não.
-      silent: kind !== "call",
+      silent,
     };
     const isLive = this.isLive(chatJid, at, live);
     if (quiet) return void this.store.insertMessage(incoming, isLive);
@@ -741,6 +778,7 @@ export class WhatsApp extends EventEmitter<{
 
   async start(): Promise<void> {
     this.stopped = false;
+    recoveryListeners.add(this.onRecoveryLog);
     this.retryTimer = null;
     this.askedKeys.clear();
     this.keysToAsk.clear();
@@ -1862,6 +1900,7 @@ export class WhatsApp extends EventEmitter<{
 
   async stop(): Promise<void> {
     this.stopped = true;
+    recoveryListeners.delete(this.onRecoveryLog);
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.syncTimer) clearTimeout(this.syncTimer);
     if (this.keyTimer) clearTimeout(this.keyTimer);

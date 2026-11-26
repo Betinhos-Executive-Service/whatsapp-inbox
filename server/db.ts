@@ -592,6 +592,8 @@ function toMessage(r: Row, reactions: Message["reactions"] = [], poll: PollResul
 }
 
 export const DELETED_TEXT = "Mensagem apagada";
+/** Aviso no lugar da mensagem que não decifrou até o reenvio chegar (o WhatsApp mostra o mesmo). */
+export const WAITING_TEXT = "Aguardando esta mensagem. Se demorar, veja no celular.";
 
 /** Colunas da mensagem para a tela (sem `raw`, que só serve ao retry). */
 const MESSAGE_COLUMNS = "chat_jid, id, participant, from_me, at, text, kind, media, quoted, deleted_at, ack, edited_at, contacts, extra, starred, forwarded";
@@ -774,7 +776,10 @@ export class Store {
     const chat = this.q("select unread from chats where jid = ?").get(jid) as Row | undefined;
     const unread = Number(chat?.unread ?? 0);
     if (!unread) return [];
-    let keys = this.q("select id, raw_jid, participant from messages where chat_jid = ? and unread = 1").all(jid) as Row[];
+    // Aviso de mensagem que não decifrou não leva recibo: o remetente veria "lida" sem você ter visto o conteúdo.
+    let keys = this
+      .q("select id, raw_jid, participant from messages where chat_jid = ? and unread = 1 and not (kind = 'system' and text = ?)")
+      .all(jid, WAITING_TEXT) as Row[];
     // Bancos antigos não marcavam a mensagem: vale a aproximação das N mais recentes.
     if (!keys.length) {
       keys = this
@@ -864,6 +869,44 @@ export class Store {
           .q("update chats set unread = 0, marked_unread = 0, status = case when status = 'aberta' then 'aguardando' else status end where jid = ?")
           .run(m.chatJid);
       }
+      return true;
+    });
+  }
+
+  /**
+   * Troca o aviso de mensagem que não decifrou (WAITING_TEXT) pelo conteúdo que chegou no reenvio, com o mesmo id.
+   * Mantém não lida e status como ficaram quando o aviso entrou. Devolve false se não havia aviso.
+   */
+  fillWaiting(m: IncomingMessage): boolean {
+    const waiting = this.q("select at from messages where chat_jid = ? and id = ? and kind = 'system' and text = ?").get(m.chatJid, m.id, WAITING_TEXT) as Row | undefined;
+    if (!waiting) return false;
+    return this.tx(() => {
+      this
+        .q(
+          `update messages set raw_jid = ?, participant = ?, at = ?, text = ?, kind = ?, media = ?, quoted = ?, ack = ?, raw = ?, contacts = ?, extra = ?, forwarded = ?
+           where chat_jid = ? and id = ? and kind = 'system' and text = ?`,
+        )
+        .run(
+          m.rawJid, m.participant ?? null, m.at, m.text, m.kind, m.media ?? null, m.quoted ?? null, m.fromMe ? (m.ack ?? null) : null, m.raw ?? null,
+          m.contacts ?? null, m.extra ?? null, m.forwarded ?? 0, m.chatJid, m.id, WAITING_TEXT,
+        );
+      // Só troca a prévia se este aviso era a última mensagem (outro aviso mais novo continua na prévia).
+      this.q("update chats set last_text = ? where jid = ? and last_at = ? and last_text = ?").run(m.text, m.chatJid, Number(waiting.at), WAITING_TEXT);
+      return true;
+    });
+  }
+
+  /**
+   * Tira o aviso de mensagem que não decifrou quando o reenvio não vira mensagem própria (reação, edição,
+   * apagada, voto…): sem isso o aviso ficaria para sempre e contando como não lida. Devolve false se não havia aviso.
+   */
+  dropWaiting(chatJid: string, id: string): boolean {
+    const waiting = this.q("select unread from messages where chat_jid = ? and id = ? and kind = 'system' and text = ?").get(chatJid, id, WAITING_TEXT) as Row | undefined;
+    if (!waiting) return false;
+    return this.tx(() => {
+      this.q("delete from messages where chat_jid = ? and id = ? and kind = 'system' and text = ?").run(chatJid, id, WAITING_TEXT);
+      if (Number(waiting.unread) === 1) this.q("update chats set unread = max(unread - 1, 0) where jid = ?").run(chatJid);
+      this.refreshLast(chatJid);
       return true;
     });
   }
