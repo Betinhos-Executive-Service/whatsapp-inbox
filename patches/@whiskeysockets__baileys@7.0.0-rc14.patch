@@ -1,5 +1,36 @@
+diff --git a/lib/Socket/messages-recv.js b/lib/Socket/messages-recv.js
+index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..5de907d12f0bf772d8f4f44154952f57fdeb10e7 100644
+--- a/lib/Socket/messages-recv.js
++++ b/lib/Socket/messages-recv.js
+@@ -417,19 +417,22 @@ export const makeMessagesRecvSocket = (config) => {
+         const retryCount = (await msgRetryCache.get(key)) || 1;
+         const { account, signedPreKey, signedIdentityKey: identityKey } = authState.creds;
+         const fromJid = node.attrs.from;
+         // Check if we should recreate the session
+         let shouldRecreateSession = false;
+         let recreateReason = '';
+         if (enableAutoSessionRecreation && messageRetryManager && retryCount > 1) {
+             try {
++                // patch (WhatsApp Inbox): a decifragem usa a sessão do LID quando há mapeamento (getDecryptionJid);
++                // checar/apagar pelo número deixava a sessão quebrada do LID intacta. Dentro do try: falha na busca não impede o retry.
++                const sessionJid = isPnUser(fromJid) ? (await signalRepository.lidMapping.getLIDForPN(fromJid)) || fromJid : fromJid;
+                 // Check if we have a session with this JID
+-                const sessionId = signalRepository.jidToSignalProtocolAddress(fromJid);
+-                const hasSession = await signalRepository.validateSession(fromJid);
+-                const result = messageRetryManager.shouldRecreateSession(fromJid, hasSession.exists);
++                const sessionId = signalRepository.jidToSignalProtocolAddress(sessionJid);
++                const hasSession = await signalRepository.validateSession(sessionJid);
++                const result = messageRetryManager.shouldRecreateSession(sessionJid, hasSession.exists);
+                 shouldRecreateSession = result.recreate;
+                 recreateReason = result.reason;
+                 if (shouldRecreateSession) {
+-                    logger.debug({ fromJid, retryCount, reason: recreateReason }, 'recreating session for retry');
++                    logger.debug({ fromJid, sessionJid, retryCount, reason: recreateReason }, 'recreating session for retry');
+                     // Delete existing session to force recreation
+                     await authState.keys.set({ session: { [sessionId]: null } });
+                     forceIncludeKeys = true;
 diff --git a/lib/Socket/messages-send.js b/lib/Socket/messages-send.js
-index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..6749c3cd188c57563af306ff3d50bca140206a63 100644
+index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..825f19ef76420691770eb5c67abd9a40a7946ac5 100644
 --- a/lib/Socket/messages-send.js
 +++ b/lib/Socket/messages-send.js
 @@ -466,7 +466,9 @@ export const makeMessagesSocket = (config) => {
@@ -14,7 +45,7 @@ index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..6749c3cd188c57563af306ff3d50bca1
                  extraAttrs['mediatype'] = mediaType;
              }
 diff --git a/lib/Utils/chat-utils.js b/lib/Utils/chat-utils.js
-index c30265d..f3aa4d5 100644
+index c30265d36671bacd25a8c456cafedcd9fc2fdd9a..f3aa4d591ea9fcd3f4654a4b5f0b119e017c8aab 100644
 --- a/lib/Utils/chat-utils.js
 +++ b/lib/Utils/chat-utils.js
 @@ -709,6 +709,8 @@ export const processSyncAction = (syncAction, ev, me, initialSyncOpts, logger) =

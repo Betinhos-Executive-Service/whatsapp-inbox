@@ -36,13 +36,13 @@ test("fila offline: erro numa mensagem não faz as seguintes do lote se perderem
   assert.equal(store.getChat(PN)!.unread, 3);
 });
 
-test("mensagem que não decifrou não grava nada e vai para o log", () => {
+test("mensagem que não decifrou fica como aviso e vai para o log", () => {
   const { store, inner } = setup();
   const lines: string[] = [];
   const stderr = mock.method(process.stderr, "write", (s: string) => (lines.push(String(s)), true));
   inner.ingestAll([{ key: { remoteJid: PN, fromMe: false, id: "X" }, messageStubType: 2, messageStubParameters: ["Bad MAC"], messageTimestamp: nowSec() }], true);
   stderr.mock.restore();
-  assert.equal(store.getMessage(PN, "X"), null);
+  assert.equal(store.getMessage(PN, "X")?.kind, "system");
   assert.ok(lines.some((l) => l.includes("X") && l.includes("não decifrou")));
 });
 

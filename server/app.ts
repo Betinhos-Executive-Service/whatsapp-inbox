@@ -492,8 +492,9 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     client.on("diag", (line) => appendRotated(connectionLog, `${stamp()}  ${line}`));
     client.on("presence", (p) => broadcast("presence", p));
     client.on("reload", () => broadcast("reload", null));
-    client.on("message", ({ message, chat, live, offline }) => {
-      broadcast("message", { message, chat });
+    client.on("message", ({ message, chat, live, offline, filled }) => {
+      // Reenvio que trocou o aviso: a tela já recebeu o "update"; outro "message" contaria de novo em "novas abaixo".
+      if (!filled) broadcast("message", { message, chat });
       if (live && !message.fromMe) {
         // Ligação e avisos não mudam o assunto da conversa: não pedem classificação.
         if (message.kind !== "call" && message.kind !== "system") scheduleClassify(chat.jid);
