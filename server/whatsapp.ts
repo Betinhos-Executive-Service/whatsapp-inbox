@@ -17,6 +17,7 @@ import makeWASocket, {
   S_WHATSAPP_NET,
   useMultiFileAuthState,
   type BaileysEventMap,
+  type SignalDataSet,
   type WACallEvent,
   type WAMessage,
   type WASocket,
@@ -265,6 +266,8 @@ export class WhatsApp extends EventEmitter<{
   private askedKeys = new Set<string>();
   private keysToAsk = new Set<string>();
   private keyTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Gravações de chaves e credenciais em andamento; o stop() espera por elas para a atualização não cortar uma no meio. */
+  private writes = new Set<Promise<unknown>>();
   private readonly store: Store;
   private readonly authDir: string;
 
@@ -276,6 +279,13 @@ export class WhatsApp extends EventEmitter<{
 
   /** Passos de recuperação do Baileys no log de conexão; sai no stop() para não vazar nem duplicar linhas. */
   private readonly onRecoveryLog = (line: string) => this.diag(line);
+
+  private trackWrite<T>(write: Promise<T>): Promise<T> {
+    this.writes.add(write);
+    const done = () => this.writes.delete(write);
+    write.then(done, done);
+    return write;
+  }
 
   private setState(patch: Partial<ConnectionState>) {
     this.state = { ...this.state, ...patch };
@@ -787,13 +797,14 @@ export class WhatsApp extends EventEmitter<{
     this.setState({ status: this.retries ? "reconectando" : "iniciando", qr: null, error: null, syncing: false });
     this.diag(this.retries ? `reconectando (tentativa ${this.retries})` : "iniciando conexão");
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    const keys = { ...state.keys, set: (data: SignalDataSet) => this.trackWrite(Promise.resolve(state.keys.set(data))) };
     // Sessão salva de outro número (ex.: data/auth trocado): separa antes de qualquer evento.
     if (state.creds.me?.id) this.checkAccount(jidNormalizedUser(state.creds.me.id));
     this.store.keepArchived = !state.creds.accountSettings?.unarchiveChats;
     const version = await this.waVersion();
     const sock = makeWASocket({
       ...(version ? { version } : {}),
-      auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(caseSafeAppStateKeys(state.keys, (ids) => this.askKeys(ids)), logger) },
+      auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(caseSafeAppStateKeys(keys, (ids) => this.askKeys(ids)), logger) },
       logger,
       browser: Browsers.windows("Desktop"),
       // Sem "online": o celular continua recebendo notificações normalmente.
@@ -827,7 +838,7 @@ export class WhatsApp extends EventEmitter<{
       // Logo depois de ler o QR o número já é conhecido, antes do histórico chegar.
       if (update.me?.id) this.checkAccount(jidNormalizedUser(update.me.id));
       if (update.accountSettings) this.store.keepArchived = !update.accountSettings.unarchiveChats;
-      void saveCreds();
+      void this.trackWrite(saveCreds());
       // Chave nova do celular (pedida em syncArchives): agora dá para enviar e receber o arquivamento.
       if (update.myAppStateKeyId && this.state.status === "conectado") {
         setTimeout(() => void this.syncArchives(sock), 3000);
@@ -1907,5 +1918,6 @@ export class WhatsApp extends EventEmitter<{
     this.keyTimer = null;
     this.sock?.end(undefined);
     this.sock = null;
+    while (this.writes.size) await Promise.allSettled(this.writes);
   }
 }

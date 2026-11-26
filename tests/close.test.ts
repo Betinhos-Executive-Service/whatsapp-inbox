@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { startApp } from "../server/app.ts";
+import { Store } from "../server/db.ts";
+import { WhatsApp } from "../server/whatsapp.ts";
 
 test("encerrar o servidor não trava com a janela conectada ao SSE (instalação de atualização)", async () => {
   const app = await startApp({ port: 0, dataDir: mkdtempSync(join(tmpdir(), "wi-close-")), distDir: "dist", waDisabled: true });
@@ -47,4 +49,17 @@ test("avatar sem WhatsApp devolve null sem travar", async () => {
   } finally {
     await app.close();
   }
+});
+
+test("stop() do WhatsApp espera as gravações de chaves em andamento (a atualização não corta a sessão)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wi-stop-"));
+  const wa = new WhatsApp(new Store(join(dir, "inbox.db")), join(dir, "auth"));
+  let finish!: () => void;
+  let written = false;
+  const write = new Promise<void>((resolve) => (finish = resolve)).then(() => void (written = true));
+  (wa as unknown as { trackWrite(write: Promise<unknown>): Promise<unknown> }).trackWrite(write);
+  const stopped = wa.stop();
+  setTimeout(finish, 50);
+  await stopped;
+  assert.ok(written, "stop() só devolve depois da gravação terminar");
 });
