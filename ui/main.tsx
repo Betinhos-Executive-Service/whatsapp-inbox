@@ -47,6 +47,7 @@ import {
   Timer,
   UserRoundPlus,
   PencilLine,
+  RefreshCw,
 } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -443,11 +444,14 @@ function ChatList(props: {
   onPatch: (jid: string, patch: ChatPatch) => void;
   onNewChat: () => void;
   onStarred: () => void;
+  /** Reconecta o WhatsApp e relê a lista: traz o que ficou para trás numa queda de internet. */
+  onRefresh: () => void;
   /** Painel de contatos ("Nova conversa"), por cima da lista. */
   panel?: ReactNode;
 }) {
   const account = useAccount();
   const fileDrag = useFileDrag();
+  const refreshing = props.connection.status === "reconectando" || (props.connection.status === "conectado" && !!props.connection.syncing);
   const canAttach = props.online && props.connection.status === "conectado";
   const [tabChoice, setTab] = useState<Tab>("todas");
   // Com status ou etiquetas desligados nas configurações, o filtro correspondente fica neutro.
@@ -597,6 +601,14 @@ function ChatList(props: {
             {account && account.count < account.max && (
               <Button variant="ghost" aria-label="Adicionar conta do WhatsApp" title="Adicionar conta do WhatsApp" icon={<UserPlus size={18} aria-hidden />} onClick={() => void desktop()?.addAccount()} />
             )}
+            <Button
+              variant="ghost"
+              aria-label="Recarregar conversas"
+              title="Recarregar conversas (busca as mensagens que não chegaram)"
+              icon={<RefreshCw size={18} className={refreshing ? "spin" : undefined} aria-hidden />}
+              disabled={!props.online || refreshing || (props.connection.status !== "conectado" && props.connection.status !== "reconectando")}
+              onClick={props.onRefresh}
+            />
             <Button variant="ghost" aria-label="Abrir configurações" title="Configurações" icon={<Settings size={18} aria-hidden />} onClick={props.onSettings} />
           </div>
         </div>
@@ -3244,6 +3256,19 @@ function App() {
     desktop()?.focusWindow?.();
   };
 
+  const refresh = useCallback(() => {
+    api
+      .reconnect()
+      .then(setState)
+      .catch((e: Error) => push("error", `Não foi possível recarregar as conversas. ${e.message}`));
+  }, [push]);
+  // A internet voltou: a conexão antiga pode ter morrido sem aviso; reconecta para receber o que ficou para trás.
+  useEffect(() => {
+    const onOnline = () => void api.reconnect().then(setState).catch(() => undefined);
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
   // Fim da fila offline: relê a lista e a conversa aberta, caso algo tenha entrado sem aviso.
   const syncing = connection.status === "conectado" && !!connection.syncing;
   const wasSyncing = useRef(false);
@@ -3434,6 +3459,7 @@ function App() {
             onPatch={patchChat}
             onNewChat={() => setContactsOpen(true)}
             onStarred={() => setDialog("starred")}
+            onRefresh={refresh}
             panel={
               contactsOpen ? (
                 <ContactsPanel
