@@ -13,7 +13,7 @@ export type DeliveryEntry = {
 /** Acima disto o arquivo vira `.1` e começa outro: o log nunca cresce sem limite. */
 const ROTATE_BYTES = 1_000_000;
 
-const stamp = (at = new Date()) =>
+export const stamp = (at = new Date()) =>
   at.toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo", hour12: false }).replace("T", " ");
 
 /** Linha de texto, uma por tentativa, legível sem ferramenta: data, resultado, tipo, destino, id, tempo e erro. */
@@ -22,6 +22,16 @@ export function formatEntry(e: DeliveryEntry, at = new Date()): string {
   const cols = [stamp(at), e.ok ? "OK  " : "ERRO", e.kind.padEnd(8), who, `id=${e.id ?? "-"}`, `${(e.ms / 1000).toFixed(1).replace(".", ",")}s`];
   if (!e.ok) cols.push(e.error?.replace(/\s+/g, " ").trim() || "erro desconhecido");
   return cols.join("  ");
+}
+
+/** Acrescenta uma linha ao arquivo; acima de 1 MB ele vira `.1` e começa outro. Falha de disco não derruba o app. */
+export function appendRotated(file: string, line: string): void {
+  try {
+    if (existsSync(file) && statSync(file).size > ROTATE_BYTES) renameSync(file, `${file}.1`);
+    appendFileSync(file, `${line}\n`, "utf8");
+  } catch (error) {
+    console.error(`Não deu para gravar ${file}: ${(error as Error).message}`);
+  }
 }
 
 /** Log de envios em arquivo, para conferir depois o que saiu e o que o WhatsApp recusou. */
@@ -33,12 +43,7 @@ export class DeliveryLog {
 
   record(entry: DeliveryEntry): string {
     const line = formatEntry(entry);
-    try {
-      if (existsSync(this.file) && statSync(this.file).size > ROTATE_BYTES) renameSync(this.file, `${this.file}.1`);
-      appendFileSync(this.file, `${line}\n`, "utf8");
-    } catch (error) {
-      console.error(`Não deu para gravar o log de envios: ${(error as Error).message}`);
-    }
+    appendRotated(this.file, line);
     if (!entry.ok) console.error(`Envio falhou: ${line}`);
     return line;
   }

@@ -1633,10 +1633,14 @@ function ChatView({ chat, labels, connected, jevReady, classifierName, onBack, n
         (fresh) => {
           const el = scroller.current;
           stickToBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+          if (fresh.length >= 80) setHasMore(true);
           setMessages((list) => {
             if (!list) return list;
             // Também troca as que mudaram (apagada, editada, tique de leitura) enquanto o app esteve fora.
             const byId = new Map(fresh.map((x) => [x.id, x]));
+            // Chegaram mais mensagens do que cabe numa página: juntar deixaria um buraco entre a antiga e a nova.
+            // Troca pela página nova; as anteriores voltam ao rolar para cima.
+            if (fresh.length && !list.some((x) => byId.has(x.id))) return [...fresh, ...list.filter((x) => x.pending)];
             return mergeTail(list.map((x) => byId.get(x.id) ?? x), fresh);
           });
         },

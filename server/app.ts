@@ -8,7 +8,7 @@ import { saveContact } from "./contacts.ts";
 import { Store, type Chat, type Label, type Message, type QuickReply, type Reminder } from "./db.ts";
 import { createHandler } from "./http.ts";
 import { cacheMedia, loadMedia } from "./media.ts";
-import { DeliveryLog } from "./delivery-log.ts";
+import { appendRotated, DeliveryLog, stamp } from "./delivery-log.ts";
 import { DEFAULT_INSTRUCTIONS } from "./ai.ts";
 import { ClaudePlanAI, CLAUDE_API_IDS, CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, DEFAULT_CLAUDE_OPTIONS, findClaudeBin, isClaudeModel, parseClaudeOptions, runClaude, type ClaudeModel } from "./claude.ts";
 import { addArgs, displayCommand, getArgs, isRegistered, removeArgs, type McpEntry } from "./mcp-register.ts";
@@ -98,6 +98,8 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
   const store = new Store(join(options.dataDir, "inbox.db"));
   // Cada tentativa de envio (confirmada ou não) fica em texto, para conferir o que de fato saiu.
   const deliveryLog = new DeliveryLog(join(options.dataDir, "envios.log"));
+  /** Quedas, reconexões, fila offline e mensagens que não decifraram: para entender mensagem que não chegou. */
+  const connectionLog = join(options.dataDir, "conexao.log");
   const disabled = !!options.waDisabled;
   let port = options.port;
 
@@ -487,6 +489,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
     client.on("update", (u) => broadcast("update", u));
     client.on("remove", (r) => broadcast("remove", r));
     client.on("delivery", (entry) => deliveryLog.record(entry));
+    client.on("diag", (line) => appendRotated(connectionLog, `${stamp()}  ${line}`));
     client.on("presence", (p) => broadcast("presence", p));
     client.on("reload", () => broadcast("reload", null));
     client.on("message", ({ message, chat, live, offline }) => {
