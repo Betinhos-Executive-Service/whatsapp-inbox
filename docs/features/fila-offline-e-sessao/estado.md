@@ -1,12 +1,12 @@
 # Fila offline completa e sessões de criptografia sãs
 
 - Nível: 2 (patch no Baileys e integração do WhatsApp no servidor e no desktop; revisão com Opus por mexer em criptografia)
-- Etapa: 5 de 7 Construir
-- Próximo passo: qualidade antes do PR, testes no Windows, PR e merge · sozinho
-- Branch e PR: t3/fila-offline-e-sessao · ainda não
+- Etapa: 6 de 7 Revisar e verificar
+- Próximo passo: com o release do PR #142 publicado, parear de novo no notebook e conferir no conexao.log "fila offline terminou" e "chegou no reenvio" (tarefa 7) · com você
+- Branch e PR: t3/fila-offline-e-sessao · https://github.com/Betinhos-Executive-Service/whatsapp-inbox/pull/142
 - Protótipo: sem protótipo (sem UI)
 - Go: 26/11/2026 10:45 por Renan ("Go, até o merge")
-- Atualizado: 26/11/2026 11:54
+- Atualizado: 26/11/2026 12:24
 
 ## Decisões
 | Data | Decisão | Por quê | Quem decidiu |
@@ -29,7 +29,7 @@
 | 3 | Patch: migração junta sessões | - | sessão do Número migra sobre sessão existente do LID → as duas continuam no registro | teste com SessionRecord real do libsignal | 5 | feito: sem o patch o teste reproduz o erro de produção "No matching sessions found for message"; com o patch decifra |
 | 4 | Patch: gravação atômica (Assumi: no `useMultiFileAuthState` do Baileys, que é quem grava) | - | escrita interrompida → arquivo antigo intacto, sem arquivo parcial | teste do gravador | 4 | feito: escrita que falha deixa o arquivo antigo intacto, sem `.tmp` sobrando |
 | 5 | App: atualização fecha limpo | 4 | atualização baixada → espera gravar chaves e fechar o socket antes de instalar | teste do `stop()` | 4 | feito: `stop()` espera a gravação (sem a espera o teste falha); limite da instalação 5 s → 25 s (Vigilância 10 s + gravações 10 s, em série) |
-| 6 | Revisão Opus: correções | 1-5 | sessão errada tentada antes da certa, migração em paralelo com a decifragem, queda antes do commit do reenvio, gravação presa no Windows, logout com gravação atrasada → nada se perde | testes que falham sem cada correção | 5 | feito: 6 correções (patch novo na libsignal, migração no mutex, recibo depois do commit, teto de 10 s no `stop()`, logout espera as gravações, rename com até ~1,5 s de novas tentativas); 308/308 testes |
+| 6 | Revisão Opus: correções | 1-5 | sessão errada tentada antes da certa, migração em paralelo com a decifragem, queda antes do commit do reenvio, gravação presa no Windows, logout com gravação atrasada → nada se perde | testes que falham sem cada correção | 5 | feito: 6 correções (patch novo na libsignal, migração no mutex, recibo depois do commit, teto de 10 s no `stop()`, logout espera as gravações, rename com até ~1,5 s de novas tentativas); 308/308 testes no Linux e no Windows (notebook, instalação limpa com os dois patches; `baileys-patch` + `close` 3 vezes seguidas, 14/14) |
 | 7 | Validar com WhatsApp real no notebook | 1-6, release | parear de novo, desligar a internet, receber mensagens, religar → todas chegam; log "fila offline terminou" | log do conexao.log | 5 | pendente |
 
 ## Pendências e fora de escopo
