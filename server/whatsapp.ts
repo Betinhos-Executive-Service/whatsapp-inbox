@@ -213,9 +213,20 @@ export class WhatsApp extends EventEmitter<{
   remove: [{ chatJid: string; id: string; chat: Chat }];
   /** Resultado de cada tentativa de envio (texto, anexo, enquete…), confirmado ou não, para o log. */
   delivery: [DeliveryEntry];
+  /** Linha do log de conexão: quedas, reconexões, fila offline, histórico e mensagens que não decifraram. */
+  diag: [string];
   reload: [];
 }> {
   state: ConnectionState = { status: "iniciando", qr: null, me: null, error: null };
+  /** Mensagens da fila offline (upsert "append") desde que a conexão abriu, para o log. */
+  private offlineCount = 0;
+  private openedAt = 0;
+
+  /** Vai para o arquivo de log de conexão (o stderr se perde no app desktop) e para o stderr. */
+  private diag(line: string) {
+    process.stderr.write(`[whatsapp] ${line}\n`);
+    this.emit("diag", line);
+  }
   /** Envios à espera do ack do servidor, por id: resolve no ack bom, rejeita no ack com erro ou na queda. */
   private pendingAcks = new Map<string, { chatJid: string; resolve: () => void; reject: (e: Error) => void }>();
   /** Enviadas sem confirmação a tempo (já fora da conversa): se o ack chegar atrasado, voltam para a tela. */
@@ -329,7 +340,7 @@ export class WhatsApp extends EventEmitter<{
           this.ingest(m, live, quiet);
         } catch (error) {
           failed++;
-          process.stderr.write(`[whatsapp] mensagem ${m.key?.id ?? "?"} de ${m.key?.remoteJid ?? "?"} não foi gravada: ${error instanceof Error ? (error.stack ?? error.message) : error}\n`);
+          this.diag(`mensagem ${m.key?.id ?? "?"} de ${m.key?.remoteJid ?? "?"} não foi gravada: ${error instanceof Error ? (error.stack ?? error.message) : error}`);
         }
       }
     } finally {
@@ -354,7 +365,7 @@ export class WhatsApp extends EventEmitter<{
       // Não decifrou: o Baileys pede reenvio e, se vier, chega de novo com o mesmo id. Fica no log para
       // diagnosticar mensagem que não apareceu.
       if (m.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT) {
-        process.stderr.write(`[whatsapp] mensagem ${m.key.id} de ${chatJid} não decifrou (${m.messageStubParameters?.[0] ?? "sem motivo"}); aguardando reenvio\n`);
+        this.diag(`mensagem ${m.key.id} de ${chatJid} não decifrou (${m.messageStubParameters?.[0] ?? "sem motivo"}); aguardando reenvio`);
         return;
       }
       // Sem conteúdo: avisos do grupo (entrou, saiu, mudou o nome…) e ligação perdida.
@@ -736,6 +747,7 @@ export class WhatsApp extends EventEmitter<{
     if (this.keyTimer) clearTimeout(this.keyTimer);
     this.keyTimer = null;
     this.setState({ status: this.retries ? "reconectando" : "iniciando", qr: null, error: null, syncing: false });
+    this.diag(this.retries ? `reconectando (tentativa ${this.retries})` : "iniciando conexão");
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     // Sessão salva de outro número (ex.: data/auth trocado): separa antes de qualquer evento.
     if (state.creds.me?.id) this.checkAccount(jidNormalizedUser(state.creds.me.id));
@@ -760,8 +772,7 @@ export class WhatsApp extends EventEmitter<{
     // O Baileys repassa os eventos acumulados (a fila offline inteira ao reabrir) num laço sem proteção:
     // um erro num tratador interrompia o laço e os eventos seguintes do lote nunca chegavam.
     const on = <E extends keyof BaileysEventMap>(event: E, handler: (arg: BaileysEventMap[E]) => unknown) => {
-      const fail = (error: unknown) =>
-        process.stderr.write(`[whatsapp] erro ao tratar ${event}: ${error instanceof Error ? (error.stack ?? error.message) : error}\n`);
+      const fail = (error: unknown) => this.diag(`erro ao tratar ${event}: ${error instanceof Error ? (error.stack ?? error.message) : error}`);
       sock.ev.on(event, (arg) => {
         try {
           const result = handler(arg);
@@ -792,6 +803,9 @@ export class WhatsApp extends EventEmitter<{
       }
       if (u.connection === "open") {
         this.retries = 0;
+        this.offlineCount = 0;
+        this.openedAt = Date.now();
+        this.diag("conectado; recebendo a fila offline");
         const me = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
         this.checkAccount(me);
         // Até o WhatsApp avisar que a fila offline acabou, a tela mostra "Atualizando".
@@ -817,6 +831,7 @@ export class WhatsApp extends EventEmitter<{
         if (this.syncTimer) clearTimeout(this.syncTimer);
         this.failPending("A conexão com o WhatsApp caiu antes da confirmação.");
         const code = (u.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode;
+        this.diag(`conexão caiu (código ${code ?? "-"}): ${u.lastDisconnect?.error?.message ?? "sem motivo"}`);
         if (this.stopped) return;
         if (code === DisconnectReason.loggedOut) {
           // Aparelho desconectado no celular: limpa a sessão e mostra QR novo.
@@ -833,7 +848,8 @@ export class WhatsApp extends EventEmitter<{
       }
     });
 
-    on("messaging-history.set", ({ chats, contacts, messages, lidPnMappings }) => {
+    on("messaging-history.set", ({ chats, contacts, messages, lidPnMappings, syncType }) => {
+      this.diag(`histórico do celular (tipo ${syncType ?? "-"}): ${chats.length} conversas, ${messages.length} mensagens`);
       // Uma transação para o lote inteiro: milhares de gravações sem um commit (fsync) cada.
       this.store.tx(() => {
         eachSafe("vínculo LID", lidPnMappings ?? [], (map) => this.learnLid(map.lid, map.pn));
@@ -912,6 +928,11 @@ export class WhatsApp extends EventEmitter<{
     on("contacts.update", (list) => list.forEach((c) => this.applyContact(c)));
     on("messages.upsert", ({ messages, type }) => {
       // "append" = fila offline (o que chegou com o app fechado) ou reenvio atrasado: conta como não lida, sem notificar.
+      if (type === "append") {
+        this.offlineCount += messages.length;
+        // Depois do fim da fila: entrega atrasada, vale registrar uma a uma.
+        if (!this.state.syncing) this.diag(`${messages.length} mensagem(ns) atrasada(s) depois da fila offline`);
+      }
       this.ingestAll(messages, type === "notify" || type === "append", false, type === "append");
     });
     on("presence.update", ({ id, presences }) => {
@@ -985,9 +1006,12 @@ export class WhatsApp extends EventEmitter<{
 
   private endSync(sock: WASocket) {
     if (this.sock !== sock) return;
+    const timedOut = !!this.syncTimer && Date.now() - this.openedAt >= SYNC_MAX_MS;
     if (this.syncTimer) clearTimeout(this.syncTimer);
     this.syncTimer = null;
-    if (this.state.syncing) this.setState({ syncing: false });
+    if (!this.state.syncing) return;
+    this.diag(`fila offline ${timedOut ? "sem aviso de fim (tempo esgotado)" : "terminou"} em ${Math.round((Date.now() - this.openedAt) / 1000)}s: ${this.offlineCount} mensagem(ns)`);
+    this.setState({ syncing: false });
   }
 
   /**
@@ -996,6 +1020,7 @@ export class WhatsApp extends EventEmitter<{
    */
   wake(reason = "O computador voltou da suspensão."): void {
     if (this.stopped) return;
+    this.diag(reason);
     if (this.sock) {
       this.sock.end(new Error(reason));
       return;
