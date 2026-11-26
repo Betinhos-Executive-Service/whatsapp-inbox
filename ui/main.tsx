@@ -591,11 +591,11 @@ function ChatList(props: {
       <ResizeHandle cssVar="--inbox-list-w" storageKey="inbox:list-w" initial={360} min={280} max={520} edge="end" reserve={360} label="Largura da lista de conversas" />
       <header className="list-pane__header">
         <div className="split">
-          <div>
+          <div className="list-pane__title">
             {account && account.count > 1 && <p className="eyebrow">{account.name}</p>}
             <h1 className="heading-page">Conversas</h1>
           </div>
-          <div className="cluster">
+          <div className="cluster list-pane__actions">
             <Button variant="ghost" aria-label="Nova conversa" title="Nova conversa" icon={<MessageSquarePlus size={18} aria-hidden />} disabled={props.connection.status !== "conectado"} onClick={props.onNewChat} />
             <Button variant="ghost" aria-label="Mensagens favoritas" title="Mensagens favoritas" icon={<Star size={18} aria-hidden />} onClick={props.onStarred} />
             {account && account.count < account.max && (
