@@ -1,13 +1,59 @@
+diff --git a/lib/Signal/libsignal.js b/lib/Signal/libsignal.js
+index beadd0604fae22e91faacd8424bd4b695d36e254..9ffa9285c37cd379320d31b654e35d3fdffea5d3 100644
+--- a/lib/Signal/libsignal.js
++++ b/lib/Signal/libsignal.js
+@@ -9,6 +9,26 @@ import { SenderKeyName } from './Group/sender-key-name.js';
+ import { SenderKeyRecord } from './Group/sender-key-record.js';
+ import { GroupCipher, GroupSessionBuilder, SenderKeyDistributionMessage } from './Group/index.js';
+ import { LIDMappingStore } from './lid-mapping.js';
++// patch (WhatsApp Inbox): a migração Número→LID sobrescrevia a sessão que o LID já tinha com a do número,
++// e as mensagens cifradas na sessão do LID deixavam de abrir ("No matching sessions"). Junta as duas:
++// fechada ainda decifra; fica aberta só a usada por último, que é a de envio.
++const usedAt = (session) => session.indexInfo.used || 0;
++export const mergeSessionRecords = (lidRecord, pnRecord) => {
++    for (const [baseKey, session] of Object.entries(pnRecord.sessions)) {
++        const existing = lidRecord.sessions[baseKey];
++        if (!existing || usedAt(session) > usedAt(existing)) {
++            lidRecord.sessions[baseKey] = session;
++        }
++    }
++    const open = Object.values(lidRecord.sessions).filter(session => !lidRecord.isClosed(session));
++    const [keep] = open.sort((a, b) => usedAt(b) - usedAt(a));
++    for (const session of open) {
++        // direto no indexInfo: closeSession() do libsignal imprime a sessão inteira no console
++        if (session !== keep)
++            session.indexInfo.closed = Date.now();
++    }
++    return lidRecord;
++};
+ /** Extract identity key from PreKeyWhisperMessage for identity change detection */
+ function extractIdentityFromPkmsg(ciphertext) {
+     try {
+@@ -272,6 +292,7 @@ export function makeLibSignalRepository(auth, logger, pnToLIDFunc) {
+                 // Bulk fetch PN sessions - already exist (verified during device discovery)
+                 const pnAddrStrings = Array.from(new Set(migrationOps.map(op => op.fromAddr.toString())));
+                 const pnSessions = await parsedKeys.get('session', pnAddrStrings);
++                const lidSessions = await parsedKeys.get('session', Array.from(new Set(migrationOps.map(op => op.toAddr.toString()))));
+                 // Prepare bulk session updates (PN → LID migration + deletion)
+                 const sessionUpdates = {};
+                 for (const op of migrationOps) {
+@@ -283,7 +304,10 @@ export function makeLibSignalRepository(auth, logger, pnToLIDFunc) {
+                         const fromSession = libsignal.SessionRecord.deserialize(pnSession);
+                         if (fromSession.haveOpenSession()) {
+                             // Queue for bulk update: copy to LID, delete from PN
+-                            sessionUpdates[lidAddrStr] = fromSession.serialize();
++                            const lidSession = lidSessions[lidAddrStr];
++                            sessionUpdates[lidAddrStr] = (lidSession
++                                ? mergeSessionRecords(libsignal.SessionRecord.deserialize(lidSession), fromSession)
++                                : fromSession).serialize();
+                             sessionUpdates[pnAddrStr] = null;
+                             migratedCount++;
+                         }
 diff --git a/lib/Socket/messages-recv.js b/lib/Socket/messages-recv.js
-index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..5de907d12f0bf772d8f4f44154952f57fdeb10e7 100644
+index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..9fbd72f29ebb7164c936bffc1b9d3f49fd19deb8 100644
 --- a/lib/Socket/messages-recv.js
 +++ b/lib/Socket/messages-recv.js
-@@ -417,19 +417,22 @@ export const makeMessagesRecvSocket = (config) => {
-         const retryCount = (await msgRetryCache.get(key)) || 1;
-         const { account, signedPreKey, signedIdentityKey: identityKey } = authState.creds;
-         const fromJid = node.attrs.from;
-         // Check if we should recreate the session
-         let shouldRecreateSession = false;
+@@ -422,14 +422,17 @@ export const makeMessagesRecvSocket = (config) => {
          let recreateReason = '';
          if (enableAutoSessionRecreation && messageRetryManager && retryCount > 1) {
              try {
@@ -29,6 +75,106 @@ index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..5de907d12f0bf772d8f4f44154952f57
                      // Delete existing session to force recreation
                      await authState.keys.set({ session: { [sessionId]: null } });
                      forceIncludeKeys = true;
+@@ -460,7 +463,9 @@ export const makeMessagesRecvSocket = (config) => {
+             }
+         }
+         const deviceIdentity = encodeSignedDeviceIdentity(account, true);
+-        await authState.keys.transaction(async () => {
++        // patch (WhatsApp Inbox): o recibo só sai depois do commit da transação. Antes ele saía lá dentro, e uma
++        // queda entre o envio e o commit deixava o contato com uma pré-chave que nunca foi gravada ("Invalid PreKey ID").
++        const receipt = await authState.keys.transaction(async () => {
+             const receipt = {
+                 tag: 'receipt',
+                 attrs: {
+@@ -493,27 +498,28 @@ export const makeMessagesRecvSocket = (config) => {
+             if (node.attrs.participant) {
+                 receipt.attrs.participant = node.attrs.participant;
+             }
+-            if (retryCount > 1 || forceIncludeKeys || shouldRecreateSession) {
+-                const { update, preKeys } = await getNextPreKeys(authState, 1);
+-                const [keyId] = Object.keys(preKeys);
+-                const key = preKeys[+keyId];
+-                const content = receipt.content;
+-                content.push({
+-                    tag: 'keys',
+-                    attrs: {},
+-                    content: [
+-                        { tag: 'type', attrs: {}, content: Buffer.from(KEY_BUNDLE_TYPE) },
+-                        { tag: 'identity', attrs: {}, content: identityKey.public },
+-                        xmppPreKey(key, +keyId),
+-                        xmppSignedPreKey(signedPreKey),
+-                        { tag: 'device-identity', attrs: {}, content: deviceIdentity }
+-                    ]
+-                });
+-                ev.emit('creds.update', update);
+-            }
+-            await sendNode(receipt);
+-            logger.info({ msgAttrs: node.attrs, retryCount }, 'sent retry receipt');
++            // patch (WhatsApp Inbox): chaves já no 1º pedido de reenvio. Sem elas o contato reenviava com a sessão
++            // quebrada, ou nem respondia, e o 2º pedido (o que levava as chaves) nunca saía.
++            const { update, preKeys } = await getNextPreKeys(authState, 1);
++            const [keyId] = Object.keys(preKeys);
++            const key = preKeys[+keyId];
++            const content = receipt.content;
++            content.push({
++                tag: 'keys',
++                attrs: {},
++                content: [
++                    { tag: 'type', attrs: {}, content: Buffer.from(KEY_BUNDLE_TYPE) },
++                    { tag: 'identity', attrs: {}, content: identityKey.public },
++                    xmppPreKey(key, +keyId),
++                    xmppSignedPreKey(signedPreKey),
++                    { tag: 'device-identity', attrs: {}, content: deviceIdentity }
++                ]
++            });
++            ev.emit('creds.update', update);
++            return receipt;
+         }, authState?.creds?.me?.id || 'sendRetryRequest');
++        await sendNode(receipt);
++        logger.info({ msgAttrs: node.attrs, retryCount }, 'sent retry receipt');
+     };
+     // Mirrors WAWeb/Handle/PreKeyLow.js: skip a re-issued notification with the same stanza id.
+     const inFlightPreKeyLow = new Set();
+@@ -1275,22 +1281,25 @@ export const makeMessagesRecvSocket = (config) => {
+         try {
+             const { fullMessage: msg, category, author, decrypt } = decryptMessageNode(node, authState.creds.me.id, authState.creds.me.lid || '', signalRepository, logger);
+             const alt = msg.key.participantAlt || msg.key.remoteJidAlt;
+-            // store new mappings we didn't have before
+-            if (!!alt) {
+-                const altServer = jidDecode(alt)?.server;
+-                const primaryJid = msg.key.participant || msg.key.remoteJid;
+-                if (altServer === 'lid') {
+-                    if (!(await signalRepository.lidMapping.getPNForLID(alt))) {
+-                        await signalRepository.lidMapping.storeLIDPNMappings([{ lid: alt, pn: primaryJid }]);
+-                        await signalRepository.migrateSession(primaryJid, alt);
++            await messageMutex.mutex(async () => {
++                // patch (WhatsApp Inbox): a migração Número→LID roda dentro do mesmo mutex da decifragem. Fora dele,
++                // ela lia o registro do LID, uma decifragem em paralelo gravava ali uma sessão nova, e a migração
++                // gravava por cima o merge feito com a leitura antiga: a sessão nova sumia.
++                // store new mappings we didn't have before
++                if (!!alt) {
++                    const altServer = jidDecode(alt)?.server;
++                    const primaryJid = msg.key.participant || msg.key.remoteJid;
++                    if (altServer === 'lid') {
++                        if (!(await signalRepository.lidMapping.getPNForLID(alt))) {
++                            await signalRepository.lidMapping.storeLIDPNMappings([{ lid: alt, pn: primaryJid }]);
++                            await signalRepository.migrateSession(primaryJid, alt);
++                        }
++                    }
++                    else {
++                        await signalRepository.lidMapping.storeLIDPNMappings([{ lid: primaryJid, pn: alt }]);
++                        await signalRepository.migrateSession(alt, primaryJid);
+                     }
+                 }
+-                else {
+-                    await signalRepository.lidMapping.storeLIDPNMappings([{ lid: primaryJid, pn: alt }]);
+-                    await signalRepository.migrateSession(alt, primaryJid);
+-                }
+-            }
+-            await messageMutex.mutex(async () => {
+                 await decrypt();
+                 if (msg.key?.remoteJid && msg.key?.id && msg.message && messageRetryManager) {
+                     messageRetryManager.addRecentMessage(msg.key.remoteJid, msg.key.id, msg.message);
 diff --git a/lib/Socket/messages-send.js b/lib/Socket/messages-send.js
 index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..825f19ef76420691770eb5c67abd9a40a7946ac5 100644
 --- a/lib/Socket/messages-send.js
@@ -44,6 +190,92 @@ index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..825f19ef76420691770eb5c67abd9a40
              if (mediaType) {
                  extraAttrs['mediatype'] = mediaType;
              }
+diff --git a/lib/Socket/socket.js b/lib/Socket/socket.js
+index ae34a8f315a0b9fd101472cc69e59624c6c63861..76ede15fecd6874f675f8a23ed13df27a00286df 100644
+--- a/lib/Socket/socket.js
++++ b/lib/Socket/socket.js
+@@ -273,6 +273,7 @@ export const makeSocket = (config) => {
+     let epoch = 1;
+     let keepAliveReq;
+     let qrTimer;
++    let offlineTimer;
+     let closed = false;
+     const socketEndHandlers = [];
+     /** log & process any unexpected errors */
+@@ -478,6 +479,7 @@ export const makeSocket = (config) => {
+         logger.info({ trace: error?.stack }, error ? 'connection errored' : 'connection closed');
+         clearInterval(keepAliveReq);
+         clearTimeout(qrTimer);
++        clearInterval(offlineTimer);
+         ws.removeAllListeners('close');
+         ws.removeAllListeners('open');
+         ws.removeAllListeners('message');
+@@ -802,13 +804,51 @@ export const makeSocket = (config) => {
+     ws.on('CB:ib,,downgrade_webclient', () => {
+         void end(new Boom('Multi-device beta not joined', { statusCode: DisconnectReason.multideviceMismatch }));
+     });
++    // Patch WhatsApp Inbox (porta do PR #2926 do Baileys): a fila offline vem em lotes; o servidor manda um
++    // lote por pedido 'offline_batch' e retém o resto, inclusive mensagens novas, até ser pedido de novo.
++    // Pede de novo a cada 100 itens com o atributo 'offline' e a cada 10 s até chegar o nó 'offline' (fim).
++    let offlineStanzas = 0;
++    let offlineDone = false;
++    const requestOfflineBatch = async (reason) => {
++        if (closed || offlineDone) {
++            return;
++        }
++        offlineStanzas = 0;
++        logger.debug({ reason }, 'requesting offline batch');
++        try {
++            await sendNode({
++                tag: 'ib',
++                attrs: {},
++                content: [{ tag: 'offline_batch', attrs: { count: '100' } }]
++            });
++        }
++        catch (error) {
++            logger.warn({ error }, 'failed to request offline batch');
++        }
++    };
++    ws.on('frame', (frame) => {
++        if (offlineDone || frame instanceof Uint8Array || frame.attrs?.offline === undefined) {
++            return;
++        }
++        offlineStanzas += 1;
++        if (offlineStanzas >= 100) {
++            void requestOfflineBatch('100 offline stanzas received');
++        }
++    });
+     ws.on('CB:ib,,offline_preview', async (node) => {
+         logger.info('offline preview received', JSON.stringify(node));
+-        await sendNode({
+-            tag: 'ib',
+-            attrs: {},
+-            content: [{ tag: 'offline_batch', attrs: { count: '100' } }]
+-        });
++        await requestOfflineBatch('offline preview');
++        if (closed || offlineDone) {
++            return;
++        }
++        clearInterval(offlineTimer);
++        offlineTimer = setInterval(() => {
++            if (closed || offlineDone) {
++                clearInterval(offlineTimer);
++                return;
++            }
++            void requestOfflineBatch('offline catch-up not finished yet');
++        }, 10000);
+     });
+     ws.on('CB:ib,,edge_routing', (node) => {
+         const edgeRoutingNode = getBinaryNodeChild(node, 'edge_routing');
+@@ -830,6 +870,8 @@ export const makeSocket = (config) => {
+     });
+     // called when all offline notifs are handled
+     ws.on('CB:ib,,offline', (node) => {
++        offlineDone = true;
++        clearInterval(offlineTimer);
+         const child = getBinaryNodeChild(node, 'offline');
+         const offlineNotifs = +(child?.attrs.count || 0);
+         logger.info(`handled ${offlineNotifs} offline messages/notifications`);
 diff --git a/lib/Utils/chat-utils.js b/lib/Utils/chat-utils.js
 index c30265d36671bacd25a8c456cafedcd9fc2fdd9a..f3aa4d591ea9fcd3f4654a4b5f0b119e017c8aab 100644
 --- a/lib/Utils/chat-utils.js
@@ -57,3 +289,60 @@ index c30265d36671bacd25a8c456cafedcd9fc2fdd9a..f3aa4d591ea9fcd3f4654a4b5f0b119e
                  conditional: getChatUpdateConditional(id, markReadAction?.messageRange)
              }
          ]);
+diff --git a/lib/Utils/use-multi-file-auth-state.js b/lib/Utils/use-multi-file-auth-state.js
+index dc8182c832dd28fb6c60a9bfd0b3a5739e1bf229..32692ec5b20b16aa920498fad62b87f447bee7f7 100644
+--- a/lib/Utils/use-multi-file-auth-state.js
++++ b/lib/Utils/use-multi-file-auth-state.js
+@@ -1,5 +1,5 @@
+ import { Mutex } from 'async-mutex';
+-import { mkdir, readFile, stat, unlink, writeFile } from 'fs/promises';
++import { mkdir, open, readFile, rename, stat, unlink, writeFile } from 'fs/promises';
+ import { join } from 'path';
+ import { proto } from '../../WAProto/index.js';
+ import { initAuthCreds } from './auth-utils.js';
+@@ -18,6 +18,36 @@ const getFileLock = (path) => {
+     }
+     return mutex;
+ };
++// patch (WhatsApp Inbox): grava num temporário e troca pelo rename, para que uma queda no meio da escrita
++// (atualização, desligamento) nunca deixe um arquivo de chave truncado: a leitura devolveria null e a
++// sessão daquele contato seria recriada do zero. No Windows o rename falha se outro processo (antivírus,
++// indexador) estiver com o arquivo aberto: tenta de novo por até ~1,5 s e, por último, grava direto, como antes.
++const RENAME_RETRY_DELAYS_MS = [50, 100, 200, 400, 800];
++const writeAtomic = async (filePath, content) => {
++    const tmpPath = `${filePath}.tmp`;
++    const handle = await open(tmpPath, 'w');
++    try {
++        await handle.writeFile(content);
++        await handle.sync();
++    }
++    finally {
++        await handle.close();
++    }
++    for (let attempt = 1;; attempt++) {
++        try {
++            return await rename(tmpPath, filePath);
++        }
++        catch (error) {
++            if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code))
++                throw error;
++            if (attempt > RENAME_RETRY_DELAYS_MS.length) {
++                await unlink(tmpPath).catch(() => { });
++                return writeFile(filePath, content);
++            }
++            await new Promise(resolve => setTimeout(resolve, RENAME_RETRY_DELAYS_MS[attempt - 1]));
++        }
++    }
++};
+ /**
+  * stores the full authentication state in a single folder.
+  * Far more efficient than singlefileauthstate
+@@ -32,7 +62,7 @@ export const useMultiFileAuthState = async (folder) => {
+         const mutex = getFileLock(filePath);
+         return mutex.acquire().then(async (release) => {
+             try {
+-                await writeFile(filePath, JSON.stringify(data, BufferJSON.replacer));
++                await writeAtomic(filePath, JSON.stringify(data, BufferJSON.replacer));
+             }
+             finally {
+                 release();

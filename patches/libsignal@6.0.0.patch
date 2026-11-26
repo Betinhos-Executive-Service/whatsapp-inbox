@@ -1,0 +1,43 @@
+diff --git a/src/session_cipher.js b/src/session_cipher.js
+index 0e6df11ee52cf6de3403a0c6f38254c674690312..859a3a5ad2e1425f0f812dae77f13053ce292340 100644
+--- a/src/session_cipher.js
++++ b/src/session_cipher.js
+@@ -142,17 +142,31 @@ class SessionCipher {
+         }   
+         const errs = [];
+         for (const session of sessions) {
+-            let plaintext; 
++            // patch (WhatsApp Inbox): tenta cada sessão numa cópia. doDecryptWhisperMessage avança o ratchet e
++            // consome chaves antes de conferir o MAC; sem a cópia, a tentativa na sessão errada ficava gravada
++            // quando outra sessão do mesmo registro decifrava, e a próxima mensagem naquela sessão dava
++            // "No matching sessions found for message". O registro só muda com a sessão que decifrou.
++            // Com uma sessão só, a falha não grava o registro: tenta direto, sem copiar.
++            let plaintext;
++            let trial;
+             try {
+-                plaintext = await this.doDecryptWhisperMessage(data, session);
+-                session.indexInfo.used = Date.now();
+-                return {
+-                    session,
+-                    plaintext
+-                };
++                trial = sessions.length > 1 ? session.constructor.deserialize(session.serialize()) : session;
++                plaintext = await this.doDecryptWhisperMessage(data, trial);
+             } catch(e) {
+                 errs.push(e);
++                continue;
+             }
++            for (const key of Object.keys(session)) {
++                if (!(key in trial)) {
++                    delete session[key];
++                }
++            }
++            Object.assign(session, trial);
++            session.indexInfo.used = Date.now();
++            return {
++                session,
++                plaintext
++            };
+         }
+         console.error("Failed to decrypt message with any known session...");
+         for (const e of errs) {

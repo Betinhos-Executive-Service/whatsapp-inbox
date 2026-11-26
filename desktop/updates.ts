@@ -66,8 +66,8 @@ export function setupUpdates(options: {
   autoUpdater.on("update-downloaded", async (info) => {
     set({ status: "installing", version: info.version });
     write("info")(`Baixada v${info.version}; encerrando o app para instalar.`);
-    // Nunca deixa a instalação esperando o encerramento para sempre.
-    await Promise.race([options.beforeInstall().catch(() => undefined), new Promise((r) => setTimeout(r, 5000))]);
+    // Nunca deixa a instalação esperando o encerramento para sempre. 25 s cobre, em série no close(), os 10 s da Vigilância e os 10 s das gravações de chaves do WhatsApp.
+    await Promise.race([options.beforeInstall().catch(() => undefined), new Promise((r) => setTimeout(r, 25_000))]);
     // Não silencioso: o instalador one-click mostra a janela de progresso enquanto o app está fechado,
     // para ninguém achar que travou. Reabre o app sozinho ao terminar.
     write("info")("Chamando quitAndInstall.");
