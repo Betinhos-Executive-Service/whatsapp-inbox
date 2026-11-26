@@ -106,6 +106,8 @@ export type Api = {
   classify: (jid: string) => Promise<unknown>;
   saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; anthropicApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: "jev" | "deepseek"; prefs?: Partial<Prefs> }) => void;
   logout: () => Promise<void>;
+  /** Reconecta o WhatsApp na hora: o servidor reenvia o que chegou enquanto a conexão estava morta. */
+  reconnect: () => void;
   /** Apaga as conversas deste computador; com reconnect, desconecta para ler o QR de novo. */
   reset: (reconnect: boolean) => Promise<void>;
   media: (jid: string, id: string) => Promise<{ body: Buffer; mimetype: string; fileName: string | null }>;
@@ -967,6 +969,10 @@ export function createHandler(api: Api) {
       const faltando = api.vigilanciaStatus().faltando;
       if (faltando.length) throw new HttpError(409, `Vigilância sem configuração: ${faltando.join(", ")}.`);
       return json(res, 200, await api.vigilanciaCiclo());
+    }
+    if (path === "/api/reconnect" && method === "POST") {
+      api.reconnect();
+      return json(res, 200, api.state());
     }
     if (path === "/api/logout" && method === "POST") {
       await api.logout();

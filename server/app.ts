@@ -831,6 +831,7 @@ export async function startApp(options: AppOptions): Promise<RunningApp> {
       broadcast("state", publicState());
     },
     logout: () => connected().logout(),
+    reconnect: () => wa?.wake("Reconectando a pedido."),
     reset: async (reconnect) => {
       for (const timer of pending.values()) clearTimeout(timer);
       pending.clear();

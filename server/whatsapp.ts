@@ -994,10 +994,10 @@ export class WhatsApp extends EventEmitter<{
    * O computador voltou da suspensão: a conexão antiga costuma estar morta sem aviso e só cairia no
    * próximo keepalive (até um minuto sem mensagens). Reconecta já; se já esperava para reconectar, não espera mais.
    */
-  wake(): void {
+  wake(reason = "O computador voltou da suspensão."): void {
     if (this.stopped) return;
     if (this.sock) {
-      this.sock.end(new Error("O computador voltou da suspensão."));
+      this.sock.end(new Error(reason));
       return;
     }
     if (!this.retryTimer) return;

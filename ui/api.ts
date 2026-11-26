@@ -436,5 +436,6 @@ export const api = {
   saveSettings: (s: { jevApiKey?: string | null; deepseekApiKey?: string | null; groqApiKey?: string | null; anthropicApiKey?: string | null; autoTranscribe?: boolean; autoSummarize?: boolean; autoClassify?: boolean; classifyProvider?: Classifier; prefs?: Partial<Prefs> }) =>
     request<AppState>("PUT", "/api/settings", s),
   logout: () => request<AppState>("POST", "/api/logout", {}),
+  reconnect: () => request<AppState>("POST", "/api/reconnect", {}),
   reset: (reconnect: boolean) => request<AppState>("POST", "/api/reset", { reconnect }),
 };

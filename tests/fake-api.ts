@@ -56,6 +56,7 @@ export function fakeApi(store: Store, over: Partial<Api> = {}): Api {
     classify: async () => null,
     saveSettings: () => undefined,
     logout: async () => undefined,
+    reconnect: () => undefined,
     reset: async () => undefined,
     backup: async () => "",
     sendLog: () => ({ file: "", lines: [] }),
