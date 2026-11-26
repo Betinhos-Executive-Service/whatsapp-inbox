@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-inbox",
-  "version": "0.0.150",
+  "version": "0.0.151",
   "private": true,
   "type": "module",
   "description": "Inbox local e leve para gerir e classificar conversas do WhatsApp, com classificação Jev.",
