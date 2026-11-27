@@ -52,7 +52,7 @@ function mediaTag(m: Message): string {
 
 function formatMessage(m: Message, chat: Chat | null): string {
   const author = m.fromMe ? "Eu" : chat?.isGroup && m.sender ? m.sender.split("@")[0] : (chat?.name ?? "Contato");
-  const quoted = m.quoted ? ` (respondendo: "${m.quoted.text.slice(0, 60)}")` : "";
+  const quoted = m.quoted ? ` (respondendo: "${m.quoted.text.slice(0, 60)}" #${m.quoted.id})` : "";
   return `[${when(m.at)}] ${author}: ${m.deleted ? "(apagada)" : m.text}${mediaTag(m)}${quoted}  #${m.id}`;
 }
 
@@ -84,7 +84,7 @@ export function createMcpServer(client: InboxClient): McpServer {
     "ler_mensagens",
     {
       title: "Ler mensagens",
-      description: "Mensagens de uma conversa em ordem cronológica. Cada linha termina com #id, usado para citar em propor_resposta ou abrir mídia em ler_midia.",
+      description: "Mensagens de uma conversa em ordem cronológica. Cada linha termina com #id, usado para citar em propor_resposta ou abrir mídia em ler_midia. Resposta a outra mensagem traz \"(respondendo: \"...\" #id)\" com o id da citada, que também abre em ler_midia.",
       inputSchema: {
         jid: z.string().describe("JID da conversa (de listar_conversas)."),
         antes: z.number().int().positive().optional().describe("Só mensagens anteriores a este instante (ms desde 1970), para paginar."),
